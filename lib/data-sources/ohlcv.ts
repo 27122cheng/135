@@ -1,7 +1,7 @@
 import type { CommodityMeta, Timeframe } from "@/types/signal";
 import { cachedOrFetch } from "./cache";
 import { checkRateLimit } from "./cache";
-import { fetchJson } from "./http";
+import { fetchJson, fetchText } from "./http";
 
 export interface Candle {
   time: string; // ISO 8601
@@ -16,7 +16,7 @@ export interface OHLCVResult {
   symbol: string;
   timeframe: Timeframe;
   candles: Candle[];
-  source: "twelvedata" | "yfinance";
+  source: "twelvedata" | "yfinance" | "stooq";
 }
 
 const TWELVE_DATA_INTERVAL: Record<Timeframe, string> = {
@@ -48,9 +48,11 @@ async function fetchTwelveDataOHLCV(
   outputsize: number,
   gaps: string[],
 ): Promise<OHLCVResult | null> {
+  // Optional: two keyless fallbacks follow, so a missing key is only worth
+  // reporting if every source ends up failing (see fetchOHLCV).
   const apiKey = process.env.TWELVE_DATA_API_KEY;
   if (!apiKey) {
-    gaps.push("缺少 TWELVE_DATA_API_KEY，OHLCV 改嘗試 yfinance 備援");
+    gaps.push("未設定 TWELVE_DATA_API_KEY");
     return null;
   }
   if (!checkRateLimit("twelvedata", 800)) {
@@ -204,10 +206,63 @@ async function fetchYfinanceOHLCV(
   return fetchYahooChart(meta, timeframe, gaps);
 }
 
+const STOOQ_INTERVAL: Partial<Record<Timeframe, string>> = { D1: "d", W1: "w" };
+
 /**
- * Twelve Data first (primary, needs TWELVE_DATA_API_KEY), falls back to the
- * public Yahoo Finance chart endpoint (no key) that the yfinance library wraps.
- * Never fabricates candles: any failure is logged to `gaps` and returns null.
+ * Stooq's CSV download — a second keyless source, daily/weekly only. Used as a
+ * last resort if Yahoo is unavailable (it commonly rate-limits datacenter IPs).
+ * The tickers in CommodityMeta.stooqSymbol could not be verified live from the
+ * build sandbox, so a wrong one simply yields no rows and falls through.
+ */
+async function fetchStooqOHLCV(
+  meta: CommodityMeta,
+  timeframe: Timeframe,
+  gaps: string[],
+): Promise<OHLCVResult | null> {
+  const interval = STOOQ_INTERVAL[timeframe];
+  if (!interval) {
+    gaps.push(`Stooq 不支援時框 ${timeframe}`);
+    return null;
+  }
+  const key = `stooq:${meta.stooqSymbol}:${timeframe}`;
+  return cachedOrFetch(key, 10 * 60 * 1000, async () => {
+    const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(meta.stooqSymbol)}&i=${interval}`;
+    const csv = await fetchText(url, { headers: { "User-Agent": "Mozilla/5.0" } }, 12000);
+    if (!csv || csv.trim().startsWith("<")) {
+      gaps.push(`Stooq (${meta.stooqSymbol} ${timeframe}) 取得失敗`);
+      return null;
+    }
+    const lines = csv.trim().split(/\r?\n/);
+    const candles: Candle[] = [];
+    for (const line of lines.slice(1)) {
+      const [date, open, high, low, close, volume] = line.split(",");
+      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+      const parsed = {
+        time: new Date(`${date}T00:00:00Z`).toISOString(),
+        open: Number(open),
+        high: Number(high),
+        low: Number(low),
+        close: Number(close),
+        volume: volume ? Number(volume) : null,
+      };
+      if ([parsed.open, parsed.high, parsed.low, parsed.close].every((n) => Number.isFinite(n))) {
+        candles.push(parsed);
+      }
+    }
+    if (candles.length === 0) {
+      gaps.push(`Stooq (${meta.stooqSymbol} ${timeframe}) 無有效K棒`);
+      return null;
+    }
+    return { symbol: meta.symbol, timeframe, candles, source: "stooq" as const };
+  });
+}
+
+/**
+ * Tries Twelve Data (needs a key), then two keyless public sources: the Yahoo
+ * Finance chart endpoint that yfinance wraps, then Stooq's CSV. Never
+ * fabricates candles. Individual source failures are only surfaced to `gaps`
+ * if every source fails — otherwise a working fallback would report a
+ * "gap" that cost the user nothing.
  */
 export async function fetchOHLCV(
   meta: CommodityMeta,
@@ -215,7 +270,13 @@ export async function fetchOHLCV(
   outputsize: number,
   gaps: string[],
 ): Promise<OHLCVResult | null> {
-  const primary = await fetchTwelveDataOHLCV(meta, timeframe, outputsize, gaps);
+  const attempts: string[] = [];
+  const primary = await fetchTwelveDataOHLCV(meta, timeframe, outputsize, attempts);
   if (primary) return primary;
-  return fetchYfinanceOHLCV(meta, timeframe, gaps);
+  const yahoo = await fetchYfinanceOHLCV(meta, timeframe, attempts);
+  if (yahoo) return yahoo;
+  const stooq = await fetchStooqOHLCV(meta, timeframe, attempts);
+  if (stooq) return stooq;
+  gaps.push(`${meta.symbol} ${timeframe} OHLCV 三個來源皆失敗（${attempts.join("；")}）`);
+  return null;
 }

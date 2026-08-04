@@ -25,11 +25,10 @@ interface FinnhubCalendarResponse {
 
 /** Upcoming 7-day macro calendar via Finnhub's free /calendar/economic endpoint. */
 export async function fetchEconomicCalendar(gaps: string[]): Promise<EconomicEvent[] | null> {
+  // Optional source: callers fall back to keyless equivalents, so a missing
+  // key is not reported as a gap here — the caller decides if anything is lost.
   const apiKey = process.env.FINNHUB_API_KEY;
-  if (!apiKey) {
-    gaps.push("缺少 FINNHUB_API_KEY，無法取得財經日曆");
-    return null;
-  }
+  if (!apiKey) return null;
   if (!checkRateLimit("finnhub", 3600)) {
     gaps.push("Finnhub API 已達速率限制");
     return null;
@@ -81,11 +80,10 @@ export async function fetchFinnhubMarketNews(
   keywords: string[],
   gaps: string[],
 ): Promise<FinnhubNewsItem[] | null> {
+  // Optional: GDELT covers the news dimension without a key, so a missing
+  // Finnhub key is silent. analyzeNews reports a gap only if both come back empty.
   const apiKey = process.env.FINNHUB_API_KEY;
-  if (!apiKey) {
-    gaps.push("缺少 FINNHUB_API_KEY，無法取得 Finnhub 新聞");
-    return null;
-  }
+  if (!apiKey) return null;
   if (!checkRateLimit("finnhub", 3600)) {
     gaps.push("Finnhub API 已達速率限制");
     return null;
@@ -135,11 +133,10 @@ interface FinnhubEarningsResponse {
 
 /** 財報季訊號（美股指數專用）：未來 7 天內有多少公司公布財報，做為波動風險提示。 */
 export async function fetchEarningsCalendar(gaps: string[]): Promise<EarningsEvent[] | null> {
+  // Optional: contributes a weight-0 informational item only, so its absence
+  // changes no score and is not worth reporting as a gap.
   const apiKey = process.env.FINNHUB_API_KEY;
-  if (!apiKey) {
-    gaps.push("缺少 FINNHUB_API_KEY，無法取得財報日曆");
-    return null;
-  }
+  if (!apiKey) return null;
   if (!checkRateLimit("finnhub", 3600)) {
     gaps.push("Finnhub API 已達速率限制");
     return null;

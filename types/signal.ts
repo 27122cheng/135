@@ -152,6 +152,8 @@ export interface CommodityMeta {
   twelveDataSymbol: string;
   /** yfinance-compatible fallback ticker. */
   yfinanceSymbol: string;
+  /** Stooq ticker — a second keyless fallback (daily/weekly only). Unverified live. */
+  stooqSymbol: string;
   /** Whether the signal pipeline is wired for this symbol (all true as of Stage 2). */
   implemented: boolean;
 }
@@ -163,6 +165,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "forex",
     twelveDataSymbol: "EUR/USD",
     yfinanceSymbol: "EURUSD=X",
+    stooqSymbol: "eurusd",
     implemented: true,
   },
   {
@@ -171,6 +174,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "forex",
     twelveDataSymbol: "USD/JPY",
     yfinanceSymbol: "JPY=X",
+    stooqSymbol: "usdjpy",
     implemented: true,
   },
   {
@@ -179,6 +183,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "forex",
     twelveDataSymbol: "GBP/USD",
     yfinanceSymbol: "GBPUSD=X",
+    stooqSymbol: "gbpusd",
     implemented: true,
   },
   {
@@ -187,6 +192,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "metal",
     twelveDataSymbol: "XAU/USD",
     yfinanceSymbol: "GC=F",
+    stooqSymbol: "xauusd",
     implemented: true,
   },
   {
@@ -195,6 +201,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "index",
     twelveDataSymbol: "NDX",
     yfinanceSymbol: "NQ=F",
+    stooqSymbol: "^ndx",
     implemented: true,
   },
   {
@@ -203,6 +210,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "index",
     twelveDataSymbol: "DAX",
     yfinanceSymbol: "^GDAXI",
+    stooqSymbol: "^dax",
     implemented: true,
   },
   {
@@ -211,6 +219,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "index",
     twelveDataSymbol: "DJI",
     yfinanceSymbol: "^DJI",
+    stooqSymbol: "^dji",
     implemented: true,
   },
   {
@@ -219,6 +228,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "energy",
     twelveDataSymbol: "WTI/USD",
     yfinanceSymbol: "CL=F",
+    stooqSymbol: "cl.f",
     implemented: true,
   },
   {
@@ -227,6 +237,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "index",
     twelveDataSymbol: "SPX",
     yfinanceSymbol: "^GSPC",
+    stooqSymbol: "^spx",
     implemented: true,
   },
 ];

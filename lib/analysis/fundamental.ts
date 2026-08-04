@@ -113,7 +113,7 @@ export async function analyzeFundamental(
         direction: change < 0 ? "long" : change > 0 ? "short" : "neutral",
         weight: change === 0 ? 0 : 1,
         evidence: `${eia.previous?.value.toLocaleString() ?? "N/A"} (${eia.previous?.period ?? "N/A"}) → ${eia.latest.value.toLocaleString()} (${eia.latest.period})`,
-        source: "EIA petroleum/stoc/wstk weekly",
+        source: eia.source === "eia" ? "EIA petroleum/stoc/wstk weekly" : "FRED WCESTUS1（EIA 原始資料）",
       });
     }
   }

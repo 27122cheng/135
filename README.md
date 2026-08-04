@@ -9,7 +9,7 @@ end-to-end. A Vercel Cron job refreshes every 4h into Supabase, and
 
 ```bash
 npm install
-cp .env.example .env.local   # fill in whichever keys you have — see below
+cp .env.example .env.local   # 可以完全空白 — 見下方「零金鑰可跑」
 npm run dev
 ```
 
@@ -101,10 +101,29 @@ rather than guessed.
    `Authorization: Bearer <value>` when the env var exists, and the route
    rejects any other caller.
 
-Nine symbols × the full analysis pipeline (several sequential external
-calls including an Anthropic completion) can run past Vercel's default
-serverless timeout on some plans — `maxDuration = 300` is declared on the
-route, which requires a plan that allows it.
+Nine symbols × the full analysis pipeline can run past Vercel's timeout —
+`maxDuration = 60` is declared on the route (the Hobby ceiling; a higher
+value fails deployment there). Raise it if your plan allows more.
+
+## 零金鑰可跑
+
+除了 `ANTHROPIC_API_KEY` 之外，**所有資料來源都有免金鑰的公開端點**，不設定任何
+環境變數也能產生完整訊號：
+
+| 面向 | 免金鑰來源 | 選用的升級 |
+|---|---|---|
+| OHLCV | Yahoo chart 端點 → Stooq CSV | `TWELVE_DATA_API_KEY` |
+| 基本面（總經） | FRED `fredgraph.csv`（免金鑰，資料與官方 API 相同） | `FRED_API_KEY` |
+| WTI 原油庫存 | FRED `WCESTUS1`（EIA 原始資料，FRED 轉載） | `EIA_API_KEY` |
+| 新聞面 | GDELT 2.0 DOC API | `FINNHUB_API_KEY`（另加財報日曆） |
+| 籌碼面 | CFTC Socrata COT | — |
+| 資金流 | SPDR GLD 持倉 XML + CFTC 未平倉量 | — |
+
+**唯一真正需要金鑰的是 `ANTHROPIC_API_KEY`** —— AI 綜合敘述與 AI 交易計畫需要
+LLM，沒有合適的免費公開替代品。未設定時兩者會改用本地預設規則，訊號卡右上角
+顯示「預設規則」而非「AI 判斷」，其餘面向完全不受影響。
+
+一個運作中的備援來源不會被記成 `data_gaps` —— 只有當某個面向的**所有**來源都失敗時才會。
 
 ## 部署到 Vercel 後畫面卡在「載入中」/ 沒東西？
 
@@ -112,20 +131,16 @@ route, which requires a plan that allows it.
 並從部署環境實際去 ping 每個上游來源，這是唯一能分辨「沒設金鑰」和
 「這個主機擋掉 Vercel 機房 IP」的方法。`verdict` 欄位會直接告訴你能不能產生訊號。
 
-最常見的三個原因：
+最常見的兩個原因：
 
-1. **Vercel 上沒設環境變數。** 完全沒設金鑰時，OHLCV 只剩 Yahoo 備援一條路。
-   到 Vercel 專案 Settings → Environment Variables 設定 `.env.example` 裡的項目
-   （至少 `TWELVE_DATA_API_KEY`），設定後要 **重新 deploy** 才會生效。
-2. **Yahoo Finance 擋雲端機房 IP。** `query1.finance.yahoo.com` 對資料中心 IP
-   常回 429/401，本機能通不代表 Vercel 能通。診斷端點會顯示實際狀態碼。
-   這種情況只能靠設定 `TWELVE_DATA_API_KEY` 走主要來源。
-3. **Serverless 逾時。** 預設只有 10 秒，這條 pipeline 一定超過。兩個 API route
+1. **來源主機擋雲端機房 IP。** `query1.finance.yahoo.com` 對資料中心 IP 常回
+   429/401，本機能通不代表 Vercel 能通。這種情況會自動往下掉到 Stooq；
+   若兩者都被擋，設定 `TWELVE_DATA_API_KEY` 走主要來源。
+2. **Serverless 逾時。** 預設只有 10 秒，這條 pipeline 一定超過。兩個 API route
    都已宣告 `maxDuration = 60`（Hobby 方案上限；更高需要 Pro）。
 
-即使所有來源都失敗，`/api/signal/[symbol]` 現在也會回 **HTTP 200 + `grade: "no-trade"`**
-的訊號（價格欄位為 0 並標明無資料，不是猜的價格），把失敗原因完整列在
-`data_gaps` 裡，畫面一定看得到東西而不是空白。
+即使所有來源都失敗，`/api/signal/[symbol]` 也會回 **HTTP 200 + `grade: "no-trade"`**
+的訊號（價格欄位為 0 並標明無資料，不是猜的價格），畫面一定看得到東西而不是空白。
 
 ### Vercel Cron 方案限制
 
@@ -137,12 +152,13 @@ cron**，這個排程需要 Pro 方案；若你在 Hobby，把它改成例如 `0
 | API | Auth | Used for | Notes |
 |---|---|---|---|
 | [Twelve Data](https://twelvedata.com) `/time_series` | `TWELVE_DATA_API_KEY` | OHLCV, primary | Free tier 800 req/day; local daily counter in `lib/data-sources/cache.ts` prevents exceeding it — now shared across 9 symbols so budget accordingly. |
-| Yahoo Finance chart endpoint (`query1.finance.yahoo.com/v8/finance/chart/...`) | none | OHLCV, fallback (what `yfinance` wraps) | No native 4h interval — H4 candles are resampled from real fetched 1h candles, not fabricated. |
-| [FRED](https://fred.stlouisfed.org/docs/api/) `/series/observations` | `FRED_API_KEY` | DXY (`DTWEXBGS`), DGS10, DGS2, T10YIE, VIX (`VIXCLS`) | Free, instant key. |
+| Yahoo Finance chart endpoint (`query1.finance.yahoo.com/v8/finance/chart/...`) | none | OHLCV, first keyless fallback (what `yfinance` wraps) | No native 4h interval — H4 candles are resampled from real fetched 1h candles, not fabricated. Commonly rate-limits datacenter IPs. |
+| [Stooq](https://stooq.com) `q/d/l/` CSV | none | OHLCV, second keyless fallback (daily/weekly only) | Last resort when Yahoo is blocked. Tickers in `CommodityMeta.stooqSymbol` are unverified live; a wrong one yields no rows and falls through. |
+| [FRED](https://fred.stlouisfed.org) `graph/fredgraph.csv` | **none** | DXY (`DTWEXBGS`), DGS10, DGS2, T10YIE, VIX (`VIXCLS`), crude stocks (`WCESTUS1`) | Keyless CSV download serving the same observations as the API. `FRED_API_KEY` switches to the JSON API but changes no data. Endpoint shape not live-verified from the build sandbox. |
 | [Finnhub](https://finnhub.io) `/calendar/economic`, `/news`, `/calendar/earnings` | `FINNHUB_API_KEY` | Economic calendar, market news, earnings season (Stage 2) | No commodity-specific "company-news" for gold/indices, so `/news?category=general` is filtered by keyword instead. |
 | [GDELT 2.0 DOC API](https://api.gdeltproject.org/api/v2/doc/doc) | none | News, last 48h | Free, no key. |
 | [CFTC Socrata](https://publicreporting.cftc.gov) `resource/6dca-aqww.json` | none | Weekly COT (legacy futures-only report) | Contract codes per symbol in `config/fundamentals.ts`; only Gold (`088691`) was validated in Stage 1, the other 7 codes are best-recollection and **unverified live** (see caveat below) — `null` for GER40 (Eurex, no CFTC data). |
-| [EIA Open Data](https://www.eia.gov/opendata/) `v2/petroleum/stoc/wstk/data` | `EIA_API_KEY` | WTI weekly crude inventory | **New in Stage 2** — not in the original Stage 1 approved list, but explicitly required by the spec's WTI 基本面 breakdown and is a free/public API, so added here. Unverified in this sandbox (see below). |
+| [EIA Open Data](https://www.eia.gov/opendata/) `v2/petroleum/stoc/wstk/data` | `EIA_API_KEY` (optional) | WTI weekly crude inventory | Falls back to FRED's `WCESTUS1`, which mirrors the same EIA series without a key, so this key is never required. |
 | SPDR Gold Shares (`spdrgoldshares.com/assets/dynamic/GLD/GLD_US_ProductDetails.xml`) | none | GLD bullion holdings | **Unverified in this build** — outbound network in this sandbox is restricted to an allowlist (npm/PyPI/Anthropic/GitHub) so this endpoint's exact XML schema could not be live-tested here; the parser fails safe to `data_gaps` on any mismatch. |
 | Anthropic Messages API | `ANTHROPIC_API_KEY` | News sentiment scoring, AI綜合 narrative | Both prompts explicitly restrict the model to reasoning over the JSON/headlines provided — no outside facts. |
 | Supabase | `NEXT_PUBLIC_SUPABASE_URL` + anon/service-role keys | Signal history persistence | Standard `@supabase/supabase-js` client; anon key is read-only via RLS, service-role key (server-only) writes from the cron route. |

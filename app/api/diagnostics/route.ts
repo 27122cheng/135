@@ -75,30 +75,41 @@ export async function GET() {
       "CFTC Socrata COT (免金鑰)",
       "https://publicreporting.cftc.gov/resource/6dca-aqww.json?$where=cftc_contract_market_code='088691'&$limit=1",
     ),
+    probe("Stooq CSV 備援 (免金鑰)", "https://stooq.com/q/d/l/?s=xauusd&i=d", {
+      headers: { "User-Agent": "Mozilla/5.0" },
+    }),
+    probe(
+      "FRED CSV (免金鑰)",
+      "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=2026-01-01",
+      { headers: { "User-Agent": "Mozilla/5.0" } },
+    ),
+    probe("SPDR GLD 持倉 (免金鑰)", "https://www.spdrgoldshares.com/assets/dynamic/GLD/GLD_US_ProductDetails.xml", {
+      headers: { "User-Agent": "Mozilla/5.0" },
+    }),
     twelveKey
       ? probe(
-          "Twelve Data",
+          "Twelve Data（選用）",
           `https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=1day&outputsize=1&apikey=${twelveKey}`,
         )
       : Promise.resolve<ProbeResult>({
-          source: "Twelve Data",
+          source: "Twelve Data（選用）",
           url: "-",
-          ok: false,
+          ok: true,
           httpStatus: null,
-          detail: "未設定 TWELVE_DATA_API_KEY，已略過",
+          detail: "未設定金鑰，改用免金鑰備援（不影響運作）",
           ms: 0,
         }),
     fredKey
       ? probe(
-          "FRED",
+          "FRED JSON API（選用）",
           `https://api.stlouisfed.org/fred/series/observations?series_id=DGS10&api_key=${fredKey}&file_type=json&limit=1`,
         )
       : Promise.resolve<ProbeResult>({
-          source: "FRED",
+          source: "FRED JSON API（選用）",
           url: "-",
-          ok: false,
+          ok: true,
           httpStatus: null,
-          detail: "未設定 FRED_API_KEY，已略過",
+          detail: "未設定金鑰，改用免金鑰 CSV 端點（不影響運作）",
           ms: 0,
         }),
   ]);
@@ -110,7 +121,7 @@ export async function GET() {
   }));
 
   const ohlcvReachable = sanitized.some(
-    (p) => p.ok && (p.source.startsWith("yfinance") || p.source === "Twelve Data"),
+    (p) => p.httpStatus !== null && p.ok && (p.source.startsWith("yfinance") || p.source.startsWith("Stooq") || p.source.startsWith("Twelve Data")),
   );
 
   return NextResponse.json({
