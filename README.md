@@ -1,4 +1,4 @@
-# 多商品交易訊號網站 — Stage 2（全免費版）
+# 多商品交易訊號網站 — Stage 3（全免費版）
 
 Next.js 14 (App Router) + TypeScript + TailwindCSS. All 9 symbols
 (EURUSD/USDJPY/GBPUSD/XAUUSD/NAS100/GER40/US30/WTI/SPX500) are wired
@@ -34,8 +34,9 @@ numbers.
 ## Data contracts
 
 `types/signal.ts` — `Timeframe`, `BiasItem`, `EntryStructure`, `PathObstacle`,
-`TradeSignal`, `CommodityMeta`, `SignalRow` (a `TradeSignal` row from
-Supabase, adds `id`/`created_at`) — field names/values match the spec exactly.
+`TradeSignal`, `CommodityMeta`, `SignalRow` (a stored `TradeSignal`, adds
+`id`/`created_at`). `types/journal.ts` — `StopReasonTag`, `JournalEntry`,
+`AppliedIntervention`, `TagStat`. Field names/values match the spec exactly.
 
 ## Scoring — hard rules (`lib/scoring.ts`, `lib/entry-exit.ts`)
 
@@ -48,6 +49,13 @@ Unchanged from Stage 1, now exercised by all 9 symbols:
   1.5% of the entry zone).
 - `grade`: A+/A/B/C/no-trade per the fixed lookup table; disqualifiers
   (`total<3`, `bias_score<=0`, `entry_structure_score=0`) are checked first.
+  One patch to the table: the A band caps at total 13, so a signal scoring 14+
+  that missed A+ on one component used to match no rule and fall through to
+  `no-trade` — bias 7 / structure 8 was untradeable while a weaker bias 5 /
+  structure 4 graded B. A catch-all now lands those on **B**. Two behaviours
+  are deliberately left as-is and pinned by tests: total 10-13 with
+  `bias_score < 6` stays `no-trade`, and with bias 6-7 a total of 13 still
+  grades A while 14 grades B.
 - `stop_loss` is hard-anchored on the same protecting structure used for
   `entry_structure_score` (ATR only ever adds a small buffer beyond it,
   never the sole basis). `take_profits` are hard-anchored on real
@@ -163,6 +171,104 @@ CFTC 未平倉量是**每週**資料：週二收盤結算、週五公布，所�
 兩個保守處理：同一根 K 棒同時觸及停損與停利時，日線無法判斷先後，**一律計為敗**
 （不用擲硬幣灌高勝率），並在 UI 標示；K 棒不足時回傳 null 並記入 `data_gaps`，
 不生一個假數字。
+
+## 停損復盤與干涉機制（Stage 3）
+
+訊號產生 → 交易 → 停損 → 分類原因 → 自動加嚴下一次的訊號。這是唯一會讓系統
+隨時間改變行為的迴路，所以每一步都是確定性的、可稽核的。
+
+### `trade_journal`
+
+一筆平倉交易一列。到 `/review` 頁面底部記錄。
+
+`stop_reason_tag` 由**人**在復盤時選，不是 AI 判的 —— 只有你知道當時在想什麼。
+虧損的交易一定要選一個（資料庫的 `loss_needs_tag` 約束擋著）。
+
+| tag | 意思 | 可事前預防 |
+|---|---|---|
+| S1 | 結構誤判（方向根本錯） | 否 |
+| S2 | 進場位置太差（追價、未等回測） | 是 |
+| S3 | 停損過窄被掃（結構抓對但 buffer 不足） | 是 |
+| S4 | 事件衝擊（數據或突發新聞） | 否 |
+| S5 | 執行問題（滑價、點差、時段流動性差） | 是 |
+| S6 | 未依規則進場（紀律問題） | 是 |
+| S7 | 總經方向反向（基本面判斷錯） | 否 |
+| S8 | 籌碼反向（COT / 未平倉量訊號被忽略） | 是 |
+
+「可事前預防」那一欄規格沒有指定，是我釘在 `types/journal.ts` 的
+`PREVENTABLE_TAGS` 常數裡的。判準是「有沒有一條規則能在進場前擋下這件事」。
+**這是整條公式裡唯一的主觀判斷，不同意就改那張表。**
+
+### severity — 不准讓 AI 自由評分
+
+```
+severity = clamp(1, 5, round(
+    (可事前預防 ? 2 : 0)
+  + (本次虧損 > 平均虧損 * 1.5 ? 1 : 0)
+  + (近 20 筆中同 tag 出現次數 >= 3 ? 2 : 0)
+))
+```
+
+`lib/journal/severity.ts`，照抄。三個輸入全是既有事實：你選的 tag、這次的虧損、
+歷史紀錄的統計。同樣的輸入永遠得到同樣的數字 —— 這正是干涉規則裡「平均 severity」
+有意義的前提。
+
+三個實作細節：
+
+- **下限是 1 不是 0。** 三項都不成立的虧損還是 1 分。沒有零嚴重度的虧損。
+- **平均虧損只算過去的虧損單**，不含獲利單。把獲利算進去會把平均拉向 0，
+  於是幾乎每一筆虧損都變成「超額」。
+- **第一筆沒有平均可比**，此時該項固定 0，不會因為「沒有基準」就預設成超額。
+
+API 刻意**不接受**請求裡的 `severity`，一律用歷史重算。人能填的數字，
+干涉規則就不能拿來平均。
+
+### 干涉規則
+
+產生新訊號時，讀該商品自己近 30 筆日誌。某個 tag **出現 ≥3 次且平均 severity ≥3**
+就啟用對應懲罰：
+
+| tag | 懲罰 |
+|---|---|
+| S1 | `bias_score` 門檻整體 +2 才給同等級 |
+| S2 | 進場區間收窄 30%，且強制要求回測確認因子（找不到就 no-trade） |
+| S3 | 停損的結構外 buffer 由 0.5×ATR 提高到 1.0×ATR |
+| S4 | 24h 內有高影響力數據時，評等自動降一級 |
+| S5 | 非主要交易時段（UTC 07:00–21:00 之外）產生的訊號自動降一級 |
+| S7 | 基本面方向與訊號相反時，直接 no-trade |
+| S8 | COT 處於極端且方向相反時，直接 no-trade |
+
+**S6 沒有懲罰**，這是刻意的。系統攔不住一個人不照自己的規則做，
+硬去轉某個不相干的旋鈕只是演戲。它照樣出現在 `/review` 的統計裡。
+
+### 「只准降級」是結構上保證的，不是靠小心
+
+規格第 3 條：干涉只做降級 / 加嚴門檻，永遠不准升級或放寬。三層防護：
+
+1. **旋鈕的型別就只能收緊。** `InterventionEffects` 裡沒有一個欄位能表達「放寬」——
+   `entryZoneWidthFactor` 只會 ≤1，`stopBufferAtrMultiple` 只會 ≥ 預設，
+   `biasScoreThresholdBump` 只會 ≥0。
+2. **`applyGradePenalties` 最後夾一次。** 不管中間的分支做了什麼，
+   結果的等級不准高於傳進來的 baseline。
+3. **`assertNeverLoosened()` 在 pipeline 裡跑。** 未來有人改壞了會直接丟例外，
+   而不是安靜地讓訊號變寬鬆。
+
+測試用 160 種輸入組合窮舉過：沒有任何一組能讓等級變高。
+
+### `/review` 頁面
+
+- 停損原因分布（甜甜圈圖）
+- severity 隨時間的趨勢線＋5 筆移動平均
+- 各 tag 累積虧損排行（最花錢的排最前面 —— 那就是下一個該修的）
+- 各等級 A+/A/B/C 的實際勝率與期望值
+- 目前生效中的干涉，以及記錄新交易的表單
+
+圖表是手寫 SVG，沒有引入圖表函式庫。
+
+### 訊號卡上的「本次已套用的干涉」
+
+規格要求不只顯示改了什麼，還要說明**是因為哪幾筆歷史停損**。所以每一條干涉
+都帶著觸發它的日期清單，你隨時可以回頭查那幾筆到底發生什麼事。
 
 ## 排程與儲存
 

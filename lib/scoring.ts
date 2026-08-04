@@ -36,19 +36,42 @@ export function computeEntryStructureScore(
 /**
  * Grade lookup table, evaluated exactly as specified. Disqualifiers
  * (total<3, bias_score<=0, entry_structure_score=0) are checked first since
- * they are explicit overrides. Any combination the table doesn't cover
- * (e.g. total 10-13 with bias_score<6) falls through to 'no-trade' —
- * consistent with the spec's rule to never force a grade without support.
+ * they are explicit overrides.
+ *
+ * The A band is capped at 13, so a signal scoring 14+ that misses A+ on one
+ * component matched no rule at all and fell through to no-trade — meaning
+ * bias 7 / structure 8 (total 15) was untradeable while a weaker bias 5 /
+ * structure 4 (total 9) graded B. The catch-all below fixes that: 14+ without
+ * A+ lands on B rather than being thrown away.
+ *
+ * Two behaviours this deliberately leaves alone:
+ *  - total 10-13 with bias_score < 6 stays no-trade. That is the spec working
+ *    as intended — weak directional conviction shouldn't trade regardless of
+ *    how much structure sits nearby.
+ *  - The A band still caps at 13, so with bias 6-7 a total of 13 grades A while
+ *    14 grades B. The catch-all stops the fall to no-trade but not that step
+ *    down. Dropping `totalScore <= 13` from the A rule would close it; that is
+ *    a scoring-policy change, not a bug fix, so it is left to the operator.
+ *    Pinned by tests so it can't shift unnoticed.
  */
 export function gradeSignal(
   biasScore: number,
   entryStructureScore: number,
   totalScore: number,
+  /**
+   * S1 intervention — 「bias_score 門檻整體 +2 才給同等級」. Read as "整體":
+   * every bias threshold rises, including the disqualifier, so a run of
+   * 結構誤判 reviews makes weak-conviction signals harder to grade at all.
+   * Only ever ≥ 0, so this can only make grading stricter.
+   */
+  biasThresholdBump = 0,
 ): Grade {
-  if (totalScore < 3 || biasScore <= 0 || entryStructureScore === 0) return "no-trade";
-  if (totalScore >= 14 && biasScore >= 8 && entryStructureScore >= 4) return "A+";
-  if (totalScore >= 10 && totalScore <= 13 && biasScore >= 6) return "A";
+  const bump = Math.max(0, biasThresholdBump);
+  if (totalScore < 3 || biasScore <= bump || entryStructureScore === 0) return "no-trade";
+  if (totalScore >= 14 && biasScore >= 8 + bump && entryStructureScore >= 4) return "A+";
+  if (totalScore >= 10 && totalScore <= 13 && biasScore >= 6 + bump) return "A";
   if (totalScore >= 6 && totalScore <= 9) return "B";
+  if (totalScore >= 14) return "B";
   if (totalScore >= 3 && totalScore <= 5) return "C";
   return "no-trade";
 }
@@ -65,9 +88,15 @@ export function scoreSignal(
   entryZone: { low: number; high: number },
   biasItems: BiasItem[],
   structures: EntryStructure[],
+  biasThresholdBump = 0,
 ): ScoreResult {
   const biasScore = computeBiasScore(direction, biasItems);
   const entryStructureScore = computeEntryStructureScore(direction, entryZone, structures);
   const totalScore = biasScore + entryStructureScore;
-  return { biasScore, entryStructureScore, totalScore, grade: gradeSignal(biasScore, entryStructureScore, totalScore) };
+  return {
+    biasScore,
+    entryStructureScore,
+    totalScore,
+    grade: gradeSignal(biasScore, entryStructureScore, totalScore, biasThresholdBump),
+  };
 }

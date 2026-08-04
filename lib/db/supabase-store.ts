@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { SignalRow, TradeSignal } from "@/types/signal";
+import type { JournalEntry, JournalEntryInput } from "@/types/journal";
 import type { HistoryFilter, SignalStore } from "./index";
 
 /**
@@ -81,6 +82,39 @@ export function supabaseStore(): SignalStore | null {
       const { data, error } = await query;
       if (error) throw new Error(error.message);
       return (data ?? []) as SignalRow[];
+    },
+
+    async insertJournalEntry(
+      entry: JournalEntryInput,
+      severity: number | null,
+    ): Promise<JournalEntry> {
+      const client = getSupabaseServerClient();
+      if (!client) throw new Error("缺少 SUPABASE_SERVICE_ROLE_KEY，無法寫入 trade_journal");
+      const { data, error } = await client
+        .from("trade_journal")
+        .insert({ ...entry, severity })
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      return data as JournalEntry;
+    },
+
+    async listJournal(options: { symbol?: string | null; limit: number }): Promise<JournalEntry[]> {
+      // Reads go through the anon client where possible so the public /review
+      // page never needs the service-role key; falls back to the server client
+      // for a write-only deployment.
+      const client = getSupabaseAnonClient() ?? getSupabaseServerClient();
+      if (!client) throw new Error("缺少 Supabase 金鑰，無法讀取 trade_journal");
+      let query = client
+        .from("trade_journal")
+        .select("*")
+        .order("closed_at", { ascending: false })
+        .limit(options.limit);
+      if (options.symbol) query = query.eq("symbol", options.symbol);
+
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return (data ?? []) as JournalEntry[];
     },
   };
 }

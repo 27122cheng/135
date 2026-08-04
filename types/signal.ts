@@ -3,6 +3,8 @@
  * Field names/values mirror the Stage 1 spec exactly — do not rename.
  */
 
+import type { AppliedIntervention } from "./journal";
+
 /**
  * H4 / D1 / W1 only. Intraday below 4h is deliberately out of scope: the free
  * data tier is end-of-day or 15-minute-delayed, and a 15-minute-old M15 candle
@@ -143,6 +145,12 @@ export interface TradeSignal {
   trade_plan: TradePlan;
   /** Historical feasibility check on trade_plan's geometry; null when not computable. */
   plan_backtest: PlanBacktest | null;
+  /**
+   * Stage 3 — tightenings applied to this signal because of past stop-losses,
+   * with the entries that justified each. Empty when no journal history meets
+   * the trigger thresholds. Interventions only ever downgrade or tighten.
+   */
+  interventions: AppliedIntervention[];
   data_gaps: string[];
 }
 

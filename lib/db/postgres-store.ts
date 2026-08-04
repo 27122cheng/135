@@ -1,5 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 import type { SignalRow, TradeSignal } from "@/types/signal";
+import type { JournalEntry, JournalEntryInput } from "@/types/journal";
 import type { HistoryFilter, SignalStore } from "./index";
 
 /**
@@ -55,6 +56,34 @@ export function postgresStore(connectionString: string): SignalStore {
         limit ${filter.limit}
       `;
       return rows as unknown as SignalRow[];
+    },
+
+    async insertJournalEntry(
+      entry: JournalEntryInput,
+      severity: number | null,
+    ): Promise<JournalEntry> {
+      const rows = await sql`
+        insert into trade_journal (
+          signal_id, symbol, direction, grade, entry_price, exit_price,
+          result, pnl_pct, closed_at, stop_reason_tag, severity, review_note
+        ) values (
+          ${entry.signal_id}, ${entry.symbol}, ${entry.direction}, ${entry.grade},
+          ${entry.entry_price}, ${entry.exit_price}, ${entry.result}, ${entry.pnl_pct},
+          ${entry.closed_at}, ${entry.stop_reason_tag}, ${severity}, ${entry.review_note}
+        )
+        returning *
+      `;
+      return rows[0] as unknown as JournalEntry;
+    },
+
+    async listJournal(options: { symbol?: string | null; limit: number }): Promise<JournalEntry[]> {
+      const rows = await sql`
+        select * from trade_journal
+        where (${options.symbol ?? null}::text is null or symbol = ${options.symbol ?? null})
+        order by closed_at desc
+        limit ${options.limit}
+      `;
+      return rows as unknown as JournalEntry[];
     },
   };
 }

@@ -91,8 +91,11 @@ export default function Home() {
           <Link href="/symbols" className="hover:text-neutral-200">
             自訂標的
           </Link>
+          <Link href="/review" className="hover:text-neutral-200">
+            復盤
+          </Link>
           <Link href="/history" className="hover:text-neutral-200">
-            歷史訊號
+            歷史
           </Link>
         </nav>
       </header>

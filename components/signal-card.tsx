@@ -1,4 +1,6 @@
+import Link from "next/link";
 import type { TradeSignal } from "@/types/signal";
+import type { AppliedIntervention } from "@/types/journal";
 import { Card, CardContent } from "@/components/ui/card";
 import { GradeBadge } from "@/components/grade-badge";
 import { DimensionBars } from "@/components/dimension-bars";
@@ -6,6 +8,43 @@ import { TradePlanCard } from "@/components/trade-plan-card";
 import { formatPrice, formatTime } from "@/lib/format";
 import { groupDataGaps, KEY_SOURCES } from "@/lib/data-gaps";
 import { cn } from "@/lib/utils";
+
+/**
+ * 本次已套用的干涉 — required by the spec to show not just what was tightened
+ * but which past stop-losses caused it, so the constraint is auditable rather
+ * than mysterious.
+ */
+function Interventions({ items }: { items: AppliedIntervention[] }) {
+  return (
+    <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <h3 className="text-sm font-medium text-amber-300">本次已套用的干涉</h3>
+        <Link href="/review" className="shrink-0 text-[11px] text-neutral-500 hover:text-neutral-300">
+          看復盤 →
+        </Link>
+      </div>
+      <p className="mb-2 text-[11px] leading-relaxed text-neutral-500">
+        這些是因為過去的停損紀錄自動加嚴的條件。干涉只會降級或收緊，不會放寬。
+      </p>
+      <ul className="space-y-2">
+        {items.map((item, i) => (
+          <li key={i} className="border-l-2 border-amber-500/40 pl-3">
+            <p className="text-xs text-neutral-200">
+              {item.tag && <span className="font-mono text-amber-400">{item.tag} </span>}
+              {item.effect}
+            </p>
+            <p className="mt-0.5 text-[11px] text-neutral-500">{item.evidence}</p>
+            {item.triggered_by.length > 0 && (
+              <p className="mt-0.5 text-[10px] text-neutral-600">
+                觸發來源：{item.triggered_by.join("、")}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 function DataGaps({ gaps }: { gaps: string[] }) {
   const { missingKeys, keyRelated, other } = groupDataGaps(gaps);
@@ -163,6 +202,8 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
 
       {/* The answer: one entry, one stop, one target. */}
       <TradePlanCard plan={signal.trade_plan} backtest={signal.plan_backtest} />
+
+      {signal.interventions.length > 0 && <Interventions items={signal.interventions} />}
 
       <Section title="完整價位與分批出場">
         {isNoTrade && (

@@ -5,6 +5,13 @@ import { fetchCotReport, type CotReport } from "../data-sources/cftc";
 export interface PositioningResult {
   biasItems: BiasItem[];
   reports: CotReport[] | null;
+  /**
+   * Direction the 52-week COT extreme argues for (the mean-reversion side), or
+   * null when positioning isn't at an extreme. Surfaced as a flag rather than
+   * left for callers to string-match the bias item, because the S8 intervention
+   * ("COT 處於極端且方向相反時直接 no-trade") depends on reading it correctly.
+   */
+  extremeDirection: "long" | "short" | null;
 }
 
 /** 籌碼面：CFTC COT 非商業淨部位方向、52週極端值、週變化。*/
@@ -15,11 +22,11 @@ export async function analyzePositioning(
 ): Promise<PositioningResult> {
   if (!config.cotContractCode) {
     gaps.push(`${meta.symbol} 無對應的 CFTC COT 合約代碼（可能在美國以外的交易所交易），籌碼面本階段從缺`);
-    return { biasItems: [], reports: null };
+    return { biasItems: [], reports: null, extremeDirection: null };
   }
   const reports = await fetchCotReport(meta.symbol, config.cotContractCode, gaps);
   if (!reports || reports.length === 0) {
-    return { biasItems: [], reports };
+    return { biasItems: [], reports, extremeDirection: null };
   }
   const invert = config.cotInverted ? -1 : 1;
   const items: BiasItem[] = [];
@@ -35,12 +42,14 @@ export async function analyzePositioning(
     source: `CFTC Socrata 6dca-aqww, ${latest.reportDate}`,
   });
 
+  let extremeDirection: "long" | "short" | null = null;
   const window = reports.slice(-52);
   if (window.length >= 10) {
     const nets = window.map((r) => r.netNonCommercial);
     const maxNet = Math.max(...nets);
     const minNet = Math.min(...nets);
     if (latest.netNonCommercial === maxNet) {
+      extremeDirection = invert > 0 ? "short" : "long";
       items.push({
         dimension: "籌碼面",
         factor: `非商業淨部位處於近 ${window.length} 週最高，籌碼過度偏多需留意獲利了結風險`,
@@ -50,6 +59,7 @@ export async function analyzePositioning(
         source: `CFTC Socrata 6dca-aqww, ${latest.reportDate}`,
       });
     } else if (latest.netNonCommercial === minNet) {
+      extremeDirection = invert > 0 ? "long" : "short";
       items.push({
         dimension: "籌碼面",
         factor: `非商業淨部位處於近 ${window.length} 週最低，籌碼過度偏空可能出現反彈`,
@@ -78,5 +88,5 @@ export async function analyzePositioning(
     gaps.push(`CFTC COT (${meta.symbol}) 不足兩週資料，無法計算週變化`);
   }
 
-  return { biasItems: items, reports };
+  return { biasItems: items, reports, extremeDirection };
 }

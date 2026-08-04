@@ -36,6 +36,12 @@ export function buildStopLoss(
   entryZone: { low: number; high: number },
   structures: EntryStructure[],
   atr: number | null,
+  /**
+   * ATR multiple for the buffer beyond the structure. 0.5 is the baseline the
+   * Stage 3 spec names; the S3 intervention raises it to 1.0 after repeated
+   * "stop was too tight" reviews. Never lowered — see lib/journal/interventions.ts.
+   */
+  bufferAtrMultiple = 0.5,
 ): BuiltStopLoss | null {
   const protecting = structures.filter((s) => {
     if (Math.abs(s.distance_pct) > 1.5) return false;
@@ -47,9 +53,9 @@ export function buildStopLoss(
   const anchor = protecting.reduce((closest, s) =>
     Math.abs(s.distance_pct) < Math.abs(closest.distance_pct) ? s : closest,
   );
-  const buffer = atr && atr > 0 ? atr * 0.25 : 0;
+  const buffer = atr && atr > 0 ? atr * bufferAtrMultiple : 0;
   const price = direction === "long" ? anchor.price - buffer : anchor.price + buffer;
-  const bufferNote = buffer ? `，再扣 ATR buffer ${round(buffer)}` : "";
+  const bufferNote = buffer ? `，再扣 ${bufferAtrMultiple}×ATR buffer ${round(buffer)}` : "";
   return {
     price: round(price),
     structure: `${anchor.timeframe} ${anchor.type} @ ${anchor.price}`,
