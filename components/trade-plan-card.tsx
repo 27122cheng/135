@@ -38,16 +38,25 @@ function Leg({
 }
 
 export function TradePlanCard({ plan }: { plan: TradePlan }) {
-  if (!plan.actionable) {
+  if (plan.stance === "wait") {
     return (
-      <div className="rounded-xl border border-neutral-700 bg-neutral-900/60 p-4">
-        <div className="mb-1.5 flex items-center gap-2">
-          <span className="text-sm font-semibold text-neutral-300">交易計畫</span>
-          <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-400">
-            不建議進場
+      <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.04] p-4">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <span className="text-base font-bold text-amber-300">觀望</span>
+          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-400/90">
+            現在不進場
+          </span>
+          <span className="ml-auto text-[11px] text-neutral-600">
+            {plan.decided_by === "ai" ? "AI 判斷" : "預設規則"}
           </span>
         </div>
-        <p className="text-sm leading-relaxed text-neutral-400">{plan.summary}</p>
+        <p className="text-sm leading-relaxed text-neutral-300">{plan.summary}</p>
+        {plan.wait_for && (
+          <p className="mt-3 border-t border-amber-500/20 pt-3 text-sm leading-relaxed text-neutral-400">
+            <span className="text-neutral-500">等待條件：</span>
+            {plan.wait_for}
+          </p>
+        )}
       </div>
     );
   }
@@ -55,7 +64,7 @@ export function TradePlanCard({ plan }: { plan: TradePlan }) {
   return (
     <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/[0.04] p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <span className="text-sm font-semibold text-neutral-100">建議交易計畫</span>
+        <span className="text-base font-bold text-emerald-300">進場</span>
         <span
           className={cn(
             "rounded-full px-2 py-0.5 text-[11px]",

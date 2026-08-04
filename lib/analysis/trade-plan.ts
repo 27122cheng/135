@@ -18,6 +18,13 @@ export interface TradePlanInput {
   slCandidates: Candidate[];
   tpCandidates: Candidate[];
   narrative: string;
+  /** data_gaps so far — the AI should weigh missing evidence when deciding. */
+  knownGaps: string[];
+  /**
+   * True when the hard scoring rules already returned no-trade. The AI may
+   * still explain and say what to wait for, but must not turn it into an entry.
+   */
+  gradeForcesWait: boolean;
 }
 
 function round(n: number): number {
@@ -40,9 +47,13 @@ function riskReward(
   return Math.round((reward / risk) * 100) / 100;
 }
 
-function notActionable(reason: string, decidedBy: "ai" | "fallback" = "fallback"): TradePlan {
+function waitPlan(
+  summary: string,
+  waitFor: string | null,
+  decidedBy: "ai" | "fallback",
+): TradePlan {
   return {
-    actionable: false,
+    stance: "wait",
     entry: null,
     stop_loss: null,
     take_profit: null,
@@ -51,22 +62,49 @@ function notActionable(reason: string, decidedBy: "ai" | "fallback" = "fallback"
     take_profit_reason: "—",
     risk_reward: null,
     confidence: "low",
-    summary: reason,
+    summary,
+    wait_for: waitFor,
     decided_by: decidedBy,
   };
 }
 
 /** Deterministic choice used when the AI is unavailable or returns anything invalid. */
 function fallbackPlan(input: TradePlanInput): TradePlan {
+  if (input.gradeForcesWait) {
+    return waitPlan(
+      `評等為 no-trade（方向分 ${input.bias_score}、結構分 ${input.entry_structure_score}、總分 ${input.total_score}），依硬性規則不進場。`,
+      "等待評等回到 C 以上，或等價格回測到有效結構再重新評估。",
+      "fallback",
+    );
+  }
   const entry = input.entryCandidates[0];
   const sl = input.slCandidates[0];
   const tp = input.tpCandidates[0];
   if (!entry || !sl || !tp) {
-    return notActionable("缺少可用的進場、停損或停利結構，不建議進場。");
+    return waitPlan(
+      "缺少可用的進場、停損或停利結構，無法組成計畫。",
+      "等待價格接近有效的支撐／壓力結構。",
+      "fallback",
+    );
   }
   const rr = riskReward(input.direction, entry.price, sl.price, tp.price);
+  if (rr === null) {
+    return waitPlan(
+      "預設規則算出的停損／停利方向不合理，無法組成計畫。",
+      "等待更清楚的結構出現。",
+      "fallback",
+    );
+  }
+  // A trade that risks more than it stands to make isn't worth taking.
+  if (rr < 1) {
+    return waitPlan(
+      `預設規則算出的風險報酬比僅 1:${rr}，賠率不划算，建議觀望。`,
+      `等待價格回落到更好的進場位置（例如 ${round(input.entryCandidates.at(-1)?.price ?? entry.price)} 附近），或等更遠的停利結構出現。`,
+      "fallback",
+    );
+  }
   return {
-    actionable: true,
+    stance: "enter",
     entry: round(entry.price),
     stop_loss: round(sl.price),
     take_profit: round(tp.price),
@@ -76,8 +114,9 @@ function fallbackPlan(input: TradePlanInput): TradePlan {
     risk_reward: rr,
     confidence: input.grade === "A+" || input.grade === "A" ? "medium" : "low",
     summary:
-      `未使用 AI 判斷（未設定 ANTHROPIC_API_KEY 或呼叫失敗），改用預設規則：` +
-      `取最接近的進場點、最近的保護結構做停損、路徑上第一個障礙做停利。`,
+      "未使用 AI 判斷（未設定 ANTHROPIC_API_KEY 或呼叫失敗），改用預設規則：" +
+      "取最接近的進場點、最近的保護結構做停損、路徑上第一個障礙做停利。",
+    wait_for: null,
     decided_by: "fallback",
   };
 }
@@ -90,27 +129,40 @@ function buildPrompt(input: TradePlanInput): string {
     `評等：${input.grade}（方向分 ${input.bias_score}、結構分 ${input.entry_structure_score}、總分 ${input.total_score}）\n\n` +
     `分析摘要：\n${input.narrative}\n\n` +
     `六面向因子：\n` +
-    input.bias_items
-      .map((b) => `  - [${b.dimension}/${b.direction}/權重${b.weight}] ${b.factor}｜${b.evidence}`)
-      .join("\n") +
+    (input.bias_items.length > 0
+      ? input.bias_items
+          .map((b) => `  - [${b.dimension}/${b.direction}/權重${b.weight}] ${b.factor}｜${b.evidence}`)
+          .join("\n")
+      : "  （無）") +
+    (input.knownGaps.length > 0
+      ? `\n\n已知資料缺口（這些面向目前是瞎的，判斷時要把不確定性算進去）：\n` +
+        input.knownGaps.map((g) => `  - ${g}`).join("\n")
+      : "") +
     `\n\n可選的進場點：\n${list(input.entryCandidates)}\n` +
     `\n可選的停損點：\n${list(input.slCandidates)}\n` +
     `\n可選的停利點：\n${list(input.tpCandidates)}\n\n` +
-    `請綜合以上所有資料，選出你認為最好的一組進場／停損／停利組合。\n\n` +
+    `請綜合以上所有資料，決定現在應該「進場」還是「觀望」。\n\n` +
+    (input.gradeForcesWait
+      ? `注意：本訊號依硬性計分規則已判定為 no-trade，因此 stance 必須是 "wait"。` +
+        `請說明為什麼不值得進場，以及要等到什麼條件出現才值得重新評估。\n\n`
+      : `觀望是完全正當的結論，不要為了給答案而硬湊一筆交易。` +
+        `遇到以下情況請直接選擇觀望：六面向彼此矛盾、風險報酬比不划算、` +
+        `關鍵面向因資料缺口而無法判斷、或進場點離結構太遠。\n\n`) +
     `嚴格規則：\n` +
     `1. 你只能從上面清單中「選編號」，絕對不可以自己提出任何新的價格數字。\n` +
-    `2. 只准根據以上提供的資料推論，不准補充未提供的事實。\n` +
-    `3. 若你認為這筆交易不值得進場（例如訊號矛盾、風險報酬比太差），把 actionable 設為 false。\n\n` +
+    `2. 只准根據以上提供的資料推論，不准補充未提供的事實。\n\n` +
     `輸出嚴格的 JSON（不要 markdown code fence、不要其他文字）：\n` +
-    `{"actionable": boolean, "entry_index": number, "sl_index": number, "tp_index": number, ` +
+    `{"stance": "enter"|"wait", "entry_index": number, "sl_index": number, "tp_index": number, ` +
     `"entry_reason": string, "sl_reason": string, "tp_reason": string, ` +
-    `"confidence": "high"|"medium"|"low", "summary": string}\n` +
-    `三個 reason 各用一句繁體中文說明為何選這個點；summary 用繁體中文 80 字內總結這個計畫的邏輯與主要風險。`
+    `"confidence": "high"|"medium"|"low", "summary": string, "wait_for": string}\n` +
+    `stance="wait" 時，三個 index 可填 0（會被忽略），但 wait_for 必填：用一句繁體中文說明「要等什麼條件出現才考慮進場」。\n` +
+    `stance="enter" 時，三個 reason 各用一句繁體中文說明為何選這個點，wait_for 填空字串。\n` +
+    `summary 一律用繁體中文 80 字內總結你的判斷邏輯與主要風險。`
   );
 }
 
 interface AiResponse {
-  actionable?: boolean;
+  stance?: string;
   entry_index?: number;
   sl_index?: number;
   tp_index?: number;
@@ -119,6 +171,7 @@ interface AiResponse {
   tp_reason?: string;
   confidence?: string;
   summary?: string;
+  wait_for?: string;
 }
 
 function parse(text: string): AiResponse | null {
@@ -136,22 +189,29 @@ function validIndex(value: unknown, list: Candidate[]): value is number {
 }
 
 /**
- * Asks Claude to pick the single best entry/SL/TP *by index* from candidates
- * derived entirely from real structure. Any invalid or out-of-range index —
- * i.e. any attempt to answer with something we didn't offer — falls back to
- * the deterministic plan rather than trusting the model with a raw price.
+ * Asks Claude to decide 進場 vs 觀望, and when entering, to pick the best
+ * entry/SL/TP *by index* from candidates derived entirely from real structure.
+ * Any invalid or out-of-range index — i.e. any attempt to answer with a price
+ * we didn't offer — falls back to the deterministic plan rather than trusting
+ * the model with a raw number.
  */
 export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Promise<TradePlan> {
-  if (input.entryCandidates.length === 0 || input.slCandidates.length === 0 || input.tpCandidates.length === 0) {
-    return notActionable(
-      "沒有足夠的真實結構可以組成進場／停損／停利（缺少保護結構或路徑障礙），依規則不建議進場。",
-    );
-  }
+  const noCandidates =
+    input.entryCandidates.length === 0 ||
+    input.slCandidates.length === 0 ||
+    input.tpCandidates.length === 0;
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    gaps.push("缺少 ANTHROPIC_API_KEY，AI 交易計畫改用預設規則挑選價位");
+    gaps.push("缺少 ANTHROPIC_API_KEY，交易計畫改用預設規則判斷");
     return fallbackPlan(input);
+  }
+  if (noCandidates && !input.gradeForcesWait) {
+    return waitPlan(
+      "沒有足夠的真實結構可以組成進場／停損／停利，依規則觀望。",
+      "等待價格接近有效的支撐／壓力結構。",
+      "fallback",
+    );
   }
 
   try {
@@ -164,13 +224,19 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
     const block = message.content.find((b) => b.type === "text");
     const parsed = parse(block && block.type === "text" ? block.text : "");
     if (!parsed) {
-      gaps.push("AI 交易計畫回應格式無法解析，改用預設規則");
+      gaps.push("交易計畫 AI 回應格式無法解析，改用預設規則");
       return fallbackPlan(input);
     }
 
-    if (parsed.actionable === false) {
-      return notActionable(
-        parsed.summary?.trim() || "AI 判斷此筆訊號不值得進場。",
+    const wantsWait = parsed.stance !== "enter";
+    // The hard scoring rules win: a no-trade grade can never become an entry.
+    if (wantsWait || input.gradeForcesWait || noCandidates) {
+      if (!wantsWait && input.gradeForcesWait) {
+        gaps.push("AI 建議進場但評等為 no-trade，依硬性規則強制改為觀望");
+      }
+      return waitPlan(
+        parsed.summary?.trim() || "AI 判斷目前不值得進場。",
+        parsed.wait_for?.trim() || "等待更明確的訊號出現。",
         "ai",
       );
     }
@@ -180,7 +246,7 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
       !validIndex(parsed.sl_index, input.slCandidates) ||
       !validIndex(parsed.tp_index, input.tpCandidates)
     ) {
-      gaps.push("AI 交易計畫回傳的價位編號無效（可能試圖給出清單外的價格），已改用預設規則");
+      gaps.push("交易計畫 AI 回傳的價位編號無效（可能試圖給出清單外的價格），已改用預設規則");
       return fallbackPlan(input);
     }
 
@@ -199,7 +265,7 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
         : "medium";
 
     return {
-      actionable: true,
+      stance: "enter",
       entry: round(entry.price),
       stop_loss: round(sl.price),
       take_profit: round(tp.price),
@@ -209,10 +275,11 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
       risk_reward: rr,
       confidence,
       summary: parsed.summary?.trim() || "（AI 未提供總結）",
+      wait_for: null,
       decided_by: "ai",
     };
   } catch {
-    gaps.push("呼叫 Anthropic API 產生 AI 交易計畫失敗，改用預設規則");
+    gaps.push("呼叫 Anthropic API 產生交易計畫失敗，改用預設規則");
     return fallbackPlan(input);
   }
 }

@@ -57,7 +57,7 @@ function buildNoPriceSignal(
     entry_structures: [],
     path_obstacles: [],
     trade_plan: {
-      actionable: false,
+      stance: "wait",
       entry: null,
       stop_loss: null,
       take_profit: null,
@@ -66,7 +66,8 @@ function buildNoPriceSignal(
       take_profit_reason: "—",
       risk_reward: null,
       confidence: "low",
-      summary: "無法取得價格資料，不提供交易計畫。",
+      summary: "無法取得價格資料，只能觀望。",
+      wait_for: "等待價格資料來源恢復（見資料缺口）。",
       decided_by: "fallback",
     },
     narrative:
@@ -210,37 +211,26 @@ async function buildSignalForSymbol(
     },
     atrD1,
   );
-  const tradePlan =
-    grade === "no-trade"
-      ? {
-          actionable: false,
-          entry: null,
-          stop_loss: null,
-          take_profit: null,
-          entry_reason: "—",
-          stop_loss_reason: "—",
-          take_profit_reason: "—",
-          risk_reward: null,
-          confidence: "low" as const,
-          summary: `評等為 no-trade（方向分 ${score.biasScore}、結構分 ${score.entryStructureScore}、總分 ${score.totalScore}），依規則不提供交易計畫。`,
-          decided_by: "fallback" as const,
-        }
-      : await buildTradePlan(
-          {
-            symbol: meta.symbol,
-            direction,
-            grade,
-            bias_score: score.biasScore,
-            entry_structure_score: score.entryStructureScore,
-            total_score: score.totalScore,
-            bias_items: biasItems,
-            entryCandidates,
-            slCandidates,
-            tpCandidates,
-            narrative,
-          },
-          gaps,
-        );
+  // Even on a no-trade grade the AI is still asked to weigh in — it can't turn
+  // it into an entry (gradeForcesWait), but it can explain what to wait for.
+  const tradePlan = await buildTradePlan(
+    {
+      symbol: meta.symbol,
+      direction,
+      grade,
+      bias_score: score.biasScore,
+      entry_structure_score: score.entryStructureScore,
+      total_score: score.totalScore,
+      bias_items: biasItems,
+      entryCandidates,
+      slCandidates,
+      tpCandidates,
+      narrative,
+      knownGaps: [...new Set(gaps)],
+      gradeForcesWait: grade === "no-trade",
+    },
+    gaps,
+  );
 
   const dedupedGaps = [...new Set(gaps)];
 

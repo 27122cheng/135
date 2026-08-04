@@ -69,8 +69,12 @@ export type Grade = "A+" | "A" | "B" | "C" | "no-trade";
  * the spec's "SL/TP must be anchored to real structure" rule still holds.
  */
 export interface TradePlan {
-  /** false = 不建議進場; the price fields are then null. */
-  actionable: boolean;
+  /**
+   * 進場 or 觀望. Standing aside is a first-class outcome, not a failure —
+   * when "wait", the price fields are null and `wait_for` says what would
+   * change the answer.
+   */
+  stance: "enter" | "wait";
   entry: number | null;
   stop_loss: number | null;
   take_profit: number | null;
@@ -82,6 +86,8 @@ export interface TradePlan {
   confidence: "high" | "medium" | "low";
   /** Plain-language summary of the whole plan. */
   summary: string;
+  /** 觀望時要等的條件（進場時為 null）。 */
+  wait_for: string | null;
   /** Whether Claude chose the levels, or the deterministic fallback did. */
   decided_by: "ai" | "fallback";
 }
