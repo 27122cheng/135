@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { BiasItem } from "@/types/signal";
 import { fetchGdeltNews } from "../data-sources/gdelt";
 import { fetchFinnhubMarketNews } from "../data-sources/finnhub";
+import { scoreHeadlines } from "./news-lexicon";
 
 interface Article {
   headline: string;
@@ -41,6 +42,47 @@ function parseResponse(text: string): { score: number; summary: string } | null 
   }
 }
 
+/**
+ * Zero-key path: keyword sentiment over the same headlines. Weight is capped
+ * at 1 (the AI path can reach 2) because keyword counting can't read context.
+ */
+function lexiconResult(articles: Article[], gaps: string[]): NewsAnalysisResult {
+  const { score, bullishHits, bearishHits, matched } = scoreHeadlines(
+    articles.map((a) => a.headline),
+  );
+  const sources = articles.slice(0, 10).map((a) => a.url);
+
+  if (matched === 0) {
+    gaps.push(
+      `未設定 ANTHROPIC_API_KEY，新聞面改用關鍵字評分，但 ${articles.length} 則標題中無可辨識的多空關鍵字`,
+    );
+    return { biasItems: [], summary: null, sources };
+  }
+
+  gaps.push("未設定 ANTHROPIC_API_KEY，新聞面改用關鍵字評分（準確度低於 AI 評分，權重上限 1）");
+
+  const direction = score > 0.2 ? "long" : score < -0.2 ? "short" : "neutral";
+  const biasItems: BiasItem[] =
+    direction === "neutral"
+      ? []
+      : [
+          {
+            dimension: "新聞面",
+            factor: `近48小時新聞關鍵字情緒分 ${score.toFixed(2)}（多空關鍵字 ${bullishHits}:${bearishHits}）`,
+            direction,
+            weight: 1,
+            evidence: `${articles.length} 則標題中 ${matched} 則含多空關鍵字，多方 ${bullishHits} 次／空方 ${bearishHits} 次`,
+            source: "GDELT 2.0 doc API + 本地關鍵字表（非 AI 評分）",
+          },
+        ];
+
+  return {
+    biasItems,
+    summary: `［關鍵字評分，非 AI］近 48 小時 ${articles.length} 則新聞中 ${matched} 則含多空關鍵字，整體${direction === "long" ? "偏多" : direction === "short" ? "偏空" : "中性"}（${score.toFixed(2)}）。`,
+    sources,
+  };
+}
+
 /** 新聞面：抓近 48h 新聞（GDELT + Finnhub），交給 Claude 評 -1~+1 情緒分並摘要，附來源連結。*/
 export async function analyzeNews(
   gdeltQuery: string,
@@ -62,14 +104,15 @@ export async function analyzeNews(
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    gaps.push("缺少 ANTHROPIC_API_KEY，無法對新聞進行情緒評分");
-    return { biasItems: [], summary: null, sources: articles.map((a) => a.url) };
+    // No LLM available — fall back to keyword scoring rather than dropping the
+    // whole 新聞面 dimension. Lower confidence, and labelled as such.
+    return lexiconResult(articles, gaps);
   }
 
   try {
     const client = new Anthropic({ apiKey });
     const message = await client.messages.create({
-      model: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5",
+      model: process.env.ANTHROPIC_MODEL ?? "claude-opus-5",
       max_tokens: 500,
       messages: [{ role: "user", content: buildPrompt(articles) }],
     });

@@ -40,7 +40,7 @@ export async function generateNarrative(input: NarrativeInput, gaps: string[]): 
   try {
     const client = new Anthropic({ apiKey });
     const message = await client.messages.create({
-      model: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5",
+      model: process.env.ANTHROPIC_MODEL ?? "claude-opus-5",
       max_tokens: 700,
       messages: [
         {

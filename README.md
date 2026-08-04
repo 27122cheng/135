@@ -119,9 +119,23 @@ value fails deployment there). Raise it if your plan allows more.
 | 籌碼面 | CFTC Socrata COT | — |
 | 資金流 | SPDR GLD 持倉 XML + CFTC 未平倉量 | — |
 
-**唯一真正需要金鑰的是 `ANTHROPIC_API_KEY`** —— AI 綜合敘述與 AI 交易計畫需要
-LLM，沒有合適的免費公開替代品。未設定時兩者會改用本地預設規則，訊號卡右上角
-顯示「預設規則」而非「AI 判斷」，其餘面向完全不受影響。
+### 關於 `ANTHROPIC_API_KEY`
+
+**沒有免金鑰的 LLM API** —— 任何 LLM 服務都要註冊。未設定時三個 AI 環節各有本地備援：
+
+| AI 環節 | 無金鑰時的備援 | 損失 |
+|---|---|---|
+| 新聞情緒評分 | 本地關鍵字表 (`lib/analysis/news-lexicon.ts`) | 讀不出語境（分不出 "gold rallies" 和 "gold rally fades"），權重上限降為 1 |
+| AI 綜合敘述 | 本地組裝的衝突提示文字 | 沒有跨面向的綜合判讀 |
+| AI 交易計畫 | 預設規則（各取第一個候選、風報比 <1:1 則觀望） | 沒有「哪個進場點最好」的判斷 |
+
+所以零金鑰時六個面向都有分數、訊號完整可用，只是少了 AI 的判斷品質。
+卡片會顯示「預設規則」而非「AI 判斷」，關鍵字評分的來源也會標明「非 AI 評分」。
+
+**成本**：預設模型是 `claude-opus-5`（$5/$25 per MTok）。每個訊號約 3 次呼叫，
+9 商品 × 每 4 小時 = 每天約 162 次。要壓成本可用 `ANTHROPIC_MODEL=claude-haiku-4-5`
+（$1/$5 per MTok，約 1/5 價格）。若想改用其他供應商的免費額度（Gemini、Groq
+等），需要自行替換 `lib/analysis/` 下三個檔案的 SDK 呼叫。
 
 一個運作中的備援來源不會被記成 `data_gaps` —— 只有當某個面向的**所有**來源都失敗時才會。
 
