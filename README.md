@@ -14,7 +14,7 @@ end-to-end. A GitHub Actions workflow refreshes every 4h into Postgres, and
 npm install
 cp .env.example .env.local   # 可以完全空白 — 見下方「零金鑰可跑」
 npm run dev
-npm test                     # 13 個測試套件，214 項斷言
+npm test                     # 14 個測試套件，233 項斷言
 ```
 
 Open http://localhost:3000. Pick any symbol in the left panel — each calls
@@ -728,7 +728,7 @@ npm test
 ```
 
 沙箱連不到任何一個金融 API，所以驗證靠的是 known-answer 測試 + stub 過的
-`fetch`，不是真的打上去。13 個套件、214 項斷言，每個套件跑在自己的行程裡
+`fetch`，不是真的打上去。14 個套件、233 項斷言，每個套件跑在自己的行程裡
 （好幾個會替換 `global.fetch` 並重設模組層快取，共用行程會讓前一個的 stub
 汙染後一個）。
 
@@ -740,6 +740,8 @@ npm test
 | `ohlcv` | 來源鏈；**能用的備援不准報缺口，但 stale 一定要報** |
 | `keys` | 允許清單擋掉 service-role / cron secret；併發請求不互相看見 |
 | `data-gaps` | 「本次失敗」與「先天限制」分類；沒見過的訊息不准被消音 |
+| `gdelt` | 零結果與真失敗要分得開；查詢失敗會退回單一詞再試 |
+| `db` | 首次設定錯誤翻譯、schema 常數與 .sql 檔不得漂移、DATABASE_URL 不可由瀏覽器設定 |
 | `bt` `lv` `oi` `lex` `fred` `plan` | 回測幾何、結構聚類、未平倉四象限、關鍵字情緒、CSV 解析、計畫組裝 |
 
 測試用的斷言器會設定 non-zero exit code。原本有幾個舊檔案用 `console.assert`

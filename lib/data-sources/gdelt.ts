@@ -43,7 +43,12 @@ async function queryGdelt(query: string): Promise<GdeltArticle[] | null> {
     `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}` +
     `&mode=artlist&maxrecords=25&format=json&timespan=48h&sort=hybridrel`;
   const data = await fetchJson<GdeltDocResponse>(url, undefined, 15000);
-  if (!data || !Array.isArray(data.articles)) return null;
+  // null means the request or the JSON parse failed — a real failure.
+  if (!data || typeof data !== "object") return null;
+  // A valid response with no `articles` key is GDELT's way of saying "nothing
+  // matched", not an error. Treating it as a failure made every quiet news day
+  // look like a broken data source.
+  if (!Array.isArray(data.articles)) return [];
   return data.articles.map((a) => ({
     headline: a.title,
     source: a.domain,
@@ -62,9 +67,12 @@ function simplify(query: string): string | null {
 
 /** Free, no-key GDELT 2.0 DOC API — last 48h of articles matching `query`. */
 export async function fetchGdeltNews(query: string, gaps: string[]): Promise<GdeltArticle[] | null> {
+  // The full boolean query makes for an unreadable warning; the first term is
+  // enough to identify which symbol's news failed.
+  const short = query.split(/\s+OR\s+/i)[0].replace(/"/g, "").trim();
   const result = await fetchFree<GdeltArticle[]>({
     source: "gdelt",
-    label: `GDELT 新聞查詢 (${query})`,
+    label: `GDELT 新聞 (${short})`,
     key: `gdelt:${query}`,
     ttlMs: 15 * 60 * 1000,
     limit: GDELT_LIMIT,
@@ -83,7 +91,7 @@ export async function fetchGdeltNews(query: string, gaps: string[]): Promise<Gde
   });
   if (!result) return null;
   if (result.value.length === 0) {
-    gaps.push(`GDELT 近 48 小時查無 ${query} 相關新聞`);
+    gaps.push(`GDELT 近 48 小時查無「${short}」相關新聞`);
   }
   return result.value;
 }

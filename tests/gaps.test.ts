@@ -52,6 +52,17 @@ import { groupDataGaps } from "@/lib/data-gaps";
   check("a real fetch failure stays loud", g.other.length === 1, g.other);
 }
 
+// The three lines a EURUSD card showed. Two were the same fact reported twice,
+// and the interest-rate one is a limitation of FRED's approved series list.
+{
+  const g = groupDataGaps([
+    "兩國利差需要外國公債殖利率資料，FRED 核准清單僅含美國公債，本階段暫不納入此項",
+    "GDELT 新聞 (euro) 取得失敗，且無可用快取",
+  ]);
+  check("the rate-differential note is permanent", g.permanent.length === 1, g.permanent);
+  check("only the GDELT failure is actionable", g.other.length === 1, g.other);
+}
+
 // Anything unrecognised must land in the loud bucket, never be silenced.
 {
   const g = groupDataGaps(["某個沒見過的新錯誤訊息"]);

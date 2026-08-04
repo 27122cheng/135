@@ -36,6 +36,10 @@ const PERMANENT_PATTERNS = [
   /不在免費 API 清單內/,
   /無對應的 CFTC COT 合約代碼/,
   /沒有免金鑰來源/,
+  // e.g. 兩國利差 — FRED's approved series are US-only, so there is no free
+  // source for foreign sovereign yields. Retrying will never fix it.
+  /本階段(暫)?不納入/,
+  /核准清單僅含/,
 ];
 
 function isPermanent(gap: string): boolean {

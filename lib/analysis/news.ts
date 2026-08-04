@@ -106,7 +106,9 @@ export async function analyzeNews(
     ...(finnhub ?? []).map((a) => ({ headline: a.headline, source: a.source, url: a.url, datetime: a.datetime })),
   ];
   if (articles.length === 0) {
-    gaps.push("近 48 小時無相關新聞（GDELT 與 Finnhub 皆無結果或取得失敗）");
+    // No gap pushed here on purpose. fetchGdeltNews has already said either
+    // "取得失敗" or "查無相關新聞", and Finnhub is optional — adding a generic
+    // "no news" line on top would report the same fact twice.
     return { biasItems: [], summary: null, sources: [] };
   }
 
