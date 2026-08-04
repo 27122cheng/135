@@ -218,11 +218,20 @@ SPDR 官方持倉 XML 有兩個問題：它會擋雲端機房 IP，而且**只�
 
 ### 步驟 1：開一個 Neon 免費 Postgres
 
+**建議走 Vercel 這條**（少一次複製貼上，也不會漏抄密碼）：
+
+1. Vercel 專案 → **Storage** 分頁 → **Create Database** → 選 **Neon**
+2. 選 Free 方案，按 Create
+3. 完成 —— Vercel 會自動把 `DATABASE_URL` 注入這個專案的環境變數，
+   **步驟 3 可以整個跳過**
+
+或者自己去 Neon 開：
+
 1. 到 https://neon.tech，用 GitHub 或 Google 登入（免費方案不用信用卡）
 2. **Create project** → 名字隨便取，region 挑離你近的
 3. 建好後首頁會顯示 **Connection string**，長這樣：
    `postgresql://neondb_owner:xxxx@ep-xxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require`
-4. 整串複製起來
+4. 整串複製起來（**密碼在字串中間**，最常見的失敗就是漏抄）
 
 ### 步驟 2：建資料表
 
@@ -235,13 +244,16 @@ SPDR 官方持倉 XML 有兩個問題：它會擋雲端機房 IP，而且**只�
 
 ### 步驟 3：把連線字串給 Vercel
 
-Vercel 專案 → **Settings → Environment Variables** → 新增：
+**從 Vercel Storage 建的話這步跳過** —— `DATABASE_URL` 已經在了。
+
+自己開 Neon 的話：Vercel 專案 → **Settings → Environment Variables** → 新增：
 
 | Name | Value |
 |---|---|
 | `DATABASE_URL` | 步驟 1 複製的那整串 |
 
-存檔後到 **Deployments** 頁按 **Redeploy**。環境變數不會套用到既有的部署。
+不管哪一條，最後都要到 **Deployments** 頁按 **Redeploy** ——
+環境變數不會套用到既有的部署。
 
 ### 步驟 4：確認
 
