@@ -2,6 +2,7 @@ import type { TradeSignal } from "@/types/signal";
 import { Card, CardContent } from "@/components/ui/card";
 import { GradeBadge } from "@/components/grade-badge";
 import { DimensionBars } from "@/components/dimension-bars";
+import { TradePlanCard } from "@/components/trade-plan-card";
 import { formatPrice, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -84,10 +85,10 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Headline: symbol, direction, grade, and the three prices that matter. */}
+      {/* Headline: symbol, direction, grade. */}
       <Card>
         <CardContent className="p-4 pt-4">
-          <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-xl font-bold text-neutral-100">{signal.symbol}</h2>
               <p className="mt-0.5 text-xs text-neutral-500">
@@ -102,15 +103,31 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
             <GradeBadge grade={signal.grade} />
           </div>
 
-          {isNoTrade && (
-            <p className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-              {noPrice
-                ? "無法取得價格資料，此訊號不成立。"
-                : "評等為 no-trade，以下價位僅供參考，不構成有效交易訊號。"}
-            </p>
-          )}
+          <div className="mt-3 flex items-center justify-between text-xs text-neutral-500">
+            <span>
+              方向分 <span className="font-mono text-neutral-300">{signal.bias_score}</span>
+              <span className="mx-1.5 text-neutral-700">+</span>
+              結構分 <span className="font-mono text-neutral-300">{signal.entry_structure_score}</span>
+            </span>
+            <span>
+              總分 <span className="font-mono text-base text-neutral-100">{signal.total_score}</span>
+            </span>
+          </div>
+        </CardContent>
+      </Card>
 
-          <div className="rounded-lg border border-neutral-800 bg-neutral-950/50 px-3">
+      {/* The answer: one entry, one stop, one target. */}
+      <TradePlanCard plan={signal.trade_plan} />
+
+      <Section title="完整價位與分批出場">
+        {isNoTrade && (
+          <p className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+            {noPrice
+              ? "無法取得價格資料，此訊號不成立。"
+              : "評等為 no-trade，以下價位僅供參考，不構成有效交易訊號。"}
+          </p>
+        )}
+        <div className="rounded-lg border border-neutral-800 bg-neutral-950/50 px-3">
             <PriceRow
               label="進場"
               value={entryLabel}
@@ -140,21 +157,9 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
                   tone="tp"
                 />
               ))
-            )}
-          </div>
-
-          <div className="mt-3 flex items-center justify-between text-xs text-neutral-500">
-            <span>
-              方向分 <span className="font-mono text-neutral-300">{signal.bias_score}</span>
-              <span className="mx-1.5 text-neutral-700">+</span>
-              結構分 <span className="font-mono text-neutral-300">{signal.entry_structure_score}</span>
-            </span>
-            <span>
-              總分 <span className="font-mono text-base text-neutral-100">{signal.total_score}</span>
-            </span>
-          </div>
-        </CardContent>
-      </Card>
+          )}
+        </div>
+      </Section>
 
       {/* Six dimensions — the main "why", so it stays open. */}
       <Card>

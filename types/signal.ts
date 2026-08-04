@@ -62,6 +62,30 @@ export interface PathObstacle {
 
 export type Grade = "A+" | "A" | "B" | "C" | "no-trade";
 
+/**
+ * The single actionable recommendation: one entry, one stop, one target.
+ * Every price here is copied from a real computed structure — the AI only
+ * ever picks *which* candidate to use (by index), never a raw number, so
+ * the spec's "SL/TP must be anchored to real structure" rule still holds.
+ */
+export interface TradePlan {
+  /** false = 不建議進場; the price fields are then null. */
+  actionable: boolean;
+  entry: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  entry_reason: string;
+  stop_loss_reason: string;
+  take_profit_reason: string;
+  /** Derived from the three prices above, for display only — never used to place them. */
+  risk_reward: number | null;
+  confidence: "high" | "medium" | "low";
+  /** Plain-language summary of the whole plan. */
+  summary: string;
+  /** Whether Claude chose the levels, or the deterministic fallback did. */
+  decided_by: "ai" | "fallback";
+}
+
 export interface TradeSignal {
   symbol: string;
   direction: "long" | "short";
@@ -91,6 +115,8 @@ export interface TradeSignal {
   entry_structures: EntryStructure[];
   path_obstacles: PathObstacle[];
   narrative: string;
+  /** The one recommendation to act on — see TradePlan. */
+  trade_plan: TradePlan;
   data_gaps: string[];
 }
 

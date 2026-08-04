@@ -51,6 +51,7 @@ export async function GET(request: Request) {
         entry_structures: signal.entry_structures,
         path_obstacles: signal.path_obstacles,
         narrative: signal.narrative,
+        trade_plan: signal.trade_plan,
         data_gaps: signal.data_gaps,
         generated_at: signal.generated_at,
       });

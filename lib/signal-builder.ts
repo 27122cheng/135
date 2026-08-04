@@ -9,6 +9,7 @@ import { analyzePositioning } from "./analysis/positioning";
 import { analyzeNews } from "./analysis/news";
 import { analyzeFundFlow } from "./analysis/fundflow";
 import { generateNarrative } from "./analysis/ai-narrative";
+import { buildTradePlan, collectCandidates } from "./analysis/trade-plan";
 import { scoreSignal } from "./scoring";
 import { buildStopLoss, buildTakeProfits } from "./entry-exit";
 
@@ -55,6 +56,19 @@ function buildNoPriceSignal(
     bias_items: biasItems,
     entry_structures: [],
     path_obstacles: [],
+    trade_plan: {
+      actionable: false,
+      entry: null,
+      stop_loss: null,
+      take_profit: null,
+      entry_reason: "—",
+      stop_loss_reason: "—",
+      take_profit_reason: "—",
+      risk_reward: null,
+      confidence: "low",
+      summary: "無法取得價格資料，不提供交易計畫。",
+      decided_by: "fallback",
+    },
     narrative:
       `${meta.symbol} 無法產生有效訊號：所有 OHLCV 來源皆取得失敗（Twelve Data 與 yfinance 備援都沒有回應可用資料）。` +
       `請檢查 /api/diagnostics 確認各資料來源在部署環境的連線狀態，或設定 TWELVE_DATA_API_KEY。` +
@@ -184,6 +198,50 @@ async function buildSignalForSymbol(
     gaps,
   );
 
+  // The single actionable recommendation. Candidates come from the real
+  // structures computed above; the AI only picks among them.
+  const { entryCandidates, slCandidates, tpCandidates } = collectCandidates(
+    {
+      direction,
+      entry_zone: entryZone,
+      stop_loss: finalStopLoss,
+      take_profits: takeProfits,
+      entry_structures: technical.entryStructures,
+    },
+    atrD1,
+  );
+  const tradePlan =
+    grade === "no-trade"
+      ? {
+          actionable: false,
+          entry: null,
+          stop_loss: null,
+          take_profit: null,
+          entry_reason: "—",
+          stop_loss_reason: "—",
+          take_profit_reason: "—",
+          risk_reward: null,
+          confidence: "low" as const,
+          summary: `評等為 no-trade（方向分 ${score.biasScore}、結構分 ${score.entryStructureScore}、總分 ${score.totalScore}），依規則不提供交易計畫。`,
+          decided_by: "fallback" as const,
+        }
+      : await buildTradePlan(
+          {
+            symbol: meta.symbol,
+            direction,
+            grade,
+            bias_score: score.biasScore,
+            entry_structure_score: score.entryStructureScore,
+            total_score: score.totalScore,
+            bias_items: biasItems,
+            entryCandidates,
+            slCandidates,
+            tpCandidates,
+            narrative,
+          },
+          gaps,
+        );
+
   const dedupedGaps = [...new Set(gaps)];
 
   const signal: TradeSignal = {
@@ -201,6 +259,7 @@ async function buildSignalForSymbol(
     entry_structures: technical.entryStructures,
     path_obstacles: technical.pathObstacles,
     narrative,
+    trade_plan: tradePlan,
     data_gaps: dedupedGaps,
   };
 
