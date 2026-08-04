@@ -33,6 +33,8 @@ export const KEY_SOURCES: Record<string, string> = {
  * category, which is the safe direction to fail.
  */
 const PERMANENT_PATTERNS = [
+  // Kept for any future message that genuinely has no free source. 央行購金
+  // used to match this and no longer does — DBnomics covers it now.
   /不在免費 API 清單內/,
   /無對應的 CFTC COT 合約代碼/,
   /沒有免金鑰來源/,

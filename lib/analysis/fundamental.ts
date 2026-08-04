@@ -5,6 +5,7 @@ import { fetchEiaCrudeInventory } from "../data-sources/eia";
 import { fetchEarningsCalendar } from "../data-sources/finnhub";
 import { rateSpreadFor } from "@/config/rate-spreads";
 import { analyzeRateSpread } from "./rate-spread";
+import { analyzeGoldFlows } from "./gold-flows";
 
 interface Trend {
   direction: "up" | "down" | "flat";
@@ -131,8 +132,12 @@ export async function analyzeFundamental(
     });
   }
 
+  // 央行購金與黃金實體流向 — DBnomics gives one keyless API over IMF and the
+  // national central banks, so this no longer needs a paid source. Each source
+  // becomes its own factor with a frequency-capped weight; see gold-flows.ts.
   if (meta.symbol === "XAUUSD") {
-    gaps.push("央行購金數據不在免費 API 清單內，本階段基本面計分不納入此項");
+    const flows = await analyzeGoldFlows(gaps);
+    items.push(...flows.items);
   }
   // 兩國利差 — FRED only covers US Treasuries, so the foreign legs come from
   // Stooq's daily CSV / the ECB portal. See lib/analysis/rate-spread.ts.

@@ -14,7 +14,7 @@ end-to-end. A GitHub Actions workflow refreshes every 4h into Postgres, and
 npm install
 cp .env.example .env.local   # 可以完全空白 — 見下方「零金鑰可跑」
 npm run dev
-npm test                     # 18 個測試套件，394 項斷言
+npm test                     # 19 個測試套件，438 項斷言
 ```
 
 Open http://localhost:3000. Pick any symbol in the left panel — each calls
@@ -97,11 +97,58 @@ rather than guessed.
 | 面向 | 檔案 | 資料來源 |
 |---|---|---|
 | 技術面 | `lib/analysis/technical.ts` + `lib/analysis/levels.ts` | OHLCV → swing HH/HL/LH/LL, EMA20/50/200 排列, RSI(14) 背離, MACD histogram, 整數關卡；結構區改用**跨時框聚類**（見下） |
-| 基本面 | `lib/analysis/fundamental.ts` + `lib/analysis/rate-spread.ts` | Config-driven per symbol: **兩國利差**（見下）, 實質利率(DGS10−T10YIE，僅XAUUSD), DXY 趨勢, VIX, EIA 原油庫存(僅WTI), Finnhub 財報日曆(僅美股指數) |
+| 基本面 | `lib/analysis/fundamental.ts` + `rate-spread.ts` + `gold-flows.ts` | Config-driven per symbol: **兩國利差**、**央行購金／黃金流向**（皆見下）, 實質利率(DGS10−T10YIE，僅XAUUSD), DXY 趨勢, VIX, EIA 原油庫存(僅WTI), Finnhub 財報日曆(僅美股指數) |
 | 籌碼面 | `lib/analysis/positioning.ts` | CFTC COT (Socrata, legacy futures-only report) 非商業淨部位、52週極值、週變化，依 config 合約代碼與方向反轉設定 |
 | 新聞面 | `lib/analysis/news.ts` | GDELT 2.0 DOC API + Finnhub `/news` → AI 評 -1~+1 情緒分並摘要（走 `lib/ai` 的供應商鏈），關鍵字依 config 逐商品設定 |
 | 資金流 | `lib/analysis/fundflow.ts` + `lib/analysis/open-interest.ts` | GLD 成交量資金流代理(僅XAUUSD，見下)、SPDR GLD 持倉快照、DXY 方向、VIX、**未平倉量分析**（價量未平倉四象限、52週水位、異常變化偵測） |
 | AI綜合 | `lib/analysis/ai-narrative.ts` | 上述五面向的結構化 JSON → AI 產生 `narrative`（prompt 明確禁止補充未提供的事實） |
+
+## 央行購金／黃金流向 — `lib/analysis/gold-flows.ts`
+
+原本這裡寫著「央行購金數據不在免費 API 清單內」，被歸類成先天限制。
+**現在不是了** —— DBnomics 一個免金鑰 API 就打通了。
+
+### 統一層：DBnomics
+
+`https://api.db.nomics.world/v22/` 免認證、免金鑰，一個 API 前面接了 90+ 個
+統計機構（IMF、BIS、ECB、OECD、世界銀行、各國央行與統計局）。
+
+**先做這一層，可以省掉大半工作**：DBnomics 已經把每個機構正規化成同一種 JSON，
+所以 IMF IFS 的貨幣性黃金持有量跟某國央行的儲備序列拿回來長得一模一樣 ——
+不必為每個機構各寫一個 SDMX parser。
+
+只有 DBnomics **沒有涵蓋**的才值得自寫 scraper（瑞士海關、SGE、香港統計處、
+HMRC、LBMA）。這些目前列在 `SCRAPER_ONLY_SOURCES` 裡，是刻意留白不是漏掉。
+
+> **序列代碼未經驗證。** 沙箱連不到 api.db.nomics.world，`config/gold-fundamentals.ts`
+> 裡的 id 是照各機構文件的命名規則寫的。代碼錯只會查無資料並停用該因子，
+> **不會產生錯的數字**。開 `/api/proxy/dbnomics` 一次檢查全部代碼能不能解析，
+> 用 `?search=關鍵字` 找出正確的再回填。
+
+### 權重依頻率分層
+
+月頻的央行儲備數字和日頻的 GLD 持倉不是同一種證據：前者告訴你某國央行五週前
+做了什麼，後者告訴你錢昨天做了什麼。給它們一樣的權重，等於讓過期的月報
+蓋過今天的資金流。
+
+| 頻率 | 來源 | 權重上限 |
+|---|---|---|
+| 日頻 | GLD 持倉、CFTC COT、未平倉量 | **2** |
+| 週頻 | 印度 RBI、土耳其 TCMB | **2** |
+| 月頻 | 中國 PBoC、俄羅斯 CBR、瑞士海關、SGE、LBMA | **1** |
+| 季／年頻 | WGC 彙總 | **0**（只做圖表背景，永不計分） |
+
+### 兩條硬性規則
+
+**每個來源都記 `as_of` 與 `release_lag_days`，過期即停用。**
+判斷新鮮度是從**期間結束日**算起，不是從標籤 —— 標成 `2026-07` 的月度觀測在
+8 月 1 日不是「31 天舊」，而是「剛過期一天」。上限是「一個週期 + 公布落後天數
++ 7 天寬限」。IMF 彙總本來就慢 45 天，不會因為它慢就被懲罰；但一個停更四個月的
+序列會被丟掉並寫進 `data_gaps`，而不是拿它最後一個值當現值計分。
+
+**嚴禁把不同頻率的資料混在同一個 BiasItem 裡加總。**
+做法是根本不去產生合併數字：每個來源產出**自己的** BiasItem，各自帶頻率標籤與
+權重上限。混頻在型別上就是不可表達的，不是靠寫程式的時候小心。
 
 ## 兩國利差 — `lib/analysis/rate-spread.ts`
 
@@ -931,7 +978,7 @@ npm test
 ```
 
 沙箱連不到任何一個金融 API，所以驗證靠的是 known-answer 測試 + stub 過的
-`fetch`，不是真的打上去。18 個套件、394 項斷言，每個套件跑在自己的行程裡
+`fetch`，不是真的打上去。19 個套件、438 項斷言，每個套件跑在自己的行程裡
 （好幾個會替換 `global.fetch` 並重設模組層快取，共用行程會讓前一個的 stub
 汙染後一個）。
 
@@ -943,6 +990,7 @@ npm test
 | `ohlcv` | 來源鏈；**能用的備援不准報缺口，但 stale 一定要報** |
 | `keys` | 允許清單擋掉 service-role / cron secret；併發請求不互相看見 |
 | `data-gaps` | 「本次失敗」與「先天限制」分類；沒見過的訊息不准被消音 |
+| `gold-flows` | 權重依頻率設上限；序列停更就停用該因子；不同頻率不得併成一個因子 |
 | `monitor` | 加倉四條拒絕規則（方向信心、支撐/壓力、強度 ≥2、非 R 倍數）；停損只能收緊；監控狀態機不重複通知、模糊 K 棒一律報停損 |
 | `rate-spread` | 利差不得跨缺漏日內插；20 日變化決定方向與權重；資料落後 >3 交易日就拒絕計分 |
 | `alert` | 通知門檻與去重：一樣的建議不重發、價位飄動不算變化、方向翻轉一定發 |
