@@ -4,7 +4,52 @@ import { GradeBadge } from "@/components/grade-badge";
 import { DimensionBars } from "@/components/dimension-bars";
 import { TradePlanCard } from "@/components/trade-plan-card";
 import { formatPrice, formatTime } from "@/lib/format";
+import { groupDataGaps, KEY_SOURCES } from "@/lib/data-gaps";
 import { cn } from "@/lib/utils";
+
+function DataGaps({ gaps }: { gaps: string[] }) {
+  const { missingKeys, keyRelated, other } = groupDataGaps(gaps);
+  return (
+    <details className="rounded-xl border border-amber-500/30 bg-amber-500/5">
+      <summary className="cursor-pointer list-none px-4 py-3 text-sm text-amber-400">
+        ⚠ {gaps.length} 項資料缺口
+        {missingKeys.length > 0 && (
+          <span className="ml-1 text-amber-500/70">（{missingKeys.length} 個金鑰未設定）</span>
+        )}
+      </summary>
+      <div className="space-y-4 px-4 pb-4">
+        {missingKeys.length > 0 && (
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-amber-300">
+              設定以下金鑰即可補上 {keyRelated.length} 項缺口
+            </p>
+            <ul className="space-y-1 text-xs text-amber-300/80">
+              {missingKeys.map((k) => (
+                <li key={k}>
+                  <code className="text-amber-200">{k}</code>
+                  {KEY_SOURCES[k] && <span className="text-amber-400/60"> — {KEY_SOURCES[k]}</span>}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1.5 text-[11px] text-amber-500/60">
+              到 Vercel 專案 Settings → Environment Variables 設定後，需重新部署才生效。
+            </p>
+          </div>
+        )}
+        {other.length > 0 && (
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-amber-300">其他限制與失敗</p>
+            <ul className="list-inside list-disc space-y-1 text-xs leading-relaxed text-amber-300/70">
+              {other.map((g, i) => (
+                <li key={i}>{g}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
 
 /** True when the pipeline couldn't get a price at all (see buildNoPriceSignal). */
 function hasNoPrice(signal: TradeSignal): boolean {
@@ -255,18 +300,7 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
       </Section>
 
       {/* Moved to the bottom and collapsed — it was burying the actual signal. */}
-      {signal.data_gaps.length > 0 && (
-        <details className="rounded-xl border border-amber-500/30 bg-amber-500/5">
-          <summary className="cursor-pointer list-none px-4 py-3 text-sm text-amber-400">
-            ⚠ {signal.data_gaps.length} 項資料缺口（點開查看）
-          </summary>
-          <ul className="list-inside list-disc space-y-1 px-4 pb-4 text-xs leading-relaxed text-amber-300/80">
-            {signal.data_gaps.map((g, i) => (
-              <li key={i}>{g}</li>
-            ))}
-          </ul>
-        </details>
-      )}
+      {signal.data_gaps.length > 0 && <DataGaps gaps={signal.data_gaps} />}
     </div>
   );
 }

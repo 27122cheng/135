@@ -47,7 +47,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     cotContractCode: "088691", // GOLD - COMMODITY EXCHANGE INC.
     cotInverted: false,
     newsKeywords: ["gold", "bullion", "precious metal", "fed", "inflation"],
-    gdeltQuery: "gold price OR bullion OR XAUUSD",
+    gdeltQuery: '"gold price" OR bullion OR "gold futures"',
     etfHoldings: "GLD",
   },
   NAS100: {
@@ -62,7 +62,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     cotContractCode: "20974P", // NASDAQ-100 STOCK INDEX (MINI) - CME，信心度中等
     cotInverted: false,
     newsKeywords: ["nasdaq", "tech stocks", "fed", "rate cut", "rate hike"],
-    gdeltQuery: "Nasdaq 100 OR tech stocks earnings",
+    gdeltQuery: '"Nasdaq 100" OR "tech stocks" OR "Nasdaq index"',
     etfHoldings: null,
   },
   GER40: {
@@ -77,7 +77,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     cotContractCode: null, // DAX 於 Eurex（德國）交易，非美國受監管交易所，CFTC 無資料
     cotInverted: false,
     newsKeywords: ["dax", "german stocks", "ecb", "europe economy"],
-    gdeltQuery: "DAX OR German stocks OR ECB",
+    gdeltQuery: 'DAX OR "German stocks" OR "European Central Bank"',
     etfHoldings: null,
   },
   US30: {
@@ -92,7 +92,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     cotContractCode: "124603", // DJIA ($5) - CBOT，信心度中等
     cotInverted: false,
     newsKeywords: ["dow jones", "us stocks", "fed"],
-    gdeltQuery: "Dow Jones OR US stocks Fed",
+    gdeltQuery: '"Dow Jones" OR "US stocks" OR "Federal Reserve"',
     etfHoldings: null,
   },
   SPX500: {
@@ -107,7 +107,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     cotContractCode: "13874A", // E-MINI S&P 500 - CME，信心度中等
     cotInverted: false,
     newsKeywords: ["s&p 500", "us stocks", "fed"],
-    gdeltQuery: "S&P 500 OR US stocks Fed",
+    gdeltQuery: '"S&P 500" OR "US stocks" OR "Federal Reserve"',
     etfHoldings: null,
   },
   WTI: {
@@ -122,7 +122,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     cotContractCode: "067651", // CRUDE OIL, LIGHT SWEET - NYMEX，信心度中等
     cotInverted: false,
     newsKeywords: ["crude oil", "opec", "wti", "oil inventory"],
-    gdeltQuery: "crude oil OR OPEC OR WTI inventory",
+    gdeltQuery: '"crude oil" OR OPEC OR "oil inventory"',
     etfHoldings: null,
   },
   EURUSD: {
@@ -137,7 +137,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     cotContractCode: "099741", // EURO FX - CME，信心度中等
     cotInverted: false,
     newsKeywords: ["euro", "ecb", "eurozone"],
-    gdeltQuery: "EUR/USD OR ECB OR eurozone economy",
+    gdeltQuery: 'euro OR "European Central Bank" OR eurozone',
     etfHoldings: null,
   },
   USDJPY: {
@@ -152,7 +152,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     cotContractCode: "097741", // JAPANESE YEN - CME，信心度中等
     cotInverted: true, // CME 日圓期貨為「每日圓兌美元」，非商業淨多單=看多日圓=看空 USD/JPY
     newsKeywords: ["yen", "boj", "japan"],
-    gdeltQuery: "USD/JPY OR Bank of Japan OR yen",
+    gdeltQuery: 'yen OR "Bank of Japan" OR "Japanese economy"',
     etfHoldings: null,
   },
   GBPUSD: {
@@ -167,7 +167,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     cotContractCode: "096742", // BRITISH POUND STERLING - CME，信心度中等
     cotInverted: false,
     newsKeywords: ["pound", "boe", "uk economy"],
-    gdeltQuery: "GBP/USD OR Bank of England OR pound",
+    gdeltQuery: '"British pound" OR "Bank of England" OR "UK economy"',
     etfHoldings: null,
   },
 };

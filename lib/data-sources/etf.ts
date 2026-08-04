@@ -19,17 +19,23 @@ export async function fetchGldHoldings(gaps: string[]): Promise<GldHoldings | nu
   const key = "spdr:gld:holdings";
   const result = await cachedOrFetch(key, 60 * 60 * 1000, async () => {
     const url = "https://www.spdrgoldshares.com/assets/dynamic/GLD/GLD_US_ProductDetails.xml";
-    const xml = await fetchText(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+    const xml = await fetchText(url, { headers: { "User-Agent": "Mozilla/5.0" } }, 15000);
     if (!xml) return null;
-    const tonnesMatch = xml.match(/<TonnesInTrust>([\d.]+)<\/TonnesInTrust>/i);
-    const dateMatch = xml.match(/<AsOfDate>([^<]+)<\/AsOfDate>/i);
+    // The feed has used a few different tag names over the years; accept any of
+    // them, and bail to data_gaps rather than guessing if none match.
+    const tonnesMatch =
+      xml.match(/<TonnesInTrust>\s*([\d,.]+)\s*<\/TonnesInTrust>/i) ??
+      xml.match(/<TonnesInTheTrust>\s*([\d,.]+)\s*<\/TonnesInTheTrust>/i) ??
+      xml.match(/<GLDTonnesInTrust>\s*([\d,.]+)\s*<\/GLDTonnesInTrust>/i);
+    const dateMatch =
+      xml.match(/<AsOfDate>([^<]+)<\/AsOfDate>/i) ?? xml.match(/<Date>([^<]+)<\/Date>/i);
     if (!tonnesMatch) return null;
-    const tonnesInTrust = Number(tonnesMatch[1]);
+    const tonnesInTrust = Number(tonnesMatch[1].replace(/,/g, ""));
     if (!Number.isFinite(tonnesInTrust)) return null;
-    return { tonnesInTrust, asOf: dateMatch?.[1] ?? new Date().toISOString().slice(0, 10) };
+    return { tonnesInTrust, asOf: dateMatch?.[1]?.trim() ?? new Date().toISOString().slice(0, 10) };
   });
   if (!result) {
-    gaps.push("SPDR GLD 持倉資料取得失敗或格式解析失敗（此環境無法連線驗證來源格式）");
+    gaps.push("SPDR GLD 持倉資料取得失敗或 XML 格式與預期不符（來源未經即時驗證，見 README）");
     return null;
   }
   return result;
