@@ -1,5 +1,6 @@
 import type { SignalRow, TradeSignal } from "@/types/signal";
 import type { JournalEntry, JournalEntryInput } from "@/types/journal";
+import type { MonitorMemory } from "@/lib/monitor/plan-state";
 import { supabaseStore } from "./supabase-store";
 import { postgresStore } from "./postgres-store";
 
@@ -36,6 +37,17 @@ export interface SignalStore {
    * being analysed — a run of bad EURUSD entries shouldn't tighten gold.
    */
   listJournal(options: { symbol?: string | null; limit: number }): Promise<JournalEntry[]>;
+
+  /** Last reported monitor state for a symbol; null before the first run. */
+  getMonitorState(symbol: string): Promise<MonitorRow | null>;
+  saveMonitorState(row: MonitorRow): Promise<void>;
+}
+
+/** One row of `plan_monitor` — what was last reported, so it isn't repeated. */
+export interface MonitorRow extends MonitorMemory {
+  symbol: string;
+  signalId: string | null;
+  lastPrice: number | null;
 }
 
 /** Null when neither backend is configured — callers must return 501, not crash. */

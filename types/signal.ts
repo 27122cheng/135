@@ -127,10 +127,41 @@ export interface TradePlan {
   confidence: "high" | "medium" | "low";
   /** Plain-language summary of the whole plan. */
   summary: string;
+  /**
+   * 加倉點，最多三筆，依序遠離進場價。Empty when no structure supports adding —
+   * an empty list is the honest answer, not a reason to invent a level.
+   */
+  add_ons: AddOnLevel[];
   /** 觀望時要等的條件（進場時為 null）。 */
   wait_for: string | null;
   /** Whether Claude chose the levels, or the deterministic fallback did. */
   decided_by: "ai" | "fallback";
+}
+
+/**
+ * 加倉 — one scale-in level.
+ *
+ * Anchored to a real structure the price would have to reach, never to an
+ * R-multiple: "add 0.5R at +1R" is arithmetic dressed as analysis, and it
+ * places orders at prices the market has no reason to respect. Same rule the
+ * spec already imposes on the entry, stop and target.
+ *
+ * Every add-on carries the stop the whole position moves to once it fills.
+ * Adding size without tightening the stop increases risk on a trade that has
+ * already paid you — the one thing scaling in must never do.
+ */
+export interface AddOnLevel {
+  /** 1-3; the spec caps scaling in at three. */
+  sequence: 1 | 2 | 3;
+  price: number;
+  /** The real structure this level sits on. */
+  structure: string;
+  reason: string;
+  /** Where the stop for the *whole* position moves when this fills. */
+  new_stop_loss: number;
+  new_stop_reason: string;
+  /** True once this level protects the original entry (stop at or beyond it). */
+  locks_in_entry: boolean;
 }
 
 /** Local historical check on the plan's stop/target geometry — see lib/analysis/backtest.ts. */

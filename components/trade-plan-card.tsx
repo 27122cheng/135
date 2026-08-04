@@ -1,4 +1,4 @@
-import type { PlanBacktest, TradePlan } from "@/types/signal";
+import type { AddOnLevel, PlanBacktest, TradePlan } from "@/types/signal";
 import { formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -7,6 +7,45 @@ const CONFIDENCE_LABEL: Record<TradePlan["confidence"], string> = {
   medium: "信心中",
   low: "信心低",
 };
+
+/**
+ * 加倉點. Each level shows the stop the whole position moves to when it fills —
+ * scaling in without tightening the stop increases risk on a trade that has
+ * already paid, which is the one thing adding must never do.
+ */
+function AddOns({ levels }: { levels: AddOnLevel[] }) {
+  return (
+    <details className="mt-3 border-t border-neutral-800 pt-3">
+      <summary className="cursor-pointer text-xs text-neutral-400 hover:text-neutral-200">
+        加倉點（{levels.length} 段，最多 3 段）
+      </summary>
+      <p className="mt-2 text-[11px] leading-relaxed text-neutral-600">
+        每一段都錨定真實結構，不是用 R 倍數推算的價格。加倉後停損一律跟著上移。
+      </p>
+      <ol className="mt-2 space-y-2.5">
+        {levels.map((level) => (
+          <li key={level.sequence} className="border-l-2 border-emerald-500/40 pl-3">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-xs text-neutral-400">第 {level.sequence} 段</span>
+              <span className="font-mono text-sm text-neutral-100">{formatPrice(level.price)}</span>
+            </div>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-500">{level.reason}</p>
+            <div className="mt-1 flex items-baseline justify-between gap-2">
+              <span className="text-[11px] text-red-400/80">停損移到</span>
+              <span className="font-mono text-xs text-red-400">{formatPrice(level.new_stop_loss)}</span>
+            </div>
+            <p className="text-[10px] leading-relaxed text-neutral-600">
+              {level.new_stop_reason}
+              {level.locks_in_entry && (
+                <span className="ml-1 text-emerald-500">· 此段成交後已保住進場價</span>
+              )}
+            </p>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
 
 function Leg({
   label,
@@ -100,6 +139,8 @@ export function TradePlanCard({
       <p className="mt-3 border-t border-neutral-800 pt-3 text-sm leading-relaxed text-neutral-300">
         {plan.summary}
       </p>
+
+      {plan.add_ons.length > 0 && <AddOns levels={plan.add_ons} />}
 
       {backtest && backtest.hitRate !== null && (
         <details className="mt-3 border-t border-neutral-800 pt-3">

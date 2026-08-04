@@ -45,8 +45,14 @@ export async function fetchCotReport(
     const where = encodeURIComponent(`cftc_contract_market_code='${contractCode}'`);
     const url =
       `https://publicreporting.cftc.gov/resource/6dca-aqww.json?$where=${where}` +
-      `&$order=report_date_as_yyyy_mm_dd DESC&$limit=60`;
-    const data = await fetchJson<CftcRow[]>(url);
+      // The space in "... DESC" has to be encoded; leaving it raw relies on the
+      // fetch implementation to normalise it, which is not something to bet on.
+      `&$order=${encodeURIComponent("report_date_as_yyyy_mm_dd DESC")}&$limit=60`;
+    // 20s, not the 6s default: a filtered Socrata query over the full COT
+    // history routinely takes longer than 6s from a cold cache, and timing out
+    // was being recorded as a source failure — which then tripped the backoff
+    // and suppressed the next few attempts too.
+    const data = await fetchJson<CftcRow[]>(url, undefined, 20000);
     if (!Array.isArray(data) || data.length === 0) return null;
     const reports = data
       .map((r) => {

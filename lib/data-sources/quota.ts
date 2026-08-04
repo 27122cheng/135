@@ -73,9 +73,12 @@ export function tryConsume(source: string, limit: QuotaLimit): QuotaDecision {
 
   if (now < s.blockedUntil) {
     const retryAfterMs = s.blockedUntil - now;
+    // Deliberately vague about the mechanism. "指數退避中，還要等 28 秒" told
+    // the reader about our retry policy, which they can do nothing with, and
+    // buried the only fact that matters: this source is currently down.
     return {
       ok: false,
-      reason: `${source} 連續失敗 ${s.failures} 次，指數退避中，還要等 ${Math.ceil(retryAfterMs / 1000)} 秒`,
+      reason: `${source} 目前連線不穩（已連續失敗 ${s.failures} 次），暫時停止重試`,
       retryAfterMs,
     };
   }

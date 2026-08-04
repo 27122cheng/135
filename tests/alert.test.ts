@@ -36,6 +36,7 @@ function signal(over: Partial<TradeSignal> = {}): TradeSignal {
       risk_reward: 2.5,
       confidence: "medium",
       summary: "順勢做多。",
+      add_ons: [],
       wait_for: null,
       decided_by: "ai",
     },

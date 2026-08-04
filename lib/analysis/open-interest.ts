@@ -78,7 +78,12 @@ export function analyzeOpenInterest(
   gaps: string[],
 ): BiasItem[] {
   if (!reports || reports.length < 2) {
-    gaps.push(`${meta.symbol} COT 資料不足兩週，無法分析未平倉量`);
+    // `reports === null` means the CFTC fetch already failed and reported it.
+    // Repeating the consequence as its own warning turns one root cause into
+    // two lines and makes the panel look twice as broken as it is.
+    if (reports !== null) {
+      gaps.push(`${meta.symbol} COT 只取得 ${reports.length} 週資料，不足兩週，無法分析未平倉量`);
+    }
     return [];
   }
 

@@ -63,6 +63,7 @@ function waitPlan(
     risk_reward: null,
     confidence: "low",
     summary,
+    add_ons: [],
     wait_for: waitFor,
     decided_by: decidedBy,
   };
@@ -116,6 +117,7 @@ function fallbackPlan(input: TradePlanInput): TradePlan {
     summary:
       "未使用 AI 判斷（未設定 AI 金鑰、額度用盡或呼叫失敗），改用預設規則：" +
       "取最接近的進場點、最近的保護結構做停損、路徑上第一個障礙做停利。",
+    add_ons: [],
     wait_for: null,
     decided_by: "fallback",
   };
@@ -268,6 +270,7 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
     risk_reward: rr,
     confidence,
     summary: parsed.summary?.trim() || "（AI 未提供總結）",
+    add_ons: [],
     wait_for: null,
     decided_by: "ai",
   };

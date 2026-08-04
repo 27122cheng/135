@@ -42,7 +42,7 @@ async function queryGdelt(query: string): Promise<GdeltArticle[] | null> {
   const url =
     `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}` +
     `&mode=artlist&maxrecords=25&format=json&timespan=48h&sort=hybridrel`;
-  const data = await fetchJson<GdeltDocResponse>(url, undefined, 15000);
+  const data = await fetchJson<GdeltDocResponse>(url, undefined, 25000);
   // null means the request or the JSON parse failed — a real failure.
   if (!data || typeof data !== "object") return null;
   // A valid response with no `articles` key is GDELT's way of saying "nothing

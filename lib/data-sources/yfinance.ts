@@ -105,6 +105,68 @@ export function resampleTo4h(hourly: Candle[]): Candle[] {
     }));
 }
 
+export interface LatestPrice {
+  price: number;
+  /** When that price printed. */
+  at: string;
+  /** How stale it is right now, in minutes. */
+  ageMinutes: number;
+}
+
+/**
+ * Latest available price, for the 5-minute position monitor.
+ *
+ * Uses the 5m interval and a 2-minute cache — the analysis TTL of 30 minutes
+ * would make a "5-minute monitor" a 30-minute one. The price is still whatever
+ * the free tier gives, typically ~15 minutes behind, which is why `ageMinutes`
+ * is returned rather than assumed away: every alert built on this states how
+ * old the number is.
+ */
+export async function fetchLatestPrice(
+  ticker: string,
+  gaps: string[],
+): Promise<LatestPrice | null> {
+  const result = await fetchFree<{ price: number; at: string }>({
+    source: "yahoo",
+    label: `即時報價 (${ticker})`,
+    key: `yahoo:last:${ticker}`,
+    ttlMs: 2 * 60 * 1000,
+    limit: YAHOO_LIMIT,
+    gaps,
+    // A stale quote is worse than none for position management: acting on a
+    // two-hour-old price is how a stop gets managed against a market that
+    // already moved. Expire it quickly instead.
+    staleMs: 10 * 60 * 1000,
+    fn: async () => {
+      const url =
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}` +
+        `?interval=5m&range=1d`;
+      const data = await fetchJson<YahooChartResponse>(
+        url,
+        { headers: { "User-Agent": "Mozilla/5.0" } },
+        12000,
+      );
+      const res = data?.chart?.result?.[0];
+      if (!res || !Array.isArray(res.timestamp)) return null;
+      const closes = res.indicators?.quote?.[0]?.close ?? [];
+
+      // Walk back to the last non-null close: Yahoo pads the tail of the
+      // current session with nulls.
+      for (let i = closes.length - 1; i >= 0; i--) {
+        const close = closes[i];
+        const ts = res.timestamp[i];
+        if (close == null || !Number.isFinite(close) || ts == null) continue;
+        return { price: close, at: new Date(ts * 1000).toISOString() };
+      }
+      return null;
+    },
+  });
+
+  if (!result) return null;
+  const ageMinutes = (Date.now() - new Date(result.value.at).getTime()) / 60000;
+  return { price: result.value.price, at: result.value.at, ageMinutes };
+}
+
 export interface ProxyResult {
   ticker: string;
   timeframe: Timeframe;

@@ -12,6 +12,7 @@ import { analyzeOpenInterest } from "./analysis/open-interest";
 import { backtestPlanGeometry } from "./analysis/backtest";
 import { generateNarrative } from "./analysis/ai-narrative";
 import { buildTradePlan, collectCandidates } from "./analysis/trade-plan";
+import { buildAddOns } from "./analysis/add-on";
 import { scoreSignal } from "./scoring";
 import { buildStopLoss, buildTakeProfits } from "./entry-exit";
 import { getSignalStore } from "./db";
@@ -137,6 +138,7 @@ function buildNoPriceSignal(
       risk_reward: null,
       confidence: "low",
       summary: "無法取得價格資料，只能觀望。",
+      add_ons: [],
       wait_for: "等待價格資料來源恢復（見資料缺口）。",
       decided_by: "fallback",
     },
@@ -244,7 +246,15 @@ async function buildSignalForSymbol(
   ];
 
   const { direction, tie } = pickDirection(biasItems);
-  if (tie) gaps.push("六面向淨方向票數為 0，方向判定採預設 long（僅為平手時的決定規則，非市場訊號）");
+  if (tie) {
+    // Almost always a symptom rather than a finding: with several sources down
+    // there are no weighted items left to vote. Say which case it is.
+    gaps.push(
+      biasItems.length === 0
+        ? "沒有任何面向產生因子（見上方失敗項），無方向可判，訊號必為 no-trade"
+        : "六面向淨方向票數為 0（多空因子權重相抵），方向判定採預設 long —— 僅為平手時的決定規則，非市場訊號",
+    );
+  }
 
   // S2 intervention narrows the zone; the factor is ≤ 1 by construction.
   const baseZoneBuffer = atrD1 && atrD1 > 0 ? atrD1 * 0.15 : currentPrice * 0.0005;
@@ -400,6 +410,29 @@ async function buildSignalForSymbol(
     },
     gaps,
   );
+
+  // 加倉點 — structure-anchored, computed only for a plan that actually enters.
+  // Attached after the plan exists because the levels depend on its entry, stop
+  // and target, not just on the signal.
+  if (
+    tradePlan.stance === "enter" &&
+    tradePlan.entry !== null &&
+    tradePlan.stop_loss !== null &&
+    tradePlan.take_profit !== null
+  ) {
+    tradePlan.add_ons = buildAddOns({
+      direction,
+      entry: tradePlan.entry,
+      stopLoss: tradePlan.stop_loss,
+      takeProfit: tradePlan.take_profit,
+      entryStructures: technical.entryStructures,
+      pathObstacles: technical.pathObstacles,
+      atr: atrD1,
+    });
+    if (tradePlan.add_ons.length === 0) {
+      gaps.push("進場到停利之間沒有可錨定的結構，本次不提供加倉點（不以倍數推算價格）");
+    }
+  }
 
   // Local historical check on the plan's geometry — pure computation over the
   // D1 candles we already have. No AI, no extra request.

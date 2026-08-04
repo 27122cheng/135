@@ -1,7 +1,8 @@
 import { neon } from "@neondatabase/serverless";
 import type { SignalRow, TradeSignal } from "@/types/signal";
 import type { JournalEntry, JournalEntryInput } from "@/types/journal";
-import type { HistoryFilter, SignalStore } from "./index";
+import type { HistoryFilter, MonitorRow, SignalStore } from "./index";
+import type { PlanState } from "@/lib/monitor/plan-state";
 
 /**
  * Plain Postgres over HTTP, via Neon's driver.
@@ -124,6 +125,53 @@ export function postgresStore(connectionString: string): SignalStore {
         limit ${options.limit}
       `;
         return rows as unknown as JournalEntry[];
+      } catch (err) {
+        throw explain(err);
+      }
+    },
+
+    async getMonitorState(symbol: string): Promise<MonitorRow | null> {
+      try {
+        const rows = (await sql`
+          select * from plan_monitor where symbol = ${symbol}
+        `) as unknown as Array<{
+          symbol: string;
+          signal_id: string | null;
+          state: string;
+          add_ons_filled: number;
+          active_stop: number | null;
+          last_price: number | null;
+        }>;
+        const row = rows[0];
+        if (!row) return null;
+        return {
+          symbol: row.symbol,
+          signalId: row.signal_id,
+          state: row.state as PlanState,
+          addOnsFilled: row.add_ons_filled,
+          activeStop: row.active_stop,
+          lastPrice: row.last_price,
+        };
+      } catch (err) {
+        throw explain(err);
+      }
+    },
+
+    async saveMonitorState(row: MonitorRow): Promise<void> {
+      try {
+        // Upsert: one row per symbol, always describing the newest plan.
+        await sql`
+          insert into plan_monitor (symbol, signal_id, state, add_ons_filled, active_stop, last_price, updated_at)
+          values (${row.symbol}, ${row.signalId}, ${row.state}, ${row.addOnsFilled},
+                  ${row.activeStop}, ${row.lastPrice}, now())
+          on conflict (symbol) do update set
+            signal_id = excluded.signal_id,
+            state = excluded.state,
+            add_ons_filled = excluded.add_ons_filled,
+            active_stop = excluded.active_stop,
+            last_price = excluded.last_price,
+            updated_at = now()
+        `;
       } catch (err) {
         throw explain(err);
       }

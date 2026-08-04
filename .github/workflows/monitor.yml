@@ -1,0 +1,55 @@
+name: Monitor open plans
+
+# Every 5 minutes. GitHub only guarantees "at least this interval" for
+# scheduled workflows — under load they are delayed, and 5-15 minutes is a
+# realistic spread. That's acceptable here because the price this reads is
+# itself ~15 minutes delayed on the free tier, and the plans being watched are
+# H4/D1 setups whose levels sit hours apart. It is not, and cannot be, an
+# intraday execution tool.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  # Two overlapping runs could both see "entry not yet touched" and then both
+  # announce the entry.
+  group: monitor-plans
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check every symbol's active plan
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -uo pipefail
+          if [ -z "${APP_URL:-}" ]; then
+            echo "APP_URL secret is not set (e.g. https://your-app.vercel.app)" >&2
+            exit 1
+          fi
+
+          # One request for all symbols: this only reads a cached quote per
+          # symbol, so it fits comfortably inside the 60s function ceiling.
+          status=$(curl --silent --show-error --location \
+            --max-time 90 \
+            --retry 2 --retry-delay 5 --retry-all-errors \
+            --header "Authorization: Bearer ${CRON_SECRET:-}" \
+            --output /tmp/monitor.json \
+            --write-out "%{http_code}" \
+            "$APP_URL/api/monitor") || status="000"
+
+          echo "HTTP $status"
+          head -c 2000 /tmp/monitor.json
+          echo ""
+
+          # 501 means no database configured yet — a setup gap, not a failure
+          # worth a red run every five minutes.
+          if [ "$status" = "501" ]; then
+            echo "::warning::Monitor is not configured (no database). Skipping."
+            exit 0
+          fi
+          [ "$status" = "200" ]

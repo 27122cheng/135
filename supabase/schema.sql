@@ -82,3 +82,28 @@ alter table public.trade_journal enable row level security;
 drop policy if exists "Public read access" on public.trade_journal;
 create policy "Public read access" on public.trade_journal
   for select using (true);
+
+-- ─────────────────────────────────────────────────────────────────
+-- 5-minute plan monitor: remembers what was last reported per symbol so a
+-- position that sits in the same state for hours doesn't re-notify every run.
+-- ─────────────────────────────────────────────────────────────────
+
+create table if not exists public.plan_monitor (
+  -- One row per symbol: only the newest actionable plan is ever monitored.
+  symbol text primary key,
+  signal_id uuid references public.signals (id) on delete set null,
+  -- Last state reported to the user; see lib/monitor/plan-state.ts.
+  state text not null,
+  -- Highest add-on sequence already announced (0 = none yet).
+  add_ons_filled integer not null default 0,
+  -- Stop currently in force, including any add-on adjustment.
+  active_stop double precision,
+  last_price double precision,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.plan_monitor enable row level security;
+
+drop policy if exists "Public read access" on public.plan_monitor;
+create policy "Public read access" on public.plan_monitor
+  for select using (true);

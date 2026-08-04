@@ -1,7 +1,8 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { SignalRow, TradeSignal } from "@/types/signal";
 import type { JournalEntry, JournalEntryInput } from "@/types/journal";
-import type { HistoryFilter, SignalStore } from "./index";
+import type { HistoryFilter, MonitorRow, SignalStore } from "./index";
+import type { PlanState } from "@/lib/monitor/plan-state";
 
 /**
  * Supabase backend — the default when DATABASE_URL is unset.
@@ -115,6 +116,44 @@ export function supabaseStore(): SignalStore | null {
       const { data, error } = await query;
       if (error) throw new Error(error.message);
       return (data ?? []) as JournalEntry[];
+    },
+
+    async getMonitorState(symbol: string): Promise<MonitorRow | null> {
+      const client = getSupabaseAnonClient() ?? getSupabaseServerClient();
+      if (!client) throw new Error("缺少 Supabase 金鑰，無法讀取 plan_monitor");
+      const { data, error } = await client
+        .from("plan_monitor")
+        .select("*")
+        .eq("symbol", symbol)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!data) return null;
+      return {
+        symbol: data.symbol,
+        signalId: data.signal_id,
+        state: data.state as PlanState,
+        addOnsFilled: data.add_ons_filled,
+        activeStop: data.active_stop,
+        lastPrice: data.last_price,
+      };
+    },
+
+    async saveMonitorState(row: MonitorRow): Promise<void> {
+      const client = getSupabaseServerClient();
+      if (!client) throw new Error("缺少 SUPABASE_SERVICE_ROLE_KEY，無法寫入 plan_monitor");
+      const { error } = await client.from("plan_monitor").upsert(
+        {
+          symbol: row.symbol,
+          signal_id: row.signalId,
+          state: row.state,
+          add_ons_filled: row.addOnsFilled,
+          active_stop: row.activeStop,
+          last_price: row.lastPrice,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "symbol" },
+      );
+      if (error) throw new Error(error.message);
     },
   };
 }
