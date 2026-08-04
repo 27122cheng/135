@@ -3,6 +3,8 @@ import type { FundamentalsConfig } from "@/config/fundamentals";
 import { fetchFredSeries, type FredPoint } from "../data-sources/fred";
 import { fetchEiaCrudeInventory } from "../data-sources/eia";
 import { fetchEarningsCalendar } from "../data-sources/finnhub";
+import { rateSpreadFor } from "@/config/rate-spreads";
+import { analyzeRateSpread } from "./rate-spread";
 
 interface Trend {
   direction: "up" | "down" | "flat";
@@ -132,8 +134,11 @@ export async function analyzeFundamental(
   if (meta.symbol === "XAUUSD") {
     gaps.push("央行購金數據不在免費 API 清單內，本階段基本面計分不納入此項");
   }
-  if (meta.symbol === "EURUSD" || meta.symbol === "USDJPY" || meta.symbol === "GBPUSD") {
-    gaps.push("兩國利差需要外國公債殖利率資料，FRED 核准清單僅含美國公債，本階段暫不納入此項");
+  // 兩國利差 — FRED only covers US Treasuries, so the foreign legs come from
+  // Stooq's daily CSV / the ECB portal. See lib/analysis/rate-spread.ts.
+  const spreadConfig = rateSpreadFor(meta.symbol);
+  if (spreadConfig) {
+    items.push(...(await analyzeRateSpread(spreadConfig, gaps)));
   }
 
   return items;

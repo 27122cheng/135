@@ -94,6 +94,14 @@ export async function GET() {
       "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=2026-01-01",
       { headers: { "User-Agent": "Mozilla/5.0" } },
     ),
+    probe("Stooq 殖利率 (免金鑰)", "https://stooq.com/q/d/l/?s=10ydey.b&i=d", {
+      headers: { "User-Agent": "Mozilla/5.0" },
+    }),
+    probe(
+      "ECB 殖利率曲線 (免金鑰)",
+      "https://data-api.ecb.europa.eu/service/data/YC/B.U2.EUR.4F.G_N_A.SV_C_YM.SR_2Y?format=csvdata&lastNObservations=1",
+      { headers: { accept: "text/csv" } },
+    ),
     probe(
       "SPDR GLD 持倉 (免金鑰)",
       "https://www.spdrgoldshares.com/assets/dynamic/GLD/GLD_US_ProductDetails.xml",

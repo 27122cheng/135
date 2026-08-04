@@ -14,7 +14,7 @@ end-to-end. A GitHub Actions workflow refreshes every 4h into Postgres, and
 npm install
 cp .env.example .env.local   # 可以完全空白 — 見下方「零金鑰可跑」
 npm run dev
-npm test                     # 16 個測試套件，287 項斷言
+npm test                     # 17 個測試套件，334 項斷言
 ```
 
 Open http://localhost:3000. Pick any symbol in the left panel — each calls
@@ -97,11 +97,65 @@ rather than guessed.
 | 面向 | 檔案 | 資料來源 |
 |---|---|---|
 | 技術面 | `lib/analysis/technical.ts` + `lib/analysis/levels.ts` | OHLCV → swing HH/HL/LH/LL, EMA20/50/200 排列, RSI(14) 背離, MACD histogram, 整數關卡；結構區改用**跨時框聚類**（見下） |
-| 基本面 | `lib/analysis/fundamental.ts` | Config-driven per symbol: 實質利率(DGS10−T10YIE，僅XAUUSD), DXY 趨勢, VIX, EIA 原油庫存(僅WTI), Finnhub 財報日曆(僅美股指數) |
+| 基本面 | `lib/analysis/fundamental.ts` + `lib/analysis/rate-spread.ts` | Config-driven per symbol: **兩國利差**（見下）, 實質利率(DGS10−T10YIE，僅XAUUSD), DXY 趨勢, VIX, EIA 原油庫存(僅WTI), Finnhub 財報日曆(僅美股指數) |
 | 籌碼面 | `lib/analysis/positioning.ts` | CFTC COT (Socrata, legacy futures-only report) 非商業淨部位、52週極值、週變化，依 config 合約代碼與方向反轉設定 |
 | 新聞面 | `lib/analysis/news.ts` | GDELT 2.0 DOC API + Finnhub `/news` → AI 評 -1~+1 情緒分並摘要（走 `lib/ai` 的供應商鏈），關鍵字依 config 逐商品設定 |
 | 資金流 | `lib/analysis/fundflow.ts` + `lib/analysis/open-interest.ts` | GLD 成交量資金流代理(僅XAUUSD，見下)、SPDR GLD 持倉快照、DXY 方向、VIX、**未平倉量分析**（價量未平倉四象限、52週水位、異常變化偵測） |
 | AI綜合 | `lib/analysis/ai-narrative.ts` | 上述五面向的結構化 JSON → AI 產生 `narrative`（prompt 明確禁止補充未提供的事實） |
+
+## 兩國利差 — `lib/analysis/rate-spread.ts`
+
+FRED 的核准清單只有美債，外國公債走的是 OECD `IRLTLT01` 系列：**月頻，而且部分
+已停更**。月頻數字產生不了交易訊號，所以外國腳改用免金鑰的日線來源。
+
+### 資料來源（兩層）
+
+| 層 | 來源 | 用在哪 |
+|---|---|---|
+| 1 | **Stooq 日線 CSV** `https://stooq.com/q/d/l/?s={code}&i=d` | 外國公債殖利率主來源，免金鑰 |
+| 2 | **ECB Data Portal**（`format=csvdata`） | 歐元區 AAA 殖利率曲線，Stooq 掛掉時的備援 |
+| — | **FRED** | 美債腳（`DGS2` / `DGS10`），本專案唯一驗證過的來源 |
+
+Stooq 代號：`10yusy.b` 美國、`10ydey.b` 德國、`10yjpy.b` 日本、`10yuky.b` 英國。
+2Y 代號依同樣命名規則推得（`2ydey.b` 等），**沙箱無法連外驗證** —— 代號錯只會
+拿到空回應並往下一層掉，不會產生錯的數字。其餘代號查 https://stooq.com/t/?i=536
+
+自架代理在 `/api/proxy/yield?symbol=EURUSD`，快取 TTL 6 小時。
+
+### 看短端，不是長端
+
+匯率主要由 **2Y** 利差驅動 —— 那是市場對政策路徑的定價。10Y 反映的是成長與期限
+溢酬預期，對匯率的傳導間接得多。
+
+| 商品 | 利差 | 為什麼 |
+|---|---|---|
+| EURUSD | 2Y 德美（DE2Y − US2Y） | 德債相對走高 → 偏好歐元 |
+| GBPUSD | 2Y 英美 | 同上 |
+| USDJPY | **10Y** 美日 | 例外：BOJ 直接控制 JGB 長端，政策分歧顯示在 10Y |
+| XAUUSD | 不用利差 | 已有更貼切的美國實質利率（DGS10 − T10YIE） |
+| 美股指數 / WTI | 不套用 | 本來就不是利差驅動的商品 |
+
+`config/rate-spreads.ts` 的兩隻腳**刻意排列成「利差上升永遠等於做多」**。
+USDJPY 是最容易寫反的那個，所以它把美債放在減數位置而不是直覺的日債。
+
+### 訊號是 20 日變化，不是水位
+
+一個已經寬了一年的利差早就反映在價格裡；一個月內走了 30bp 的利差才是讓匯率
+重新定價的那件事。
+
+- 權重：20 日變化 **>25bp → 2**、**10–25bp → 1**、**<10bp → 0**
+- 方向：利差朝有利於該貨幣的方向移動則同向（權重 0 時記 neutral，不硬給方向）
+- evidence 一定寫出當前數值與 20 日變化，例
+  `-1.30%（德國 2Y 2.70% − 美國 2Y 4.00%），20日擴大 30bp，as_of 2026-08-04`
+
+### 兩條硬性規則
+
+**不准內插或用前值填補。** 兩隻腳的交易日曆不同（各國假期不一樣）。如果各自取
+「最新一筆」，就會拿週五的德債配週四的美債，然後叫它今天的利差。所以利差**只在
+兩隻腳都真的有印出數值的日期上計算** —— 缺一邊的日子直接不產生資料點。
+
+**落後超過 3 個交易日就不計分。** EOD 資料落後 1–2 個交易日是正常的，超過就寫進
+`data_gaps` 並且不產生因子，而不是當成當前值呈現。
 
 ## 新聞重點 — 看得到 AI 讀了什麼
 
@@ -812,7 +866,7 @@ npm test
 ```
 
 沙箱連不到任何一個金融 API，所以驗證靠的是 known-answer 測試 + stub 過的
-`fetch`，不是真的打上去。16 個套件、287 項斷言，每個套件跑在自己的行程裡
+`fetch`，不是真的打上去。17 個套件、334 項斷言，每個套件跑在自己的行程裡
 （好幾個會替換 `global.fetch` 並重設模組層快取，共用行程會讓前一個的 stub
 汙染後一個）。
 
@@ -824,6 +878,7 @@ npm test
 | `ohlcv` | 來源鏈；**能用的備援不准報缺口，但 stale 一定要報** |
 | `keys` | 允許清單擋掉 service-role / cron secret；併發請求不互相看見 |
 | `data-gaps` | 「本次失敗」與「先天限制」分類；沒見過的訊息不准被消音 |
+| `rate-spread` | 利差不得跨缺漏日內插；20 日變化決定方向與權重；資料落後 >3 交易日就拒絕計分 |
 | `alert` | 通知門檻與去重：一樣的建議不重發、價位飄動不算變化、方向翻轉一定發 |
 | `news` | 新聞重點的引用只能指向真的存在的標題；越界／負數引用會被丟掉 |
 | `gdelt` | 零結果與真失敗要分得開；查詢失敗會退回單一詞再試 |
