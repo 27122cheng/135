@@ -94,7 +94,13 @@ export interface TradeSignal {
   data_gaps: string[];
 }
 
-/** Stage 1 targets — only XAUUSD is wired end-to-end, the rest are UI stubs. */
+/** Shape of a row in the Supabase `signals` table (see supabase/schema.sql). */
+export interface SignalRow extends TradeSignal {
+  id: string;
+  created_at: string;
+}
+
+/** All 9 symbols are wired end-to-end as of Stage 2 (see config/fundamentals.ts). */
 export type SupportedSymbol =
   | "EURUSD"
   | "USDJPY"
@@ -114,7 +120,7 @@ export interface CommodityMeta {
   twelveDataSymbol: string;
   /** yfinance-compatible fallback ticker. */
   yfinanceSymbol: string;
-  /** Implemented end-to-end in Stage 1. */
+  /** Whether the signal pipeline is wired for this symbol (all true as of Stage 2). */
   implemented: boolean;
 }
 
@@ -125,7 +131,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "forex",
     twelveDataSymbol: "EUR/USD",
     yfinanceSymbol: "EURUSD=X",
-    implemented: false,
+    implemented: true,
   },
   {
     symbol: "USDJPY",
@@ -133,7 +139,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "forex",
     twelveDataSymbol: "USD/JPY",
     yfinanceSymbol: "JPY=X",
-    implemented: false,
+    implemented: true,
   },
   {
     symbol: "GBPUSD",
@@ -141,7 +147,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "forex",
     twelveDataSymbol: "GBP/USD",
     yfinanceSymbol: "GBPUSD=X",
-    implemented: false,
+    implemented: true,
   },
   {
     symbol: "XAUUSD",
@@ -157,7 +163,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "index",
     twelveDataSymbol: "NDX",
     yfinanceSymbol: "NQ=F",
-    implemented: false,
+    implemented: true,
   },
   {
     symbol: "GER40",
@@ -165,7 +171,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "index",
     twelveDataSymbol: "DAX",
     yfinanceSymbol: "^GDAXI",
-    implemented: false,
+    implemented: true,
   },
   {
     symbol: "US30",
@@ -173,7 +179,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "index",
     twelveDataSymbol: "DJI",
     yfinanceSymbol: "^DJI",
-    implemented: false,
+    implemented: true,
   },
   {
     symbol: "WTI",
@@ -181,7 +187,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "energy",
     twelveDataSymbol: "WTI/USD",
     yfinanceSymbol: "CL=F",
-    implemented: false,
+    implemented: true,
   },
   {
     symbol: "SPX500",
@@ -189,6 +195,6 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "index",
     twelveDataSymbol: "SPX",
     yfinanceSymbol: "^GSPC",
-    implemented: false,
+    implemented: true,
   },
 ];

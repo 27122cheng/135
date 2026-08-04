@@ -1,12 +1,13 @@
 import type { BiasItem, CommodityMeta, TradeSignal } from "@/types/signal";
 import { COMMODITIES } from "@/types/signal";
+import { FUNDAMENTALS_CONFIG, type FundamentalsConfig } from "@/config/fundamentals";
 import { fetchOHLCV } from "./data-sources/ohlcv";
 import { atr as computeAtr } from "./analysis/indicators";
 import { analyzeTechnical } from "./analysis/technical";
-import { analyzeFundamentalXAUUSD } from "./analysis/fundamental";
+import { analyzeFundamental } from "./analysis/fundamental";
 import { analyzePositioning } from "./analysis/positioning";
 import { analyzeNews } from "./analysis/news";
-import { analyzeFundFlowXAUUSD } from "./analysis/fundflow";
+import { analyzeFundFlow } from "./analysis/fundflow";
 import { generateNarrative } from "./analysis/ai-narrative";
 import { scoreSignal } from "./scoring";
 import { buildStopLoss, buildTakeProfits } from "./entry-exit";
@@ -25,20 +26,20 @@ function pickDirection(biasItems: BiasItem[]): { direction: "long" | "short"; ti
   return { direction: net > 0 ? "long" : "short", tie: false };
 }
 
-/**
- * End-to-end Stage 1 pipeline for a single symbol. Only XAUUSD is wired to
- * real analyzers today (see CommodityMeta.implemented); calling this for an
- * unimplemented symbol throws, callers should check `implemented` first.
- */
+/** End-to-end Stage 2 pipeline: works for any of the 9 COMMODITIES via config/fundamentals.ts. */
 export async function buildTradeSignal(symbol: string): Promise<TradeSignal> {
   const meta = COMMODITIES.find((c) => c.symbol === symbol);
-  if (!meta || !meta.implemented) {
-    throw new Error(`Symbol ${symbol} is not implemented in Stage 1`);
+  if (!meta) {
+    throw new Error(`Unknown symbol ${symbol}`);
   }
-  return buildXauUsdSignal(meta);
+  const config = FUNDAMENTALS_CONFIG[meta.symbol];
+  return buildSignalForSymbol(meta, config);
 }
 
-async function buildXauUsdSignal(meta: CommodityMeta): Promise<TradeSignal> {
+async function buildSignalForSymbol(
+  meta: CommodityMeta,
+  config: FundamentalsConfig,
+): Promise<TradeSignal> {
   const gaps: string[] = [];
 
   const [d1, h4, w1] = await Promise.all([
@@ -56,18 +57,20 @@ async function buildXauUsdSignal(meta: CommodityMeta): Promise<TradeSignal> {
   const currentPrice = d1?.candles.at(-1)?.close ?? h4?.candles.at(-1)?.close ?? w1?.candles.at(-1)?.close;
   if (currentPrice == null) {
     gaps.push("所有時框的 OHLCV 皆取得失敗，無法計算即時價位");
-    throw new Error("XAUUSD: no OHLCV data available from any source");
+    throw new Error(`${meta.symbol}: no OHLCV data available from any source`);
   }
 
   const technical = analyzeTechnical(candlesByTf, currentPrice, gaps);
   const atrD1 = d1 ? computeAtr(d1.candles, 14) : null;
   if (atrD1 == null) gaps.push("D1 K棒不足以計算 ATR(14)");
 
-  const [fundamentalItems, positioning, news, fundFlowItems] = await Promise.all([
-    analyzeFundamentalXAUUSD(gaps),
-    analyzePositioning("XAUUSD", gaps),
-    analyzeNews("gold price OR bullion OR XAUUSD", ["gold", "bullion", "precious metal", "fed", "inflation"], gaps),
-    analyzeFundFlowXAUUSD(gaps),
+  // Positioning first — fundFlow reuses its COT reports instead of re-fetching.
+  const positioning = await analyzePositioning(meta, config, gaps);
+
+  const [fundamentalItems, news, fundFlowItems] = await Promise.all([
+    analyzeFundamental(meta, config, gaps),
+    analyzeNews(config.gdeltQuery, config.newsKeywords, gaps),
+    analyzeFundFlow(meta, config, positioning.reports, gaps),
   ]);
 
   const biasItems: BiasItem[] = [

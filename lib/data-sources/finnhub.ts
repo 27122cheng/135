@@ -116,3 +116,51 @@ export async function fetchFinnhubMarketNews(
   );
   return filtered;
 }
+
+export interface EarningsEvent {
+  symbol: string;
+  date: string;
+  epsEstimate: number | null;
+  epsActual: number | null;
+}
+
+interface FinnhubEarningsResponse {
+  earningsCalendar?: Array<{
+    symbol: string;
+    date: string;
+    epsEstimate?: number | null;
+    epsActual?: number | null;
+  }>;
+}
+
+/** 財報季訊號（美股指數專用）：未來 7 天內有多少公司公布財報，做為波動風險提示。 */
+export async function fetchEarningsCalendar(gaps: string[]): Promise<EarningsEvent[] | null> {
+  const apiKey = process.env.FINNHUB_API_KEY;
+  if (!apiKey) {
+    gaps.push("缺少 FINNHUB_API_KEY，無法取得財報日曆");
+    return null;
+  }
+  if (!checkRateLimit("finnhub", 3600)) {
+    gaps.push("Finnhub API 已達速率限制");
+    return null;
+  }
+  const from = new Date().toISOString().slice(0, 10);
+  const to = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const key = `finnhub:earnings:${from}:${to}`;
+  const result = await cachedOrFetch(key, 60 * 60 * 1000, async () => {
+    const url = `https://finnhub.io/api/v1/calendar/earnings?from=${from}&to=${to}&token=${apiKey}`;
+    const data = await fetchJson<FinnhubEarningsResponse>(url);
+    if (!data || !Array.isArray(data.earningsCalendar)) return null;
+    return data.earningsCalendar.map((e) => ({
+      symbol: e.symbol,
+      date: e.date,
+      epsEstimate: e.epsEstimate ?? null,
+      epsActual: e.epsActual ?? null,
+    }));
+  });
+  if (!result) {
+    gaps.push("Finnhub 財報日曆回應為空");
+    return null;
+  }
+  return result;
+}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import type { SupportedSymbol, TradeSignal } from "@/types/signal";
 import { CommodityList } from "@/components/commodity-list";
 import { SignalCard } from "@/components/signal-card";
@@ -12,11 +13,11 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (selected !== "XAUUSD") return;
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch("/api/signal/xauusd")
+    setSignal(null);
+    fetch(`/api/signal/${selected}`)
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -39,8 +40,16 @@ export default function Home() {
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl gap-6 p-6">
       <aside className="w-56 shrink-0">
-        <h1 className="mb-4 text-lg font-bold text-neutral-100">多商品交易訊號</h1>
+        <div className="mb-4 flex items-center justify-between">
+          <h1 className="text-lg font-bold text-neutral-100">多商品交易訊號</h1>
+        </div>
         <CommodityList selected={selected} onSelect={setSelected} />
+        <Link
+          href="/history"
+          className="mt-4 block rounded-lg px-3 py-2 text-sm text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
+        >
+          歷史訊號 →
+        </Link>
       </aside>
 
       <section className="flex-1">

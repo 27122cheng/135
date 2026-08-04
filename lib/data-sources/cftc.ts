@@ -9,11 +9,6 @@ export interface CotReport {
   openInterest: number;
 }
 
-/** CFTC "Futures Only" legacy report contract codes, by our symbol. Gold (COMEX) only for Stage 1. */
-const CFTC_CONTRACT_CODES: Partial<Record<string, string>> = {
-  XAUUSD: "088691", // GOLD - COMMODITY EXCHANGE INC.
-};
-
 interface CftcRow {
   report_date_as_yyyy_mm_dd: string;
   noncomm_positions_long_all: string;
@@ -24,16 +19,17 @@ interface CftcRow {
 /**
  * Weekly Commitments of Traders (legacy futures-only report, dataset 6dca-aqww)
  * via the CFTC's public Socrata API. No API key required for public reads.
+ * `contractCode` comes from config/fundamentals.ts (null there means "no
+ * CFTC data for this instrument", e.g. GER40/DAX trades on Eurex).
  */
-export async function fetchCotReport(symbol: string, gaps: string[]): Promise<CotReport[] | null> {
-  const code = CFTC_CONTRACT_CODES[symbol];
-  if (!code) {
-    gaps.push(`尚未設定 ${symbol} 對應的 CFTC 合約代碼`);
-    return null;
-  }
-  const key = `cftc:${code}`;
+export async function fetchCotReport(
+  label: string,
+  contractCode: string,
+  gaps: string[],
+): Promise<CotReport[] | null> {
+  const key = `cftc:${contractCode}`;
   const result = await cachedOrFetch(key, 6 * 60 * 60 * 1000, async () => {
-    const where = encodeURIComponent(`cftc_contract_market_code='${code}'`);
+    const where = encodeURIComponent(`cftc_contract_market_code='${contractCode}'`);
     const url =
       `https://publicreporting.cftc.gov/resource/6dca-aqww.json?$where=${where}` +
       `&$order=report_date_as_yyyy_mm_dd DESC&$limit=60`;
@@ -60,7 +56,7 @@ export async function fetchCotReport(symbol: string, gaps: string[]): Promise<Co
     return reports.length > 0 ? reports : null;
   });
   if (!result) {
-    gaps.push(`CFTC COT (${symbol}) 取得失敗或回應為空`);
+    gaps.push(`CFTC COT (${label}) 取得失敗或回應為空`);
     return null;
   }
   return result;

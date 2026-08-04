@@ -21,11 +21,10 @@ function alignToCandles<T>(candleLen: number, series: T[], offset: number): (T |
 
 /** Nearest round-number level for the instrument, based on price magnitude. */
 function roundLevelStep(price: number): number {
-  if (price >= 1000) return 50;
-  if (price >= 100) return 5;
-  if (price >= 10) return 1;
-  if (price >= 1) return 0.1;
-  return 0.01;
+  if (price >= 1000) return 50; // indices, gold
+  if (price >= 10) return 1; // WTI, JPY-quoted pairs (e.g. USD/JPY ~150)
+  if (price >= 1) return 0.01; // most FX majors (e.g. EUR/USD ~1.08)
+  return 0.0001;
 }
 
 function swingsToStructures(

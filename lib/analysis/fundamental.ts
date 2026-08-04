@@ -1,5 +1,8 @@
-import type { BiasItem } from "@/types/signal";
+import type { BiasItem, CommodityMeta } from "@/types/signal";
+import type { FundamentalsConfig } from "@/config/fundamentals";
 import { fetchFredSeries, type FredPoint } from "../data-sources/fred";
+import { fetchEiaCrudeInventory } from "../data-sources/eia";
+import { fetchEarningsCalendar } from "../data-sources/finnhub";
 
 interface Trend {
   direction: "up" | "down" | "flat";
@@ -18,49 +21,61 @@ function trend(points: FredPoint[], lookback = 10): Trend | null {
 }
 
 /**
- * XAUUSD fundamentals: real interest rate (DGS10 - T10YIE), DXY direction, VIX.
- * Central bank gold-purchase data has no free API in the Stage 1 source list,
- * so it is intentionally omitted and logged to data_gaps rather than guessed.
+ * 基本面，依 config/fundamentals.ts 逐商品套用不同因子組合：
+ * XAUUSD → 實質利率(DGS10-T10YIE)、DXY、VIX
+ * 美股指數 → DGS10走勢(經DXY近似)、財報季事件風險、VIX
+ * WTI → EIA庫存、DXY（OPEC消息由新聞面關鍵字涵蓋）
+ * 外匯 → DXY（兩國利差因缺乏外國公債資料暫不納入，見 data_gaps）
  */
-export async function analyzeFundamentalXAUUSD(gaps: string[]): Promise<BiasItem[]> {
+export async function analyzeFundamental(
+  meta: CommodityMeta,
+  config: FundamentalsConfig,
+  gaps: string[],
+): Promise<BiasItem[]> {
   const items: BiasItem[] = [];
-  const [dgs10, t10yie, dxy, vix] = await Promise.all([
-    fetchFredSeries("DGS10", gaps),
-    fetchFredSeries("T10YIE", gaps),
-    fetchFredSeries("DXY", gaps),
-    fetchFredSeries("VIX", gaps),
+
+  const [dgs10, t10yie, dxy, vix, eia, earnings] = await Promise.all([
+    config.useRealRate ? fetchFredSeries("DGS10", gaps) : Promise.resolve(null),
+    config.useRealRate ? fetchFredSeries("T10YIE", gaps) : Promise.resolve(null),
+    config.useDxy ? fetchFredSeries("DXY", gaps) : Promise.resolve(null),
+    config.useVix ? fetchFredSeries("VIX", gaps) : Promise.resolve(null),
+    config.useEiaInventory ? fetchEiaCrudeInventory(gaps) : Promise.resolve(null),
+    config.useEarningsSeason ? fetchEarningsCalendar(gaps) : Promise.resolve(null),
   ]);
 
-  if (dgs10?.latest?.value != null && t10yie?.latest?.value != null) {
-    const realRateNow = dgs10.latest.value - t10yie.latest.value;
-    const dgs10Trend = trend(dgs10.points);
-    const t10yieTrend = trend(t10yie.points);
-    if (dgs10Trend && t10yieTrend) {
-      const realFrom = dgs10Trend.from - t10yieTrend.from;
-      const realTo = dgs10Trend.to - t10yieTrend.to;
-      const direction = realTo < realFrom ? "long" : realTo > realFrom ? "short" : "neutral";
-      items.push({
-        dimension: "基本面",
-        factor: `實質利率(DGS10-T10YIE) 現值 ${realRateNow.toFixed(2)}%，近期${direction === "long" ? "下滑" : direction === "short" ? "走高" : "持平"}（實質利率與金價反向）`,
-        direction,
-        weight: direction === "neutral" ? 0 : 2,
-        evidence: `DGS10 ${dgs10Trend.from.toFixed(2)}%→${dgs10Trend.to.toFixed(2)}%, T10YIE ${t10yieTrend.from.toFixed(2)}%→${t10yieTrend.to.toFixed(2)}%`,
-        source: `FRED DGS10/T10YIE，最新 ${dgs10.latest.date}`,
-      });
+  if (config.useRealRate) {
+    if (dgs10?.latest?.value != null && t10yie?.latest?.value != null) {
+      const realRateNow = dgs10.latest.value - t10yie.latest.value;
+      const dgs10Trend = trend(dgs10.points);
+      const t10yieTrend = trend(t10yie.points);
+      if (dgs10Trend && t10yieTrend) {
+        const realFrom = dgs10Trend.from - t10yieTrend.from;
+        const realTo = dgs10Trend.to - t10yieTrend.to;
+        const direction = realTo < realFrom ? "long" : realTo > realFrom ? "short" : "neutral";
+        items.push({
+          dimension: "基本面",
+          factor: `實質利率(DGS10-T10YIE) 現值 ${realRateNow.toFixed(2)}%，近期${direction === "long" ? "下滑" : direction === "short" ? "走高" : "持平"}（實質利率與金價反向）`,
+          direction,
+          weight: direction === "neutral" ? 0 : 2,
+          evidence: `DGS10 ${dgs10Trend.from.toFixed(2)}%→${dgs10Trend.to.toFixed(2)}%, T10YIE ${t10yieTrend.from.toFixed(2)}%→${t10yieTrend.to.toFixed(2)}%`,
+          source: `FRED DGS10/T10YIE，最新 ${dgs10.latest.date}`,
+        });
+      } else {
+        gaps.push("DGS10/T10YIE 歷史資料不足以計算實質利率趨勢");
+      }
     } else {
-      gaps.push("DGS10/T10YIE 歷史資料不足以計算實質利率趨勢");
+      gaps.push("缺少 DGS10 或 T10YIE，無法計算實質利率偏向");
     }
-  } else {
-    gaps.push("缺少 DGS10 或 T10YIE，無法計算黃金實質利率偏向");
   }
 
-  if (dxy) {
+  if (config.useDxy && dxy) {
     const dxyTrend = trend(dxy.points);
     if (dxyTrend && dxyTrend.direction !== "flat") {
-      const direction = dxyTrend.direction === "down" ? "long" : "short"; // 美元走弱通常利多黃金
+      const dxyDown = dxyTrend.direction === "down";
+      const direction = dxyDown !== config.dxyInverted ? "long" : "short";
       items.push({
         dimension: "基本面",
-        factor: `DXY(廣義美元指數) 近期${dxyTrend.direction === "down" ? "走弱" : "走強"} (${dxyTrend.from.toFixed(2)}→${dxyTrend.to.toFixed(2)})`,
+        factor: `DXY(廣義美元指數) 近期${dxyDown ? "走弱" : "走強"} (${dxyTrend.from.toFixed(2)}→${dxyTrend.to.toFixed(2)})`,
         direction,
         weight: 1,
         evidence: `DTWEXBGS ${dxyTrend.from.toFixed(2)}→${dxyTrend.to.toFixed(2)}`,
@@ -69,22 +84,19 @@ export async function analyzeFundamentalXAUUSD(gaps: string[]): Promise<BiasItem
     }
   }
 
-  if (vix?.latest?.value != null) {
+  if (config.useVix && vix?.latest?.value != null) {
     const v = vix.latest.value;
-    if (v >= 25) {
+    if (v >= 25 || v <= 14) {
+      const riskOff = v >= 25;
+      const direction = riskOff
+        ? config.vixRiskOffDirection
+        : config.vixRiskOffDirection === "long"
+          ? "short"
+          : "long";
       items.push({
         dimension: "基本面",
-        factor: `VIX=${v.toFixed(1)} 處於避險情緒偏高區間，有利黃金避險需求`,
-        direction: "long",
-        weight: 1,
-        evidence: `VIX=${v.toFixed(1)}`,
-        source: `FRED VIXCLS，最新 ${vix.latest.date}`,
-      });
-    } else if (v <= 14) {
-      items.push({
-        dimension: "基本面",
-        factor: `VIX=${v.toFixed(1)} 市場情緒偏低，避險買盤動能弱`,
-        direction: "short",
+        factor: `VIX=${v.toFixed(1)} ${riskOff ? "風險趨避情緒偏高" : "風險偏好情緒偏高，避險需求弱"}`,
+        direction,
         weight: 1,
         evidence: `VIX=${v.toFixed(1)}`,
         source: `FRED VIXCLS，最新 ${vix.latest.date}`,
@@ -92,7 +104,37 @@ export async function analyzeFundamentalXAUUSD(gaps: string[]): Promise<BiasItem
     }
   }
 
-  gaps.push("央行購金數據不在 Stage 1 免費 API 清單內，本階段基本面計分不納入此項");
+  if (config.useEiaInventory) {
+    if (eia) {
+      const change = eia.latest.value - (eia.previous?.value ?? eia.latest.value);
+      items.push({
+        dimension: "基本面",
+        factor: `EIA 原油庫存週變化 ${change >= 0 ? "+" : ""}${change.toLocaleString()} 千桶`,
+        direction: change < 0 ? "long" : change > 0 ? "short" : "neutral",
+        weight: change === 0 ? 0 : 1,
+        evidence: `${eia.previous?.value.toLocaleString() ?? "N/A"} (${eia.previous?.period ?? "N/A"}) → ${eia.latest.value.toLocaleString()} (${eia.latest.period})`,
+        source: "EIA petroleum/stoc/wstk weekly",
+      });
+    }
+  }
+
+  if (config.useEarningsSeason && earnings && earnings.length > 0) {
+    items.push({
+      dimension: "基本面",
+      factor: `未來7天內有 ${earnings.length} 筆財報事件，波動風險上升`,
+      direction: "neutral",
+      weight: 0,
+      evidence: `${earnings.length} 筆財報事件`,
+      source: "Finnhub /calendar/earnings",
+    });
+  }
+
+  if (meta.symbol === "XAUUSD") {
+    gaps.push("央行購金數據不在免費 API 清單內，本階段基本面計分不納入此項");
+  }
+  if (meta.symbol === "EURUSD" || meta.symbol === "USDJPY" || meta.symbol === "GBPUSD") {
+    gaps.push("兩國利差需要外國公債殖利率資料，FRED 核准清單僅含美國公債，本階段暫不納入此項");
+  }
 
   return items;
 }
