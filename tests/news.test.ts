@@ -99,7 +99,7 @@ async function main() {
   check("a digest is still produced with no AI", r4.digest !== null);
   check("headlines are still listed", r4.digest?.sources.length === 3, r4.digest?.sources.length);
   check("keyword scoring claims no takeaways", r4.digest?.key_points.length === 0, r4.digest?.key_points);
-  check("it is labelled as not-AI", r4.digest?.analyzed_by.includes("非 AI"), r4.digest?.analyzed_by);
+  check("it is labelled as not-AI", r4.digest?.analyzed_by.includes("非 AI") === true, r4.digest?.analyzed_by);
 
   // No headlines at all: no digest, and no duplicated warning.
   __resetCacheForTests();

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { aiProviderStatus } from "@/lib/ai";
 import { quotaSnapshot } from "@/lib/data-sources/quota";
 import { storeKind } from "@/lib/db";
+import { notifyStatus } from "@/lib/notify";
+import { configuredMinGrade } from "@/lib/notify/alert";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -61,6 +63,9 @@ export async function GET() {
     FINNHUB_API_KEY: Boolean(process.env.FINNHUB_API_KEY),
     EIA_API_KEY: Boolean(process.env.EIA_API_KEY),
     DATABASE_URL: Boolean(process.env.DATABASE_URL),
+    TELEGRAM_BOT_TOKEN: Boolean(process.env.TELEGRAM_BOT_TOKEN),
+    TELEGRAM_CHAT_ID: Boolean(process.env.TELEGRAM_CHAT_ID),
+    DISCORD_WEBHOOK_URL: Boolean(process.env.DISCORD_WEBHOOK_URL),
     NEXT_PUBLIC_SUPABASE_URL: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
     NEXT_PUBLIC_SUPABASE_ANON_KEY: Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
     SUPABASE_SERVICE_ROLE_KEY: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
@@ -115,6 +120,9 @@ export async function GET() {
     // the chain skips it silently rather than counting it as a failure.
     aiProviders: ai,
     database: store,
+    // Alerts only fire from the scheduled refresh, so this reports what that
+    // run would be able to do — not what the browser can reach.
+    alerts: { channels: notifyStatus(), minGrade: configuredMinGrade() },
     // Live counters per source, so "why did it stop calling X" has an answer.
     quota: quotaSnapshot(),
     probes: sanitized,

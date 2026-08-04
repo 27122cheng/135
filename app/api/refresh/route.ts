@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { COMMODITIES } from "@/types/signal";
 import { buildTradeSignal } from "@/lib/signal-builder";
 import { getSignalStore } from "@/lib/db";
+import { notifyAll } from "@/lib/notify";
+import { configuredMinGrade, formatAlert, shouldAlert } from "@/lib/notify/alert";
 
 export const dynamic = "force-dynamic";
 // Vercel Hobby's ceiling. One symbol comfortably fits; all nine may not, which
@@ -47,12 +49,38 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: `Unknown symbol ${requested}` }, { status: 404 });
   }
 
+  const minGrade = configuredMinGrade();
+  // Falls back to the origin this request arrived on, so the link in an alert
+  // works without anyone setting APP_URL in Vercel as well as in GitHub.
+  const appUrl = process.env.APP_URL?.trim() || new URL(request.url).origin;
+
   // allSettled: one symbol failing must not cost the others their refresh.
   const settled = await Promise.allSettled(
     targets.map(async (meta) => {
+      // The previous row is read *before* inserting, so the comparison is
+      // against the last run rather than against the signal we just wrote.
+      const [previous] = await store
+        .listSignals({ symbol: meta.symbol, limit: 1 })
+        .catch(() => []);
+
       const signal = await buildTradeSignal(meta.symbol);
       await store.insertSignal(signal);
-      return { grade: signal.grade, gaps: signal.data_gaps.length };
+
+      const decision = shouldAlert(signal, previous ?? null, minGrade);
+      let notified: string[] = [];
+      if (decision.alert) {
+        // A failing alert must not fail the refresh that produced it — the
+        // signal is already stored and visible on the site either way.
+        const results = await notifyAll(formatAlert(signal, decision.reason, appUrl));
+        notified = results.filter((r) => r.ok).map((r) => r.channel);
+      }
+      return {
+        grade: signal.grade,
+        gaps: signal.data_gaps.length,
+        alerted: decision.alert,
+        alertReason: decision.reason,
+        notified,
+      };
     }),
   );
 

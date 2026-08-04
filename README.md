@@ -14,7 +14,7 @@ end-to-end. A GitHub Actions workflow refreshes every 4h into Postgres, and
 npm install
 cp .env.example .env.local   # 可以完全空白 — 見下方「零金鑰可跑」
 npm run dev
-npm test                     # 15 個測試套件，256 項斷言
+npm test                     # 16 個測試套件，287 項斷言
 ```
 
 Open http://localhost:3000. Pick any symbol in the left panel — each calls
@@ -236,6 +236,64 @@ SPDR 官方持倉 XML 有兩個問題：它會擋雲端機房 IP，而且**只�
 兩個保守處理：同一根 K 棒同時觸及停損與停利時，日線無法判斷先後，**一律計為敗**
 （不用擲硬幣灌高勝率），並在 UI 標示；K 棒不足時回傳 null 並記入 `data_gaps`，
 不生一個假數字。
+
+## 自動發送交易建議
+
+### 關掉網頁還會繼續分析嗎？
+
+**會 —— 但要先把排程接起來。** 分析全部在伺服器端跑，瀏覽器只是看結果的視窗。
+
+| 情況 | 關掉網頁後 |
+|---|---|
+| 沒設 GitHub Actions secrets | **完全不會跑**。網站只在你打開頁面時現算 |
+| 設好了 | 每 4 小時自動跑完 9 個商品，寫進資料庫，達標就推播 |
+
+要接起來只需要在 GitHub repo → **Settings → Secrets and variables → Actions**
+加兩個：`APP_URL`（你的網址）與 `CRON_SECRET`（自己想一組字串，同一組也要
+填進 Vercel 環境變數）。細節見「[排程與儲存](#排程與儲存)」。
+
+### 設定通知（Telegram，免費）
+
+1. Telegram 搜尋 **@BotFather** → 傳 `/newbot` → 照著取名字 → 拿到 token
+2. **先對你的新 bot 傳一句話**（Telegram 規定：使用者沒先開口，bot 不能主動傳訊）
+3. 瀏覽器開 `https://api.telegram.org/bot<你的token>/getUpdates`，
+   找 `"chat":{"id":123456789}` 那個數字
+4. Vercel → Settings → Environment Variables 加上：
+   - `TELEGRAM_BOT_TOKEN`
+   - `TELEGRAM_CHAT_ID`
+5. Redeploy，然後對 `你的網址/api/notify/test` 送一個 POST 測試
+
+Discord 更簡單：伺服器設定 → 整合 → 建立 Webhook，把網址填進 `DISCORD_WEBHOOK_URL`。
+
+### 什麼時候會收到通知
+
+只有同時滿足才發：**建議進場**（不是觀望）、**評等 ≥ `ALERT_MIN_GRADE`**（預設 A）、
+且三個價位齊全。
+
+### 不會被洗版
+
+排程每 4 小時跑一次。一個維持整天有效的黃金訊號會產生 6 次一模一樣的推播，
+第七次之後你就不看了，連帶錯過真的重要的那次。所以規則是**看變化，不看狀態**：
+
+| 情況 | 發送？ |
+|---|---|
+| 首次出現可執行訊號 | ✅ |
+| 由觀望轉為進場 | ✅ |
+| 方向翻轉（多↔空） | ✅ |
+| 評等提升（A → A+） | ✅ |
+| 停損／停利價位實質變動 | ✅ |
+| 跟上次完全一樣 | ❌ |
+| 價位只飄動 <0.2% | ❌（市場本來就會動，不是新資訊） |
+| 評等下降但仍在門檻上 | ❌（同一筆交易已經在檯面上了） |
+
+判斷邏輯是 `lib/notify/alert.ts` 的純函式，不碰資料庫也不碰網路，所以門檻
+與去重規則都能直接測 —— `tests/alert.test.ts` 有 31 項。
+
+### 通知內容
+
+商品、方向、評等、三個價位、風報比、計畫摘要，加上**與交易方向一致**的那條
+新聞重點（反向的那條不佔版面，你要看細節就點連結回網站）。
+有套用干涉或有資料缺口也會標出來。
 
 ## 復盤怎麼設定（一次性，約 5 分鐘）
 
@@ -754,7 +812,7 @@ npm test
 ```
 
 沙箱連不到任何一個金融 API，所以驗證靠的是 known-answer 測試 + stub 過的
-`fetch`，不是真的打上去。15 個套件、256 項斷言，每個套件跑在自己的行程裡
+`fetch`，不是真的打上去。16 個套件、287 項斷言，每個套件跑在自己的行程裡
 （好幾個會替換 `global.fetch` 並重設模組層快取，共用行程會讓前一個的 stub
 汙染後一個）。
 
@@ -766,6 +824,7 @@ npm test
 | `ohlcv` | 來源鏈；**能用的備援不准報缺口，但 stale 一定要報** |
 | `keys` | 允許清單擋掉 service-role / cron secret；併發請求不互相看見 |
 | `data-gaps` | 「本次失敗」與「先天限制」分類；沒見過的訊息不准被消音 |
+| `alert` | 通知門檻與去重：一樣的建議不重發、價位飄動不算變化、方向翻轉一定發 |
 | `news` | 新聞重點的引用只能指向真的存在的標題；越界／負數引用會被丟掉 |
 | `gdelt` | 零結果與真失敗要分得開；查詢失敗會退回單一詞再試 |
 | `db` | 首次設定錯誤翻譯、schema 常數與 .sql 檔不得漂移、DATABASE_URL 不可由瀏覽器設定 |
