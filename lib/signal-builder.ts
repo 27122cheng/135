@@ -420,8 +420,9 @@ async function buildSignalForSymbol(
     tradePlan.stop_loss !== null &&
     tradePlan.take_profit !== null
   ) {
-    tradePlan.add_ons = buildAddOns({
+    const addOns = buildAddOns({
       direction,
+      grade,
       entry: tradePlan.entry,
       stopLoss: tradePlan.stop_loss,
       takeProfit: tradePlan.take_profit,
@@ -429,8 +430,9 @@ async function buildSignalForSymbol(
       pathObstacles: technical.pathObstacles,
       atr: atrD1,
     });
-    if (tradePlan.add_ons.length === 0) {
-      gaps.push("進場到停利之間沒有可錨定的結構，本次不提供加倉點（不以倍數推算價格）");
+    tradePlan.add_ons = addOns.levels;
+    if (addOns.skipped) {
+      gaps.push(`本次不提供加倉點：${addOns.skipped}`);
     }
   }
 

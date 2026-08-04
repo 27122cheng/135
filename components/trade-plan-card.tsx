@@ -20,7 +20,9 @@ function AddOns({ levels }: { levels: AddOnLevel[] }) {
         加倉點（{levels.length} 段，最多 3 段）
       </summary>
       <p className="mt-2 text-[11px] leading-relaxed text-neutral-600">
-        每一段都錨定真實結構，不是用 R 倍數推算的價格。加倉後停損一律跟著上移。
+        只有 A / A+ 才提供加倉點 —— 加倉是押注方向會繼續有效，方向沒信心就不該加。
+        每一段都落在強度 ≥2 的結構上（做多有支撐、做空有壓力），不是用 R 倍數推算的價格。
+        加倉後停損一律跟著上移。
       </p>
       <ol className="mt-2 space-y-2.5">
         {levels.map((level) => (

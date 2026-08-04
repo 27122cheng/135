@@ -6,7 +6,7 @@ import {
   type MonitorMemory,
 } from "@/lib/monitor/plan-state";
 import { buildAddOns } from "@/lib/analysis/add-on";
-import type { AddOnLevel, EntryStructure, PathObstacle, TradePlan } from "@/types/signal";
+import type { AddOnLevel, EntryStructure, Grade, PathObstacle, TradePlan } from "@/types/signal";
 
 /**
  * 加倉 levels and the 5-minute monitor state machine.
@@ -61,17 +61,20 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
     { price: 2030, type: "需求區", role: "support", timeframe: "H4", strength: 2, distance_pct: 1.5 },
     { price: 2050, type: "需求區", role: "support", timeframe: "H4", strength: 2, distance_pct: 2.5 },
   ];
-  const levels = buildAddOns({
-    direction: "long",
+  const base = {
+    direction: "long" as const,
+    grade: "A" as Grade,
     entry: 2000,
     stopLoss: 1980,
     takeProfit: 2080,
     entryStructures: structures,
     pathObstacles: obstacles,
     atr: 10,
-  });
+  };
+  const { levels, skipped } = buildAddOns(base);
 
-  check("add-ons are produced", levels.length > 0, levels);
+  check("add-ons are produced", levels.length > 0, skipped);
+  check("no skip reason when levels exist", skipped === null);
   check("never more than three", levels.length <= 3, levels.length);
   check("sequences are 1..n in order", levels.every((l, i) => l.sequence === i + 1), levels.map((l) => l.sequence));
   check("all sit beyond the entry", levels.every((l) => l.price > 2000), levels.map((l) => l.price));
@@ -86,11 +89,41 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   check("each cites a real structure", levels.every((l) => l.structure.includes("@")), levels.map((l) => l.structure));
   // 不能用幾R來分配 — nothing here may be derived from a risk multiple.
   check("no level mentions R multiples", levels.every((l) => !/\dR\b/.test(l.reason + l.new_stop_reason)));
+  // The reason must state the support/resistance property the rule requires.
+  check("a long's reason claims 支撐", levels.every((l) => l.reason.includes("支撐")), levels[0]?.reason);
+
+  // ── rule 1: direction confidence ──
+  for (const grade of ["B", "C", "no-trade"] as Grade[]) {
+    const weak = buildAddOns({ ...base, grade });
+    check(`grade ${grade} produces no add-ons`, weak.levels.length === 0, weak.levels);
+    check(`grade ${grade} says why`, weak.skipped?.includes("信心不足") === true, weak.skipped);
+  }
+  check("A+ is allowed", buildAddOns({ ...base, grade: "A+" }).levels.length > 0);
+
+  // ── rule 2/3: the level must be a real 支撐/壓力 ──
+  const weakStructures = buildAddOns({
+    ...base,
+    pathObstacles: obstacles.map((o) => ({ ...o, strength: 1 as const })),
+  });
+  check("strength-1 levels are refused", weakStructures.levels.length === 0, weakStructures.levels);
+  check("and the refusal names the reason",
+    weakStructures.skipped?.includes("強度都只有 1") === true, weakStructures.skipped);
+
+  // A mix: only the strong ones qualify.
+  const mixed = buildAddOns({
+    ...base,
+    pathObstacles: [
+      { price: 2020, type: "前高", timeframe: "D1", strength: 1 },
+      { price: 2040, type: "週線S/R", timeframe: "W1", strength: 3 },
+    ],
+  });
+  check("weak levels are skipped, strong ones kept",
+    mixed.levels.length === 1 && mixed.levels[0].price === 2040, mixed.levels.map((l) => l.price));
 
   // Short side is the mirror image.
-  const shortLevels = buildAddOns({
+  const shortResult = buildAddOns({
+    ...base,
     direction: "short",
-    entry: 2000,
     stopLoss: 2020,
     takeProfit: 1920,
     entryStructures: structures.map((s) => ({
@@ -99,37 +132,34 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
       price: 4000 - s.price,
     })),
     pathObstacles: obstacles.map((o) => ({ ...o, price: 4000 - o.price })),
-    atr: 10,
   });
-  check("short add-ons sit below the entry", shortLevels.every((l) => l.price < 2000), shortLevels.map((l) => l.price));
-  check("short stops improve downward", shortLevels.every((l) => l.new_stop_loss < 2020), shortLevels.map((l) => l.new_stop_loss));
+  check("short add-ons sit below the entry", shortResult.levels.every((l) => l.price < 2000), shortResult.levels.map((l) => l.price));
+  check("short stops improve downward", shortResult.levels.every((l) => l.new_stop_loss < 2020), shortResult.levels.map((l) => l.new_stop_loss));
+  check("a short's reason claims 壓力", shortResult.levels.every((l) => l.reason.includes("壓力")), shortResult.levels[0]?.reason);
 
   // No structure behind the obstacles → nothing to anchor a new stop to.
   const noStops = buildAddOns({
-    direction: "long",
-    entry: 2000,
-    stopLoss: 1980,
-    takeProfit: 2080,
+    ...base,
     entryStructures: [],
     pathObstacles: [{ price: 2020, type: "前高", timeframe: "D1", strength: 2 }],
-    atr: 10,
   });
-  check("no anchorable stop means no add-on", noStops.length === 0, noStops);
+  check("no anchorable stop means no add-on", noStops.levels.length === 0, noStops.levels);
+  check("and it says so", noStops.skipped?.includes("沒有可錨定的保護結構") === true, noStops.skipped);
 
   // Levels too close together are one level with extra steps.
   const crowded = buildAddOns({
-    direction: "long",
-    entry: 2000,
-    stopLoss: 1980,
-    takeProfit: 2080,
-    entryStructures: structures,
+    ...base,
     pathObstacles: [
       { price: 2020, type: "前高", timeframe: "D1", strength: 2 },
       { price: 2021, type: "前高", timeframe: "D1", strength: 2 },
     ],
-    atr: 10,
   });
-  check("levels 1 point apart collapse to one", crowded.length === 1, crowded.map((l) => l.price));
+  check("levels 1 point apart collapse to one", crowded.levels.length === 1, crowded.levels.map((l) => l.price));
+
+  // Nothing between entry and target at all.
+  const empty = buildAddOns({ ...base, pathObstacles: [] });
+  check("no obstacles means no add-ons", empty.levels.length === 0);
+  check("and names that case", empty.skipped?.includes("沒有可錨定的結構") === true, empty.skipped);
 }
 
 // ── monitor state machine ─────────────────────────────────────────
