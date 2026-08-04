@@ -1,0 +1,61 @@
+import { check, report } from "./_harness";
+import { groupDataGaps } from "@/lib/data-gaps";
+
+/**
+ * data_gaps are split three ways so the warning count only ever shows things
+ * someone can act on. A count that can never reach zero is a count people
+ * stop reading.
+ */
+
+// The three lines a deployed signal card actually showed.
+{
+  const g = groupDataGaps([
+    "央行購金數據不在免費 API 清單內，本階段基本面計分不納入此項",
+    "SPDR GLD 持倉 取得失敗，且無可用快取",
+    "SPDR GLD 持倉資料取得失敗或 XML 格式與預期不符（來源未經即時驗證，見 README）",
+  ]);
+  check("central-bank gold is a permanent limitation", g.permanent.length === 1, g.permanent);
+  check("it is not counted as a failure", !g.other.some((x) => x.includes("央行購金")), g.other);
+  check("the GLD lines stay actionable", g.other.length === 2, g.other);
+}
+
+// After the fix only the permanent note remains.
+{
+  const g = groupDataGaps(["央行購金數據不在免費 API 清單內，本階段基本面計分不納入此項"]);
+  check("nothing actionable is left", g.other.length === 0 && g.keyRelated.length === 0, g);
+  check("the note is still shown", g.permanent.length === 1, g.permanent);
+}
+
+// Missing keys keep their own bucket and are deduplicated.
+{
+  const g = groupDataGaps([
+    "未設定 GEMINI_API_KEY，AI 環節改用本地規則",
+    "未設定 FRED_API_KEY，無法取得 DGS10",
+    "未設定 FRED_API_KEY，無法取得 VIX",
+    "缺少 DGS10 或 T10YIE，無法計算實質利率偏向",
+  ]);
+  check("two distinct keys found", g.missingKeys.length === 2, g.missingKeys);
+  check("three messages are key-related", g.keyRelated.length === 3, g.keyRelated);
+  // "缺少 DGS10" matches the key pattern's shape, but DGS10 is a FRED series
+  // id, not an env var — it must not turn into a "set this key" instruction.
+  check("a series id is not mistaken for a key", !g.missingKeys.includes("DGS10"), g.missingKeys);
+  check("it stays in the actionable bucket", g.other.length === 1, g.other);
+}
+
+// GER40 has no CFTC filing at all — nothing to fix.
+{
+  const g = groupDataGaps([
+    "GER40 無對應的 CFTC COT 合約代碼（可能在美國以外的交易所交易），籌碼面本階段從缺",
+    "行情代理 (GC=F D1) 取得失敗，且無可用快取",
+  ]);
+  check("missing CFTC code is permanent", g.permanent.length === 1, g.permanent);
+  check("a real fetch failure stays loud", g.other.length === 1, g.other);
+}
+
+// Anything unrecognised must land in the loud bucket, never be silenced.
+{
+  const g = groupDataGaps(["某個沒見過的新錯誤訊息"]);
+  check("unknown wording stays actionable", g.other.length === 1 && g.permanent.length === 0, g);
+}
+
+report("data-gaps");

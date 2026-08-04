@@ -161,10 +161,26 @@ export async function fetchOHLCV(
   timeframe: Timeframe,
   gaps: string[],
 ): Promise<OHLCVResult | null> {
+  // Each source writes into its own buffer rather than straight into `gaps`.
+  // Without this, the proxy failing would report a gap even when Stooq goes on
+  // to answer — nagging about a fallback that cost the user nothing.
   const attempts: string[] = [];
 
-  const proxied = await fetchViaProxy(meta.yfinanceSymbol, timeframe, gaps);
+  /**
+   * Promotes a finished source's messages. On success only the stale notice
+   * survives: "this data is three hours old" is a fact the user needs whether
+   * or not a later source would have worked, while "source A was down" is not.
+   */
+  const promoteStale = (buffer: string[]) => {
+    for (const message of buffer) {
+      if (message.includes("stale")) gaps.push(message);
+    }
+  };
+
+  const proxyGaps: string[] = [];
+  const proxied = await fetchViaProxy(meta.yfinanceSymbol, timeframe, proxyGaps);
   if (proxied) {
+    promoteStale(proxyGaps);
     return {
       symbol: meta.symbol,
       timeframe,
@@ -173,15 +189,29 @@ export async function fetchOHLCV(
       stale: proxied.stale,
     };
   }
-  attempts.push("行情代理無回應");
+  attempts.push(...proxyGaps, "行情代理無回應");
 
-  const finnhub = await fetchFinnhubOHLCV(meta, timeframe, gaps);
-  if (finnhub) return finnhub;
-  attempts.push(meta.finnhubSymbol ? "Finnhub 無回應" : "Finnhub 不支援此標的（免費層無此類 K 線）");
+  const finnhubGaps: string[] = [];
+  const finnhub = await fetchFinnhubOHLCV(meta, timeframe, finnhubGaps);
+  if (finnhub) {
+    promoteStale(finnhubGaps);
+    return finnhub;
+  }
+  attempts.push(
+    ...finnhubGaps,
+    meta.finnhubSymbol ? "Finnhub 無回應" : "Finnhub 不支援此標的（免費層無此類 K 線）",
+  );
 
-  const stooq = await fetchStooqOHLCV(meta, timeframe, gaps);
-  if (stooq) return stooq;
-  attempts.push(STOOQ_INTERVAL[timeframe] ? "Stooq 無回應" : `Stooq 不支援 ${timeframe}`);
+  const stooqGaps: string[] = [];
+  const stooq = await fetchStooqOHLCV(meta, timeframe, stooqGaps);
+  if (stooq) {
+    promoteStale(stooqGaps);
+    return stooq;
+  }
+  attempts.push(
+    ...stooqGaps,
+    STOOQ_INTERVAL[timeframe] ? "Stooq 無回應" : `Stooq 不支援 ${timeframe}`,
+  );
 
   gaps.push(`${meta.symbol} ${timeframe} OHLCV 所有來源皆失敗（${attempts.join("；")}）`);
   return null;

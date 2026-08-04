@@ -14,6 +14,7 @@ end-to-end. A GitHub Actions workflow refreshes every 4h into Postgres, and
 npm install
 cp .env.example .env.local   # 可以完全空白 — 見下方「零金鑰可跑」
 npm run dev
+npm test                     # 12 個測試套件，189 項斷言
 ```
 
 Open http://localhost:3000. Pick any symbol in the left panel — each calls
@@ -633,6 +634,30 @@ JSON buried in a markdown fence), the provider fallback chain with a stubbed
 trade-plan index constraint — including that a model returning a raw price,
 an out-of-range index, or a string index all fall back to the deterministic
 plan rather than reaching the output.
+
+## 測試
+
+```bash
+npm test
+```
+
+沙箱連不到任何一個金融 API，所以驗證靠的是 known-answer 測試 + stub 過的
+`fetch`，不是真的打上去。12 個套件、189 項斷言，每個套件跑在自己的行程裡
+（好幾個會替換 `global.fetch` 並重設模組層快取，共用行程會讓前一個的 stub
+汙染後一個）。
+
+| 套件 | 守的是什麼 |
+|---|---|
+| `providers` | 供應商鏈順序、跳過沒金鑰的、429 換下一家、**以及 AI 永遠給不出程式沒算過的價位** |
+| `journal` | severity 公式、干涉觸發門檻、窮舉 160 種組合證明等級不可能被調高 |
+| `free-stack` | 額度耗盡、指數退避、`fetchFree` 四層 fallback 含 stale 路徑、H4 聚合算術 |
+| `ohlcv` | 來源鏈；**能用的備援不准報缺口，但 stale 一定要報** |
+| `keys` | 允許清單擋掉 service-role / cron secret；併發請求不互相看見 |
+| `data-gaps` | 「本次失敗」與「先天限制」分類；沒見過的訊息不准被消音 |
+| `bt` `lv` `oi` `lex` `fred` `plan` | 回測幾何、結構聚類、未平倉四象限、關鍵字情緒、CSV 解析、計畫組裝 |
+
+測試用的斷言器會設定 non-zero exit code。原本有幾個舊檔案用 `console.assert`
+—— 那個印完就繼續跑，套件會在實際失敗的情況下回報成功，已經全部換掉。
 
 ## Known Stage-2 limitations (all surfaced via `data_gaps`, never silently faked)
 
