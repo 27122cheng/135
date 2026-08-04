@@ -1,3 +1,4 @@
+import { getKey } from "../api-keys";
 import type { CommodityMeta, Timeframe } from "@/types/signal";
 import { cachedOrFetch } from "./cache";
 import { checkRateLimit } from "./cache";
@@ -50,7 +51,7 @@ async function fetchTwelveDataOHLCV(
 ): Promise<OHLCVResult | null> {
   // Optional: two keyless fallbacks follow, so a missing key is only worth
   // reporting if every source ends up failing (see fetchOHLCV).
-  const apiKey = process.env.TWELVE_DATA_API_KEY;
+  const apiKey = getKey("TWELVE_DATA_API_KEY");
   if (!apiKey) {
     gaps.push("未設定 TWELVE_DATA_API_KEY");
     return null;

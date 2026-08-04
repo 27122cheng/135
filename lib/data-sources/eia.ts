@@ -1,3 +1,4 @@
+import { getKey } from "../api-keys";
 import { cachedOrFetch } from "./cache";
 import { fetchJson } from "./http";
 import { fetchFredSeries } from "./fred";
@@ -44,7 +45,7 @@ async function fetchFromEia(apiKey: string): Promise<EiaInventoryResult | null> 
  * requirement for the WTI 基本面 factor.
  */
 export async function fetchEiaCrudeInventory(gaps: string[]): Promise<EiaInventoryResult | null> {
-  const apiKey = process.env.EIA_API_KEY;
+  const apiKey = getKey("EIA_API_KEY");
   if (apiKey) {
     const fromEia = await fetchFromEia(apiKey);
     if (fromEia) return fromEia;

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { buildSignalFor } from "@/lib/signal-builder";
 import { defaultFundamentals } from "@/config/fundamentals";
 import type { CommodityMeta } from "@/types/signal";
+import { parseUserKeyHeader, withUserKeys } from "@/lib/api-keys";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -76,8 +77,9 @@ export async function POST(request: Request) {
     newsKeywords: [label.toLowerCase()],
   });
 
+  const userKeys = parseUserKeyHeader(request.headers.get("x-user-keys"));
   try {
-    const signal = await buildSignalFor(meta, config);
+    const signal = await withUserKeys(userKeys, () => buildSignalFor(meta, config));
     return NextResponse.json(signal);
   } catch (err) {
     return NextResponse.json(

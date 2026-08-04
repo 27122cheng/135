@@ -1,3 +1,4 @@
+import { getKey } from "../api-keys";
 import { cachedOrFetch, checkRateLimit } from "./cache";
 import { fetchJson } from "./http";
 
@@ -27,7 +28,7 @@ interface FinnhubCalendarResponse {
 export async function fetchEconomicCalendar(gaps: string[]): Promise<EconomicEvent[] | null> {
   // Optional source: callers fall back to keyless equivalents, so a missing
   // key is not reported as a gap here — the caller decides if anything is lost.
-  const apiKey = process.env.FINNHUB_API_KEY;
+  const apiKey = getKey("FINNHUB_API_KEY");
   if (!apiKey) return null;
   if (!checkRateLimit("finnhub", 3600)) {
     gaps.push("Finnhub API 已達速率限制");
@@ -82,7 +83,7 @@ export async function fetchFinnhubMarketNews(
 ): Promise<FinnhubNewsItem[] | null> {
   // Optional: GDELT covers the news dimension without a key, so a missing
   // Finnhub key is silent. analyzeNews reports a gap only if both come back empty.
-  const apiKey = process.env.FINNHUB_API_KEY;
+  const apiKey = getKey("FINNHUB_API_KEY");
   if (!apiKey) return null;
   if (!checkRateLimit("finnhub", 3600)) {
     gaps.push("Finnhub API 已達速率限制");
@@ -135,7 +136,7 @@ interface FinnhubEarningsResponse {
 export async function fetchEarningsCalendar(gaps: string[]): Promise<EarningsEvent[] | null> {
   // Optional: contributes a weight-0 informational item only, so its absence
   // changes no score and is not worth reporting as a gap.
-  const apiKey = process.env.FINNHUB_API_KEY;
+  const apiKey = getKey("FINNHUB_API_KEY");
   if (!apiKey) return null;
   if (!checkRateLimit("finnhub", 3600)) {
     gaps.push("Finnhub API 已達速率限制");

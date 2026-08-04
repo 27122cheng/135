@@ -1,3 +1,4 @@
+import { getKey } from "../api-keys";
 import Anthropic from "@anthropic-ai/sdk";
 import type { BiasItem, Grade, TradePlan, TradeSignal } from "@/types/signal";
 
@@ -201,7 +202,7 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
     input.slCandidates.length === 0 ||
     input.tpCandidates.length === 0;
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = getKey("ANTHROPIC_API_KEY");
   if (!apiKey) {
     gaps.push("缺少 ANTHROPIC_API_KEY，交易計畫改用預設規則判斷");
     return fallbackPlan(input);
@@ -217,7 +218,7 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
   try {
     const client = new Anthropic({ apiKey });
     const message = await client.messages.create({
-      model: process.env.ANTHROPIC_MODEL ?? "claude-opus-5",
+      model: getKey("ANTHROPIC_MODEL") ?? "claude-opus-5",
       max_tokens: 900,
       messages: [{ role: "user", content: buildPrompt(input) }],
     });

@@ -1,3 +1,4 @@
+import { getKey } from "../api-keys";
 import Anthropic from "@anthropic-ai/sdk";
 import type { BiasItem, EntryStructure, PathObstacle } from "@/types/signal";
 
@@ -32,7 +33,7 @@ function fallbackNarrative(input: NarrativeInput): string {
  * Prompt 明確要求只能根據傳入資料推論，不准補充未提供的事實。
  */
 export async function generateNarrative(input: NarrativeInput, gaps: string[]): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = getKey("ANTHROPIC_API_KEY");
   if (!apiKey) {
     gaps.push("缺少 ANTHROPIC_API_KEY，AI 綜合敘述改用本地備援文字");
     return fallbackNarrative(input);
@@ -40,7 +41,7 @@ export async function generateNarrative(input: NarrativeInput, gaps: string[]): 
   try {
     const client = new Anthropic({ apiKey });
     const message = await client.messages.create({
-      model: process.env.ANTHROPIC_MODEL ?? "claude-opus-5",
+      model: getKey("ANTHROPIC_MODEL") ?? "claude-opus-5",
       max_tokens: 700,
       messages: [
         {

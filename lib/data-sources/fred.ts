@@ -1,3 +1,4 @@
+import { getKey } from "../api-keys";
 import { cachedOrFetch, checkRateLimit } from "./cache";
 import { fetchJson, fetchText } from "./http";
 
@@ -89,7 +90,7 @@ export async function fetchFredSeries(
   const seriesId = FRED_SERIES[label];
   const key = `fred:${seriesId}`;
   return cachedOrFetch(key, 30 * 60 * 1000, async () => {
-    const apiKey = process.env.FRED_API_KEY;
+    const apiKey = getKey("FRED_API_KEY");
     const points = (apiKey ? await fetchFredApi(seriesId, apiKey) : null) ?? (await fetchFredCsv(seriesId));
     if (!points || points.length === 0) {
       gaps.push(`FRED ${label} (${seriesId}) 取得失敗或回應為空`);

@@ -1,20 +1,24 @@
 import { NextResponse } from "next/server";
 import { COMMODITIES } from "@/types/signal";
 import { buildTradeSignal } from "@/lib/signal-builder";
+import { parseUserKeyHeader, withUserKeys } from "@/lib/api-keys";
 
 export const dynamic = "force-dynamic";
 // The pipeline makes several external calls; Vercel's default 10s is not enough.
 // 60s is the Hobby-plan ceiling — raise it only if your plan allows more.
 export const maxDuration = 60;
 
-export async function GET(_request: Request, { params }: { params: { symbol: string } }) {
+export async function GET(request: Request, { params }: { params: { symbol: string } }) {
   const symbol = params.symbol.toUpperCase();
   const meta = COMMODITIES.find((c) => c.symbol === symbol);
   if (!meta) {
     return NextResponse.json({ error: `Unknown symbol ${params.symbol}` }, { status: 404 });
   }
+  // Keys the caller pasted into /settings, used for this request only and
+  // never stored. Falls back to environment variables when absent.
+  const userKeys = parseUserKeyHeader(request.headers.get("x-user-keys"));
   try {
-    const signal = await buildTradeSignal(meta.symbol);
+    const signal = await withUserKeys(userKeys, () => buildTradeSignal(meta.symbol));
     return NextResponse.json(signal);
   } catch (err) {
     return NextResponse.json(

@@ -220,14 +220,17 @@ value fails deployment there). Raise it if your plan allows more.
 **先確認你真的需要**：目前只有 `ANTHROPIC_API_KEY` 會影響輸出品質，其餘四個都已經有
 免金鑰來源在供應資料（見上表）。下面按「值不值得花時間」排序。
 
+拿到金鑰後有兩個地方可以貼，見下方「[在網站裡直接貼金鑰](#在網站裡直接貼金鑰--settings)」。
+最簡單的是開 `/settings` 貼上按儲存，立即生效。
+
 ### 1. Anthropic（唯一影響 AI 判斷的，需付費）
 
 1. 開 https://console.anthropic.com 註冊帳號
 2. 左側 **Settings → API Keys → Create Key**，複製 `sk-ant-...`
 3. **Billing** 頁面儲值（最低額度即可試用）
-4. 貼進 Vercel 環境變數 `ANTHROPIC_API_KEY`
+4. 貼進 `/settings` 的 Anthropic 欄位（或 Vercel 環境變數 `ANTHROPIC_API_KEY`）
 
-想省錢就再加一個 `ANTHROPIC_MODEL=claude-haiku-4-5`（約 1/5 價格，且明顯更快）。
+想省錢就把「Anthropic 模型」欄位填 `claude-haiku-4-5`（約 1/5 價格，且明顯更快）。
 
 ### 2. Twelve Data（OHLCV 主要來源，免費且不用信用卡）
 
@@ -256,10 +259,39 @@ value fails deployment there). Raise it if your plan allows more.
 - FRED：https://fredaccount.stlouisfed.org/apikey → 註冊 → Request API Key → 立即取得
 - EIA：https://www.eia.gov/opendata/register.php → 填 Email → 金鑰寄到信箱
 
-### 設定後記得重新部署
+## 在網站裡直接貼金鑰 — `/settings`
 
-Vercel 專案 → **Settings → Environment Variables** → 新增 → **Deployments 頁面
-Redeploy**。環境變數不會套用到既有的部署。
+金鑰有兩種設定方式，可以並存：
+
+| 方式 | 怎麼設 | 生效時機 | 適用 |
+| --- | --- | --- | --- |
+| **`/settings` 頁面** | 貼上 → 儲存 | 立即，不用重新部署 | 個人自用（推薦） |
+| Vercel 環境變數 | Settings → Environment Variables → Redeploy | 下次部署後 | 網址會分享給別人、或跑排程 |
+
+兩者同時存在時**以 `/settings` 的為準**，環境變數是沒填時的後備。
+
+### 運作方式
+
+1. `/settings` 把金鑰存進**這台裝置的瀏覽器 localStorage**（`lib/user-keys-client.ts`）
+2. 每次查詢訊號時，以 `x-user-keys` 請求標頭隨該次請求送給本站後端
+3. 後端 `parseUserKeyHeader()` 過濾後放進 AsyncLocalStorage，只在這個請求的生命週期內有效
+4. 所有抓資料的程式改用 `getKey(name)` 取金鑰 —— 先看請求，再看環境變數
+
+**金鑰不會寫進伺服器**：沒有資料庫、沒有檔案、沒有 log，請求結束就消失。
+
+### 安全邊界
+
+`lib/api-key-names.ts` 的 `USER_SETTABLE_KEYS` 是允許清單，只有這 6 個名字會被接受。
+這一點是刻意的：否則任何人都能靠偽造標頭覆蓋 `SUPABASE_SERVICE_ROLE_KEY`、
+`CRON_SECRET` 這類與資料來源無關的伺服器設定。清單外的名字直接丟棄，值也限長 200 字元。
+
+排程路由（`/api/cron/refresh-signals`）**只讀環境變數**，不吃這個標頭 —— 排程沒有瀏覽器，
+也不該被外部請求影響。
+
+### 代價
+
+localStorage 可以被這個網站上的任何腳本讀取，這一點頁面上也寫明了。個人自用沒問題；
+如果部署網址會分享給別人，改用環境變數比較安全。
 
 ## 自訂分析標的 — `/symbols`
 

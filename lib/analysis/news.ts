@@ -1,3 +1,4 @@
+import { getKey } from "../api-keys";
 import Anthropic from "@anthropic-ai/sdk";
 import type { BiasItem } from "@/types/signal";
 import { fetchGdeltNews } from "../data-sources/gdelt";
@@ -102,7 +103,7 @@ export async function analyzeNews(
     return { biasItems: [], summary: null, sources: [] };
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = getKey("ANTHROPIC_API_KEY");
   if (!apiKey) {
     // No LLM available — fall back to keyword scoring rather than dropping the
     // whole 新聞面 dimension. Lower confidence, and labelled as such.
@@ -112,7 +113,7 @@ export async function analyzeNews(
   try {
     const client = new Anthropic({ apiKey });
     const message = await client.messages.create({
-      model: process.env.ANTHROPIC_MODEL ?? "claude-opus-5",
+      model: getKey("ANTHROPIC_MODEL") ?? "claude-opus-5",
       max_tokens: 500,
       messages: [{ role: "user", content: buildPrompt(articles) }],
     });

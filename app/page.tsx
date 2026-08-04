@@ -6,6 +6,7 @@ import { COMMODITIES, type CommodityMeta, type TradeSignal } from "@/types/signa
 import { CommodityList } from "@/components/commodity-list";
 import { SignalCard } from "@/components/signal-card";
 import { loadCustomSymbols, toCommodityMeta, type CustomSymbol } from "@/lib/custom-symbols";
+import { userKeyHeaders } from "@/lib/user-keys-client";
 
 export default function Home() {
   const [selected, setSelected] = useState<string>("XAUUSD");
@@ -33,15 +34,18 @@ export default function Home() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 70000);
 
+    // Keys pasted into /settings ride along with the request; the server uses
+    // them for this call only and falls back to env vars when absent.
+    const keyHeaders = userKeyHeaders();
     const customEntry = custom.find((c) => c.symbol === selected);
     const request = customEntry
       ? fetch("/api/signal/custom", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", ...keyHeaders },
           body: JSON.stringify(customEntry),
           signal: controller.signal,
         })
-      : fetch(`/api/signal/${selected}`, { signal: controller.signal });
+      : fetch(`/api/signal/${selected}`, { headers: keyHeaders, signal: controller.signal });
 
     request
       .then(async (res) => {
@@ -81,6 +85,9 @@ export default function Home() {
       <header className="mb-3 flex items-baseline justify-between gap-3">
         <h1 className="text-base font-bold text-neutral-100">多商品交易訊號</h1>
         <nav className="flex shrink-0 gap-3 text-sm text-neutral-500">
+          <Link href="/settings" className="hover:text-neutral-200">
+            金鑰
+          </Link>
           <Link href="/symbols" className="hover:text-neutral-200">
             自訂標的
           </Link>
