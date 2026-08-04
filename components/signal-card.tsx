@@ -47,13 +47,20 @@ function Interventions({ items }: { items: AppliedIntervention[] }) {
 }
 
 function DataGaps({ gaps }: { gaps: string[] }) {
-  const { missingKeys, keyRelated, other } = groupDataGaps(gaps);
+  const { missingKeys, keyRelated, other, permanent } = groupDataGaps(gaps);
+  // The headline count covers only what someone could actually fix. Permanent
+  // limitations are still listed, just not counted as warnings — a number that
+  // can never reach zero is a number people stop reading.
+  const actionable = keyRelated.length + other.length;
   return (
     <details className="rounded-xl border border-amber-500/30 bg-amber-500/5">
       <summary className="cursor-pointer list-none px-4 py-3 text-sm text-amber-400">
-        ⚠ {gaps.length} 項資料缺口
+        {actionable > 0 ? `⚠ ${actionable} 項資料缺口` : "資料來源說明"}
         {missingKeys.length > 0 && (
           <span className="ml-1 text-amber-500/70">（{missingKeys.length} 個金鑰未設定）</span>
+        )}
+        {actionable === 0 && permanent.length > 0 && (
+          <span className="ml-1 text-neutral-500">（{permanent.length} 項先天限制，無需處理）</span>
         )}
       </summary>
       <div className="space-y-4 px-4 pb-4">
@@ -71,15 +78,31 @@ function DataGaps({ gaps }: { gaps: string[] }) {
               ))}
             </ul>
             <p className="mt-1.5 text-[11px] text-amber-500/60">
-              到 Vercel 專案 Settings → Environment Variables 設定後，需重新部署才生效。
+              到{" "}
+              <Link href="/settings" className="underline hover:text-amber-300">
+                金鑰設定
+              </Link>{" "}
+              貼上即可，不用重新部署。
             </p>
           </div>
         )}
         {other.length > 0 && (
           <div>
-            <p className="mb-1.5 text-xs font-medium text-amber-300">其他限制與失敗</p>
+            <p className="mb-1.5 text-xs font-medium text-amber-300">本次取得失敗</p>
             <ul className="list-inside list-disc space-y-1 text-xs leading-relaxed text-amber-300/70">
               {other.map((g, i) => (
+                <li key={i}>{g}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {permanent.length > 0 && (
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-neutral-400">
+              先天限制（免費資料源就是沒有，不需處理）
+            </p>
+            <ul className="list-inside list-disc space-y-1 text-xs leading-relaxed text-neutral-500">
+              {permanent.map((g, i) => (
                 <li key={i}>{g}</li>
               ))}
             </ul>

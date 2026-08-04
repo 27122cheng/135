@@ -93,7 +93,7 @@ rather than guessed.
 | 基本面 | `lib/analysis/fundamental.ts` | Config-driven per symbol: 實質利率(DGS10−T10YIE，僅XAUUSD), DXY 趨勢, VIX, EIA 原油庫存(僅WTI), Finnhub 財報日曆(僅美股指數) |
 | 籌碼面 | `lib/analysis/positioning.ts` | CFTC COT (Socrata, legacy futures-only report) 非商業淨部位、52週極值、週變化，依 config 合約代碼與方向反轉設定 |
 | 新聞面 | `lib/analysis/news.ts` | GDELT 2.0 DOC API + Finnhub `/news` → AI 評 -1~+1 情緒分並摘要（走 `lib/ai` 的供應商鏈），關鍵字依 config 逐商品設定 |
-| 資金流 | `lib/analysis/fundflow.ts` + `lib/analysis/open-interest.ts` | SPDR GLD 持倉快照(僅XAUUSD)、DXY 方向、VIX、**未平倉量分析**（價量未平倉四象限、52週水位、異常變化偵測） |
+| 資金流 | `lib/analysis/fundflow.ts` + `lib/analysis/open-interest.ts` | GLD 成交量資金流代理(僅XAUUSD，見下)、SPDR GLD 持倉快照、DXY 方向、VIX、**未平倉量分析**（價量未平倉四象限、52週水位、異常變化偵測） |
 | AI綜合 | `lib/analysis/ai-narrative.ts` | 上述五面向的結構化 JSON → AI 產生 `narrative`（prompt 明確禁止補充未提供的事實） |
 
 ## 結構偵測精準度 — `lib/analysis/levels.ts`
@@ -144,6 +144,38 @@ CFTC 未平倉量是**每週**資料：週二收盤結算、週五公布，所�
 交易日。它衡量的是一週的參與度與資金承諾，**不是即時或當日訊號**。想要日內
 未平倉量需要交易所直連資料，沒有免金鑰來源。GER40 在 Eurex 交易、CFTC 無資料，
 因此沒有這項分析。
+
+## 資金流的 ETF 訊號 — 為什麼不是持倉
+
+SPDR 官方持倉 XML 有兩個問題：它會擋雲端機房 IP，而且**只給一個當下的數字**，
+沒有歷史。沒有基準就比較不出變化，所以它最多只能產生一條權重 0 的「今天幾噸」，
+卻同時噴兩則警告 —— 成本全付了，分數一分沒拿到。
+
+改成用 **GLD 自己的日線成交量**當資金流代理，資料來自我們自架的 yfinance 代理：
+
+- 近 5 日均量 vs 前 20 日均量，放大 ≥20% 才算數
+- 同期價格漲 >0.3% → 買盤進場（long，權重 1）
+- 同期價格跌 >0.3% → 賣壓出場（short，權重 1）
+- 只縮量不算 —— 人潮散去不代表價格接下來要往哪走
+
+**這是代理指標，不是持倉。** 成交量是交易活動，不是實際的申購贖回，
+所以 `source` 欄位直接寫「資金流代理指標，非實際持倉」。
+
+官方持倉 XML 還是會試，抓到就多一條參考用的噸數（權重 0）。
+抓不到就**安靜跳過** —— 代理指標已經把這個面向撐住了，
+為一個沒改變任何數字的來源噴警告只是狼來了。
+
+### 資料缺口分成兩類
+
+先前 `data_gaps` 把「這次抓失敗」和「免費資料源就是沒有」混在一起數，
+於是警告數字永遠歸不了零，久了就沒人看。現在分開：
+
+- **本次取得失敗** — 可以處理的，計入警告數
+- **先天限制** — 央行購金沒有免費 API、GER40 在 Eurex 交易所以 CFTC 沒資料。
+  照樣列出來，但不計入警告數，樣式也降到灰色
+
+判斷是靠訊息措辭比對（`lib/data-gaps.ts` 的 `PERMANENT_PATTERNS`）。
+沒比對到的訊息一律歸到吵的那一類 —— 寧可多叫一次，也不要把真的失敗藏起來。
 
 ## 預測是怎麼產生的（沒有 AI 也能跑）
 

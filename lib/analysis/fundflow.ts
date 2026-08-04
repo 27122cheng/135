@@ -1,7 +1,7 @@
 import type { BiasItem, CommodityMeta } from "@/types/signal";
 import type { FundamentalsConfig } from "@/config/fundamentals";
 import type { CotReport } from "../data-sources/cftc";
-import { fetchGldHoldings } from "../data-sources/etf";
+import { fetchEtfFlow, fetchGldHoldings } from "../data-sources/etf";
 import { fetchFredSeries, type FredPoint } from "../data-sources/fred";
 
 function trendPct(points: FredPoint[], lookback: number): { from: number; to: number; pct: number } | null {
@@ -25,17 +25,48 @@ export async function analyzeFundFlow(
   const items: BiasItem[] = [];
 
   if (config.etfHoldings === "GLD") {
-    const gld = await fetchGldHoldings(gaps);
+    // Volume-based flow first: it has history, so it can carry a direction.
+    // The holdings snapshot is a bonus line when the feed is reachable.
+    const [flow, gld] = await Promise.all([
+      fetchEtfFlow("GLD", gaps),
+      fetchGldHoldings(gaps),
+    ]);
+
+    if (flow) {
+      // Only an expansion counts. Volume drying up says the crowd left, which
+      // is not a directional statement about where price goes next.
+      const expanding = flow.volumeChangePct >= 20;
+      const movedUp = flow.priceChangePct > 0.3;
+      const movedDown = flow.priceChangePct < -0.3;
+      if (expanding && (movedUp || movedDown)) {
+        items.push({
+          dimension: "資金流",
+          factor:
+            `GLD 近 ${flow.recentDays} 日均量較前 ${flow.baselineDays} 日放大 ` +
+            `${flow.volumeChangePct.toFixed(0)}%，同期價格${movedUp ? "上漲" : "下跌"} ` +
+            `${Math.abs(flow.priceChangePct).toFixed(1)}%（${movedUp ? "買盤進場" : "賣壓出場"}）`,
+          direction: movedUp ? "long" : "short",
+          weight: 1,
+          evidence:
+            `近${flow.recentDays}日均量 vs 前${flow.baselineDays}日均量 ` +
+            `${flow.volumeChangePct >= 0 ? "+" : ""}${flow.volumeChangePct.toFixed(1)}%，` +
+            `價格 ${flow.priceChangePct >= 0 ? "+" : ""}${flow.priceChangePct.toFixed(2)}%`,
+          // Named as a proxy wherever it appears — share volume is trading
+          // activity, not creations and redemptions.
+          source: "GLD 日線成交量（yfinance 代理）— 資金流代理指標，非實際持倉",
+        });
+      }
+    }
+
     if (gld) {
       items.push({
         dimension: "資金流",
         factor: `SPDR GLD 持倉 ${gld.tonnesInTrust.toLocaleString()} 噸 (${gld.asOf})`,
         direction: "neutral",
         weight: 0,
-        evidence: `tonnesInTrust=${gld.tonnesInTrust}`,
+        evidence: `tonnesInTrust=${gld.tonnesInTrust}（單次快照，無歷史基準可比較）`,
         source: `SPDR GLD 官方持倉 XML, ${gld.asOf}`,
       });
-      gaps.push("GLD 持倉變化需要歷史基準，Stage 2 仍僅取得單次快照，暫不計入方向分數（僅供參考）");
     }
   }
 

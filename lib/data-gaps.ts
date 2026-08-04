@@ -21,29 +21,55 @@ export const KEY_SOURCES: Record<string, string> = {
   EIA_API_KEY: "eia.gov/opendata（選用，庫存已由 FRED WCESTUS1 供應）",
 };
 
+/**
+ * Some gaps are facts about the instrument or the free-data landscape that no
+ * amount of retrying or configuring will change — DAX has no CFTC filing,
+ * central-bank gold buying isn't published as a free API. Listing those beside
+ * "this fetch failed" inflates the warning count with things nobody can act
+ * on, and trains the reader to ignore the whole panel.
+ *
+ * Matched on phrasing rather than a flag because these messages are written at
+ * a dozen call sites; one whose wording drifts just falls back to the louder
+ * category, which is the safe direction to fail.
+ */
+const PERMANENT_PATTERNS = [
+  /不在免費 API 清單內/,
+  /無對應的 CFTC COT 合約代碼/,
+  /沒有免金鑰來源/,
+];
+
+function isPermanent(gap: string): boolean {
+  return PERMANENT_PATTERNS.some((p) => p.test(gap));
+}
+
 export interface GroupedGaps {
   /** Unique env var names that would close one or more gaps. */
   missingKeys: string[];
   /** Gap messages caused by a missing key. */
   keyRelated: string[];
-  /** Everything else — real limitations or upstream failures. */
+  /** This run failed to get something it could normally get — actionable. */
   other: string[];
+  /** Known limitations of the data landscape — informational, not actionable. */
+  permanent: string[];
 }
 
 export function groupDataGaps(gaps: string[]): GroupedGaps {
   const missingKeys = new Set<string>();
   const keyRelated: string[] = [];
   const other: string[] = [];
+  const permanent: string[] = [];
 
   for (const gap of gaps) {
     const match = gap.match(KEY_PATTERN);
     if (match && match[1].endsWith("_KEY")) {
       missingKeys.add(match[1]);
       keyRelated.push(gap);
+    } else if (isPermanent(gap)) {
+      permanent.push(gap);
     } else {
       other.push(gap);
     }
   }
 
-  return { missingKeys: [...missingKeys], keyRelated, other };
+  return { missingKeys: [...missingKeys], keyRelated, other, permanent };
 }
