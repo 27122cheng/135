@@ -1,7 +1,7 @@
 import type { SupportedSymbol } from "@/types/signal";
 
 export interface FundamentalsConfig {
-  symbol: SupportedSymbol;
+  symbol: string;
   /** 實質利率 (DGS10-T10YIE) — spec 中僅 XAUUSD 使用此因子。 */
   useRealRate: boolean;
   /** DXY 廣義美元指數趨勢，做為全商品通用的美元強弱交叉檢查。 */
@@ -171,3 +171,30 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     etfHoldings: null,
   },
 };
+
+/**
+ * Fundamentals for a user-added target. Only the dimensions that work for any
+ * instrument are switched on — DXY and VIX are cross-asset, while real rate,
+ * crude inventory and earnings season are instrument-specific and stay off
+ * rather than being applied where they mean nothing.
+ */
+export function defaultFundamentals(
+  symbol: string,
+  opts: { cotContractCode: string | null; gdeltQuery: string; newsKeywords: string[] },
+): FundamentalsConfig {
+  return {
+    symbol,
+    useRealRate: false,
+    useDxy: true,
+    dxyInverted: false,
+    useVix: true,
+    vixRiskOffDirection: "short",
+    useEarningsSeason: false,
+    useEiaInventory: false,
+    cotContractCode: opts.cotContractCode,
+    cotInverted: false,
+    newsKeywords: opts.newsKeywords,
+    gdeltQuery: opts.gdeltQuery,
+    etfHoldings: null,
+  };
+}

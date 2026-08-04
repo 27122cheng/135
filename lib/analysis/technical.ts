@@ -1,6 +1,7 @@
-import type { BiasItem, EntryStructure, EntryStructureType, PathObstacle, Timeframe } from "@/types/signal";
+import type { BiasItem, EntryStructure, PathObstacle, Timeframe } from "@/types/signal";
 import type { Candle } from "../data-sources/ohlcv";
 import { ema, findSwingPoints, macd, rsi, strengthFromTouches, countTouches } from "./indicators";
+import { clusterSwings, collectSwings, describeLevel, levelTolerance, type PriceLevel } from "./levels";
 
 export interface TechnicalResult {
   biasItems: BiasItem[];
@@ -27,34 +28,11 @@ function roundLevelStep(price: number): number {
   return 0.0001;
 }
 
-function swingsToStructures(
-  candles: Candle[],
-  timeframe: Timeframe,
-  currentPrice: number,
-  type: EntryStructureType,
-): EntryStructure[] {
-  const swings = findSwingPoints(candles, 2);
-  // Keep the swing nearest to price on each side (support below, resistance above).
-  const below = swings.filter((s) => s.price < currentPrice).sort((a, b) => b.price - a.price)[0];
-  const above = swings.filter((s) => s.price > currentPrice).sort((a, b) => a.price - b.price)[0];
-  const out: EntryStructure[] = [];
-  for (const s of [below, above].filter((x): x is NonNullable<typeof x> => !!x)) {
-    const touches = countTouches(candles, s.price, 0.2);
-    out.push({
-      price: round(s.price),
-      type,
-      role: s.price < currentPrice ? "support" : "resistance",
-      timeframe,
-      strength: strengthFromTouches(touches),
-      distance_pct: round(((currentPrice - s.price) / currentPrice) * 100),
-    });
-  }
-  return out;
-}
-
 export function analyzeTechnical(
   candlesByTf: Partial<Record<Timeframe, Candle[]>>,
   currentPrice: number,
+  /** D1 ATR — sets how far apart two swings can be and still be one level. */
+  atrForLevels: number | null,
   gaps: string[],
 ): TechnicalResult {
   const biasItems: BiasItem[] = [];
@@ -62,8 +40,6 @@ export function analyzeTechnical(
   const pathObstacles: PathObstacle[] = [];
 
   const d1 = candlesByTf.D1;
-  const h4 = candlesByTf.H4;
-  const w1 = candlesByTf.W1;
 
   let atrD1: number | null = null;
 
@@ -204,10 +180,48 @@ export function analyzeTechnical(
     gaps.push("D1 K棒不足（需 ≥30 根）以進行技術面分析");
   }
 
-  // Entry structures (support/resistance the entry can lean on) from swing highs/lows per timeframe.
-  if (d1 && d1.length >= 10) entryStructures.push(...swingsToStructures(d1, "D1", currentPrice, "日線S/R"));
-  if (h4 && h4.length >= 10) entryStructures.push(...swingsToStructures(h4, "H4", currentPrice, "前高"));
-  if (w1 && w1.length >= 10) entryStructures.push(...swingsToStructures(w1, "W1", currentPrice, "週線S/R"));
+  // Structures come from *clustered* levels rather than raw swings: swings a
+  // few ticks apart are one zone the market defended repeatedly, and merging
+  // them makes both the price and the strength reflect that. Tolerance scales
+  // with ATR so it fits the instrument instead of a fixed percentage.
+  const tolerance = levelTolerance(currentPrice, atrForLevels);
+  const levels = clusterSwings(collectSwings(candlesByTf, 3), tolerance);
+  if (levels.length === 0) {
+    gaps.push("K棒不足以聚合出有效的價格結構區");
+  }
+
+  const dominantTf = (level: PriceLevel): Timeframe =>
+    level.timeframes.includes("W1") ? "W1" : level.timeframes.includes("D1") ? "D1" : "H4";
+
+  const supports = levels
+    .filter((l) => l.price < currentPrice)
+    .sort((a, b) => b.price - a.price);
+  const resistances = levels
+    .filter((l) => l.price > currentPrice)
+    .sort((a, b) => a.price - b.price);
+
+  // Entry structures: the nearest few levels on each side. Everything within
+  // reach of the entry is offered; the scoring rules apply the 1.5% filter.
+  for (const level of supports.slice(0, 3)) {
+    entryStructures.push({
+      price: round(level.price),
+      type: level.timeframes.includes("W1") ? "週線S/R" : level.kind === "low" ? "前低" : "日線S/R",
+      role: "support",
+      timeframe: dominantTf(level),
+      strength: level.strength,
+      distance_pct: round(((currentPrice - level.price) / currentPrice) * 100),
+    });
+  }
+  for (const level of resistances.slice(0, 3)) {
+    entryStructures.push({
+      price: round(level.price),
+      type: level.timeframes.includes("W1") ? "週線S/R" : level.kind === "high" ? "前高" : "日線S/R",
+      role: "resistance",
+      timeframe: dominantTf(level),
+      strength: level.strength,
+      distance_pct: round(((currentPrice - level.price) / currentPrice) * 100),
+    });
+  }
 
   // Round-number level (整數關卡) closest above and below price.
   const step = roundLevelStep(currentPrice);
@@ -234,28 +248,14 @@ export function analyzeTechnical(
     );
   }
 
-  // Path obstacles: the next structures further out on each side (beyond the nearest support/resistance),
-  // used only to place take-profits, not for grading.
-  const allSwingLevels = [
-    ...(d1 ? findSwingPoints(d1, 2).map((s) => ({ ...s, timeframe: "D1" as Timeframe })) : []),
-    ...(h4 ? findSwingPoints(h4, 2).map((s) => ({ ...s, timeframe: "H4" as Timeframe })) : []),
-    ...(w1 ? findSwingPoints(w1, 2).map((s) => ({ ...s, timeframe: "W1" as Timeframe })) : []),
-  ];
-  const obstaclesAbove = allSwingLevels
-    .filter((s) => s.price > currentPrice)
-    .sort((a, b) => a.price - b.price)
-    .slice(0, 4);
-  const obstaclesBelow = allSwingLevels
-    .filter((s) => s.price < currentPrice)
-    .sort((a, b) => b.price - a.price)
-    .slice(0, 4);
-  const sourceCandles = d1 ?? h4 ?? w1 ?? [];
-  for (const s of [...obstaclesAbove, ...obstaclesBelow]) {
+  // Path obstacles: the same clustered levels, further out — these place the
+  // take-profits, so their strength now carries real touch/confluence meaning.
+  for (const level of [...resistances.slice(0, 4), ...supports.slice(0, 4)]) {
     pathObstacles.push({
-      price: round(s.price),
-      type: s.type === "high" ? "前高/供給區" : "前低/需求區",
-      timeframe: s.timeframe,
-      strength: strengthFromTouches(countTouches(sourceCandles, s.price, 0.2)),
+      price: round(level.price),
+      type: describeLevel(level),
+      timeframe: dominantTf(level),
+      strength: level.strength,
     });
   }
 

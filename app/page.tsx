@@ -1,16 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import type { SupportedSymbol, TradeSignal } from "@/types/signal";
+import { COMMODITIES, type CommodityMeta, type TradeSignal } from "@/types/signal";
 import { CommodityList } from "@/components/commodity-list";
 import { SignalCard } from "@/components/signal-card";
+import { loadCustomSymbols, toCommodityMeta, type CustomSymbol } from "@/lib/custom-symbols";
 
 export default function Home() {
-  const [selected, setSelected] = useState<SupportedSymbol>("XAUUSD");
+  const [selected, setSelected] = useState<string>("XAUUSD");
+  const [custom, setCustom] = useState<CustomSymbol[]>([]);
   const [signal, setSignal] = useState<TradeSignal | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCustom(loadCustomSymbols());
+  }, []);
+
+  const symbols: CommodityMeta[] = useMemo(
+    () => [...COMMODITIES, ...custom.map(toCommodityMeta)],
+    [custom],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -21,7 +32,18 @@ export default function Home() {
     // function times out and never sends a usable response.
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 70000);
-    fetch(`/api/signal/${selected}`, { signal: controller.signal })
+
+    const customEntry = custom.find((c) => c.symbol === selected);
+    const request = customEntry
+      ? fetch("/api/signal/custom", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(customEntry),
+          signal: controller.signal,
+        })
+      : fetch(`/api/signal/${selected}`, { signal: controller.signal });
+
+    request
       .then(async (res) => {
         const text = await res.text();
         let data: unknown;
@@ -52,19 +74,24 @@ export default function Home() {
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [selected]);
+  }, [selected, custom]);
 
   return (
     <main className="mx-auto min-h-screen max-w-2xl px-4 py-5">
       <header className="mb-3 flex items-baseline justify-between gap-3">
         <h1 className="text-base font-bold text-neutral-100">多商品交易訊號</h1>
-        <Link href="/history" className="shrink-0 text-sm text-neutral-500 hover:text-neutral-200">
-          歷史訊號 →
-        </Link>
+        <nav className="flex shrink-0 gap-3 text-sm text-neutral-500">
+          <Link href="/symbols" className="hover:text-neutral-200">
+            自訂標的
+          </Link>
+          <Link href="/history" className="hover:text-neutral-200">
+            歷史訊號
+          </Link>
+        </nav>
       </header>
 
       <div className="mb-4">
-        <CommodityList selected={selected} onSelect={setSelected} />
+        <CommodityList symbols={symbols} selected={selected} onSelect={setSelected} />
       </div>
 
       {loading && (

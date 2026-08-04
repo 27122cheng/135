@@ -160,7 +160,8 @@ export type SupportedSymbol =
   | "SPX500";
 
 export interface CommodityMeta {
-  symbol: SupportedSymbol;
+  /** Built-ins use SupportedSymbol; user-added targets supply their own id. */
+  symbol: string;
   label: string;
   category: "forex" | "metal" | "index" | "energy";
   /** Twelve Data symbol used for OHLCV requests. */

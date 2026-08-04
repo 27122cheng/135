@@ -1,6 +1,6 @@
 "use client";
 
-import { COMMODITIES, type SupportedSymbol } from "@/types/signal";
+import type { CommodityMeta } from "@/types/signal";
 import { cn } from "@/lib/utils";
 
 /**
@@ -8,16 +8,18 @@ import { cn } from "@/lib/utils";
  * and replaces the fixed-width sidebar that got clipped on narrow screens.
  */
 export function CommodityList({
+  symbols,
   selected,
   onSelect,
 }: {
-  selected: SupportedSymbol;
-  onSelect: (symbol: SupportedSymbol) => void;
+  symbols: CommodityMeta[];
+  selected: string;
+  onSelect: (symbol: string) => void;
 }) {
   return (
     <nav className="-mx-4 overflow-x-auto px-4 pb-1">
       <div className="flex gap-2">
-        {COMMODITIES.map((c) => (
+        {symbols.map((c) => (
           <button
             key={c.symbol}
             type="button"

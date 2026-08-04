@@ -78,12 +78,29 @@ rather than guessed.
 
 | 面向 | 檔案 | 資料來源 |
 |---|---|---|
-| 技術面 | `lib/analysis/technical.ts` | Twelve Data / yfinance OHLCV → swing HH/HL/LH/LL, EMA20/50/200 排列, RSI(14) 背離, MACD histogram, 整數關卡 |
+| 技術面 | `lib/analysis/technical.ts` + `lib/analysis/levels.ts` | OHLCV → swing HH/HL/LH/LL, EMA20/50/200 排列, RSI(14) 背離, MACD histogram, 整數關卡；結構區改用**跨時框聚類**（見下） |
 | 基本面 | `lib/analysis/fundamental.ts` | Config-driven per symbol: 實質利率(DGS10−T10YIE，僅XAUUSD), DXY 趨勢, VIX, EIA 原油庫存(僅WTI), Finnhub 財報日曆(僅美股指數) |
 | 籌碼面 | `lib/analysis/positioning.ts` | CFTC COT (Socrata, legacy futures-only report) 非商業淨部位、52週極值、週變化，依 config 合約代碼與方向反轉設定 |
 | 新聞面 | `lib/analysis/news.ts` | GDELT 2.0 DOC API + Finnhub `/news` → Claude 評 -1~+1 情緒分並摘要，關鍵字依 config 逐商品設定 |
 | 資金流 | `lib/analysis/fundflow.ts` + `lib/analysis/open-interest.ts` | SPDR GLD 持倉快照(僅XAUUSD)、DXY 方向、VIX、**未平倉量分析**（價量未平倉四象限、52週水位、異常變化偵測） |
 | AI綜合 | `lib/analysis/ai-narrative.ts` | 上述五面向的結構化 JSON → Claude 產生 `narrative`（prompt 明確禁止補充未提供的事實） |
+
+## 結構偵測精準度 — `lib/analysis/levels.ts`
+
+原本直接把每個 swing point 當成一個結構，有三個精準度問題，現在都修掉了：
+
+1. **沒有聚類**：4100、4102、4105 三個 swing 是「市場守了三次的同一個區」，卻被
+   當成三個各自很弱的結構。現在會合併成一個 3 次觸及的強區，強度才反映現實。
+2. **固定百分比容差**：0.2% 在黃金是 ±8 點還算合理，在 EUR/USD 卻是 ±20 pips
+   —— 寬到毫無意義。改用 **0.3×ATR**，自動隨商品波動性調整。
+3. **沒有跨時框共振**：D1 和 W1 同時出現的價位，明顯比只在 H4 出現的強。現在
+   共振會計入強度。
+
+強度分級：3 次以上觸及、或 2 次觸及且跨時框共振、或位於週線 → 強度 3；
+2 次觸及或位於日線 → 強度 2；其餘 → 強度 1。swing 偵測的 fractal lookback
+也從 2 放寬到 3，過濾掉更多雜訊。
+
+這直接影響 `entry_structure_score`（強度加總）與停損停利的錨定品質。
 
 ## 未平倉量分析 — `lib/analysis/open-interest.ts`
 
@@ -197,6 +214,72 @@ value fails deployment there). Raise it if your plan allows more.
 等），需要自行替換 `lib/analysis/` 下三個檔案的 SDK 呼叫。
 
 一個運作中的備援來源不會被記成 `data_gaps` —— 只有當某個面向的**所有**來源都失敗時才會。
+
+## 申請免費金鑰的步驟
+
+**先確認你真的需要**：目前只有 `ANTHROPIC_API_KEY` 會影響輸出品質，其餘四個都已經有
+免金鑰來源在供應資料（見上表）。下面按「值不值得花時間」排序。
+
+### 1. Anthropic（唯一影響 AI 判斷的，需付費）
+
+1. 開 https://console.anthropic.com 註冊帳號
+2. 左側 **Settings → API Keys → Create Key**，複製 `sk-ant-...`
+3. **Billing** 頁面儲值（最低額度即可試用）
+4. 貼進 Vercel 環境變數 `ANTHROPIC_API_KEY`
+
+想省錢就再加一個 `ANTHROPIC_MODEL=claude-haiku-4-5`（約 1/5 價格，且明顯更快）。
+
+### 2. Twelve Data（OHLCV 主要來源，免費且不用信用卡）
+
+1. 開 https://twelvedata.com/pricing 選 **Basic — Free**
+2. Email 註冊並驗證
+3. 登入後 Dashboard 首頁就有 **API Key**
+4. 貼進 `TWELVE_DATA_API_KEY`
+
+免費額度 800 次/日、8 次/分。**最值得申請的免費金鑰** —— Yahoo 對雲端機房 IP
+常限流，設定這個等於買一條穩定的主線路。
+
+### 3. Finnhub（新聞與財報日曆，免費不用信用卡）
+
+1. 開 https://finnhub.io/register，Email 註冊
+2. 登入後 Dashboard 直接顯示 **API Key**
+3. 貼進 `FINNHUB_API_KEY`
+
+免費 60 次/分。新聞面已由 GDELT 免金鑰供應，加了它只是多一個來源＋美股指數的
+財報日曆（權重 0 的參考項目），**優先度最低**。
+
+### 4. FRED（總經）／ 5. EIA（原油庫存）—— 通常不需要
+
+兩者現在都走免金鑰路徑（FRED 用 `fredgraph.csv`、原油庫存用 FRED 的 `WCESTUS1`），
+資料完全相同。真的要申請：
+
+- FRED：https://fredaccount.stlouisfed.org/apikey → 註冊 → Request API Key → 立即取得
+- EIA：https://www.eia.gov/opendata/register.php → 填 Email → 金鑰寄到信箱
+
+### 設定後記得重新部署
+
+Vercel 專案 → **Settings → Environment Variables** → 新增 → **Deployments 頁面
+Redeploy**。環境變數不會套用到既有的部署。
+
+## 自訂分析標的 — `/symbols`
+
+內建 9 個商品之外，`/symbols` 頁面可以自己加標的，存在瀏覽器 localStorage，
+不需要資料庫、不需要金鑰、也不用重新部署。
+
+| 欄位 | 必填 | 說明 |
+|---|---|---|
+| 代號 | ✅ | 自訂識別字串，英數字／底線／連字號 |
+| 顯示名稱 | ✅ | 晶片列上顯示的名字 |
+| Yahoo 代碼 | ✅ | 到 Yahoo Finance 搜尋該商品，網址列的代號就是（白銀 `SI=F`、日經 `^N225`、比特幣 `BTC-USD`） |
+| Stooq 代碼 | — | 備援來源，留空則沿用 Yahoo 代碼 |
+| CFTC 合約代碼 | — | **填了才有籌碼面與未平倉量分析**，留空則這兩項從缺 |
+| 新聞查詢 | — | GDELT 查詢字串，留空則用顯示名稱 |
+
+自訂標的套用的是通用基本面設定（DXY、VIX），不會套用實質利率、原油庫存、財報季
+這些**商品專屬**因子 —— 把黃金的實質利率邏輯硬套到比特幣上只會產生假訊號。
+
+代碼填錯不會產生錯誤數字：所有 OHLCV 來源都失敗時訊號會回 `no-trade` 並在
+`data_gaps` 說明。頁面上的常用範例代碼取自公開資料整理，未逐一即時驗證。
 
 ## 部署到 Vercel 後畫面卡在「載入中」/ 沒東西？
 

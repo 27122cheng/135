@@ -1,4 +1,4 @@
-import type { BiasItem, CommodityMeta, TradeSignal } from "@/types/signal";
+import type { BiasItem, CommodityMeta, SupportedSymbol, TradeSignal } from "@/types/signal";
 import { COMMODITIES } from "@/types/signal";
 import { FUNDAMENTALS_CONFIG, type FundamentalsConfig } from "@/config/fundamentals";
 import { fetchOHLCV } from "./data-sources/ohlcv";
@@ -89,7 +89,15 @@ export async function buildTradeSignal(symbol: string): Promise<TradeSignal> {
   if (!meta) {
     throw new Error(`Unknown symbol ${symbol}`);
   }
-  const config = FUNDAMENTALS_CONFIG[meta.symbol];
+  const config = FUNDAMENTALS_CONFIG[meta.symbol as SupportedSymbol];
+  return buildSignalForSymbol(meta, config);
+}
+
+/** Runs the pipeline for an arbitrary target — used by user-added symbols. */
+export async function buildSignalFor(
+  meta: CommodityMeta,
+  config: FundamentalsConfig,
+): Promise<TradeSignal> {
   return buildSignalForSymbol(meta, config);
 }
 
@@ -141,9 +149,9 @@ async function buildSignalForSymbol(
     ]);
   }
 
-  const technical = analyzeTechnical(candlesByTf, currentPrice, gaps);
   const atrD1 = d1 ? computeAtr(d1.candles, 14) : null;
   if (atrD1 == null) gaps.push("D1 K棒不足以計算 ATR(14)");
+  const technical = analyzeTechnical(candlesByTf, currentPrice, atrD1, gaps);
 
   // Open interest needs both the COT reports and price over the same weeks, so
   // it runs here rather than inside fundFlow — pure computation, no fetching.
