@@ -92,6 +92,19 @@ export interface TradePlan {
   decided_by: "ai" | "fallback";
 }
 
+/** Local historical check on the plan's stop/target geometry — see lib/analysis/backtest.ts. */
+export interface PlanBacktest {
+  resolved: number;
+  wins: number;
+  losses: number;
+  timeouts: number;
+  hitRate: number | null;
+  expectancyR: number | null;
+  horizonBars: number;
+  lookbackBars: number;
+  hadAmbiguousBars: boolean;
+}
+
 export interface TradeSignal {
   symbol: string;
   direction: "long" | "short";
@@ -123,6 +136,8 @@ export interface TradeSignal {
   narrative: string;
   /** The one recommendation to act on — see TradePlan. */
   trade_plan: TradePlan;
+  /** Historical feasibility check on trade_plan's geometry; null when not computable. */
+  plan_backtest: PlanBacktest | null;
   data_gaps: string[];
 }
 

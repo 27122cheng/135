@@ -162,7 +162,7 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
       </Card>
 
       {/* The answer: one entry, one stop, one target. */}
-      <TradePlanCard plan={signal.trade_plan} />
+      <TradePlanCard plan={signal.trade_plan} backtest={signal.plan_backtest} />
 
       <Section title="完整價位與分批出場">
         {isNoTrade && (

@@ -1,4 +1,4 @@
-import type { TradePlan } from "@/types/signal";
+import type { PlanBacktest, TradePlan } from "@/types/signal";
 import { formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -37,7 +37,13 @@ function Leg({
   );
 }
 
-export function TradePlanCard({ plan }: { plan: TradePlan }) {
+export function TradePlanCard({
+  plan,
+  backtest,
+}: {
+  plan: TradePlan;
+  backtest: PlanBacktest | null;
+}) {
   if (plan.stance === "wait") {
     return (
       <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.04] p-4">
@@ -94,6 +100,43 @@ export function TradePlanCard({ plan }: { plan: TradePlan }) {
       <p className="mt-3 border-t border-neutral-800 pt-3 text-sm leading-relaxed text-neutral-300">
         {plan.summary}
       </p>
+
+      {backtest && backtest.hitRate !== null && (
+        <details className="mt-3 border-t border-neutral-800 pt-3">
+          <summary className="cursor-pointer list-none text-xs text-neutral-400">
+            歷史幾何檢驗：先觸及停利{" "}
+            <span
+              className={cn(
+                "font-mono font-semibold",
+                backtest.expectancyR !== null && backtest.expectancyR > 0
+                  ? "text-emerald-400"
+                  : "text-red-400",
+              )}
+            >
+              {(backtest.hitRate * 100).toFixed(0)}%
+            </span>
+            {backtest.expectancyR !== null && (
+              <span className="ml-2 text-neutral-500">
+                期望值 {backtest.expectancyR > 0 ? "+" : ""}
+                {backtest.expectancyR}R
+              </span>
+            )}
+            <span className="ml-2 text-neutral-600">n={backtest.resolved}</span>
+          </summary>
+          <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
+            在近 {backtest.lookbackBars} 根 D1 中，以相同的停損／停利「相對距離」
+            逐根回測（最多持有 {backtest.horizonBars} 根）：
+            {backtest.wins} 勝 / {backtest.losses} 敗 / {backtest.timeouts} 次未觸及。
+          </p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-amber-500/70">
+            這檢驗的是「這組距離配置」在本商品波動下的可行性，
+            <span className="font-semibold text-amber-400">不是</span>這個訊號的勝率 ——
+            回測不分六面向狀態，逐根取樣。
+            {backtest.hadAmbiguousBars &&
+              " 部分樣本同一根 K 棒同時觸及兩邊，日線無法判斷先後，一律計為敗（偏保守）。"}
+          </p>
+        </details>
+      )}
     </div>
   );
 }

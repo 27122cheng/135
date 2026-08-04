@@ -17,6 +17,7 @@ create table if not exists public.signals (
   path_obstacles jsonb not null,
   narrative text not null,
   trade_plan jsonb not null default '{}'::jsonb,
+  plan_backtest jsonb,
   data_gaps jsonb not null default '[]'::jsonb,
   generated_at timestamptz not null,
   created_at timestamptz not null default now()
@@ -36,3 +37,4 @@ create policy "Public read access" on public.signals
 
 -- Migration for tables created before trade_plan existed; no-op on new ones.
 alter table public.signals add column if not exists trade_plan jsonb not null default '{}'::jsonb;
+alter table public.signals add column if not exists plan_backtest jsonb;

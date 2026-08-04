@@ -9,6 +9,7 @@ import { analyzePositioning } from "./analysis/positioning";
 import { analyzeNews } from "./analysis/news";
 import { analyzeFundFlow } from "./analysis/fundflow";
 import { analyzeOpenInterest } from "./analysis/open-interest";
+import { backtestPlanGeometry } from "./analysis/backtest";
 import { generateNarrative } from "./analysis/ai-narrative";
 import { buildTradePlan, collectCandidates } from "./analysis/trade-plan";
 import { scoreSignal } from "./scoring";
@@ -71,6 +72,7 @@ function buildNoPriceSignal(
       wait_for: "等待價格資料來源恢復（見資料缺口）。",
       decided_by: "fallback",
     },
+    plan_backtest: null,
     narrative:
       `${meta.symbol} 無法產生有效訊號：所有 OHLCV 來源皆取得失敗（Twelve Data 與 yfinance 備援都沒有回應可用資料）。` +
       `請檢查 /api/diagnostics 確認各資料來源在部署環境的連線狀態，或設定 TWELVE_DATA_API_KEY。` +
@@ -238,6 +240,28 @@ async function buildSignalForSymbol(
     gaps,
   );
 
+  // Local historical check on the plan's geometry — pure computation over the
+  // D1 candles we already have. No AI, no extra request.
+  const planBacktest =
+    tradePlan.stance === "enter" &&
+    tradePlan.entry !== null &&
+    tradePlan.stop_loss !== null &&
+    tradePlan.take_profit !== null &&
+    tradePlan.risk_reward !== null &&
+    d1
+      ? backtestPlanGeometry(
+          direction,
+          tradePlan.entry,
+          tradePlan.stop_loss,
+          tradePlan.take_profit,
+          d1.candles,
+          tradePlan.risk_reward,
+        )
+      : null;
+  if (tradePlan.stance === "enter" && !planBacktest) {
+    gaps.push("D1 K棒不足，無法對交易計畫做歷史幾何檢驗");
+  }
+
   const dedupedGaps = [...new Set(gaps)];
 
   const signal: TradeSignal = {
@@ -256,6 +280,7 @@ async function buildSignalForSymbol(
     path_obstacles: technical.pathObstacles,
     narrative,
     trade_plan: tradePlan,
+    plan_backtest: planBacktest,
     data_gaps: dedupedGaps,
   };
 
