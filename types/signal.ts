@@ -69,6 +69,40 @@ export interface PathObstacle {
 
 export type Grade = "A+" | "A" | "B" | "C" | "no-trade";
 
+/** One headline the analysis actually read. */
+export interface NewsSource {
+  headline: string;
+  domain: string;
+  url: string;
+  datetime: string;
+}
+
+/**
+ * A takeaway the AI drew from the headlines.
+ *
+ * `sources` holds indices into `NewsDigest.sources`, validated against the list
+ * the model was shown — same constraint as the trade plan's price indices. The
+ * model can only cite headlines we actually gave it, so a point can never be
+ * attributed to an article that doesn't exist.
+ */
+export interface NewsKeyPoint {
+  point: string;
+  impact: "long" | "short" | "neutral";
+  sources: number[];
+}
+
+/** What the news dimension read, concluded, and scored — surfaced to the user. */
+export interface NewsDigest {
+  /** -1..+1 sentiment; drives the 新聞面 bias item's weight and direction. */
+  score: number;
+  summary: string;
+  key_points: NewsKeyPoint[];
+  headline_count: number;
+  sources: NewsSource[];
+  /** Provider that read the headlines, or the local keyword table. */
+  analyzed_by: string;
+}
+
 /**
  * The single actionable recommendation: one entry, one stop, one target.
  * Every price here is copied from a real computed structure — the AI only
@@ -140,6 +174,12 @@ export interface TradeSignal {
   bias_items: BiasItem[];
   entry_structures: EntryStructure[];
   path_obstacles: PathObstacle[];
+  /**
+   * The news the analysis read and what it concluded, with links. Null when no
+   * headlines were available. Shown before the narrative so the reasoning can
+   * be checked against the source material.
+   */
+  news_digest: NewsDigest | null;
   narrative: string;
   /** The one recommendation to act on — see TradePlan. */
   trade_plan: TradePlan;

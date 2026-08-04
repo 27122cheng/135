@@ -12,6 +12,8 @@ export interface NarrativeInput {
   entry_structures: EntryStructure[];
   path_obstacles: PathObstacle[];
   news_summary: string | null;
+  /** The news takeaways, so the narrative can reason about them by name. */
+  news_key_points?: Array<{ point: string; impact: string }>;
 }
 
 function fallbackNarrative(input: NarrativeInput): string {

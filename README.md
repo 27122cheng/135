@@ -14,7 +14,7 @@ end-to-end. A GitHub Actions workflow refreshes every 4h into Postgres, and
 npm install
 cp .env.example .env.local   # 可以完全空白 — 見下方「零金鑰可跑」
 npm run dev
-npm test                     # 14 個測試套件，233 項斷言
+npm test                     # 15 個測試套件，256 項斷言
 ```
 
 Open http://localhost:3000. Pick any symbol in the left panel — each calls
@@ -102,6 +102,32 @@ rather than guessed.
 | 新聞面 | `lib/analysis/news.ts` | GDELT 2.0 DOC API + Finnhub `/news` → AI 評 -1~+1 情緒分並摘要（走 `lib/ai` 的供應商鏈），關鍵字依 config 逐商品設定 |
 | 資金流 | `lib/analysis/fundflow.ts` + `lib/analysis/open-interest.ts` | GLD 成交量資金流代理(僅XAUUSD，見下)、SPDR GLD 持倉快照、DXY 方向、VIX、**未平倉量分析**（價量未平倉四象限、52週水位、異常變化偵測） |
 | AI綜合 | `lib/analysis/ai-narrative.ts` | 上述五面向的結構化 JSON → AI 產生 `narrative`（prompt 明確禁止補充未提供的事實） |
+
+## 新聞重點 — 看得到 AI 讀了什麼
+
+原本新聞面只算出一個 -1~+1 的情緒分就丟進計分，**AI 讀到的標題和推論完全沒有
+顯示出來** —— 一個數字在動評等，而沒有人能檢查它。
+
+現在 `analyzeNews` 除了分數，還要 AI 歸納 2-4 個重點，每個標明偏多／偏空／中性，
+並且**用編號指出它是根據哪幾則標題**。訊號卡上的「新聞重點」區塊會顯示：
+
+- 整體摘要與情緒分
+- 每個重點 + 方向標籤 + 可點的來源連結
+- 展開後是模型看到的全部原始標題（附時間與媒體）
+- 分析者是誰（哪家供應商，或「本地關鍵字表（非 AI）」）
+
+### 引用不可能造假
+
+跟交易計畫用編號選價位是同一招：**模型只能引用我們給它的標題編號**。
+schema 在解析時就對照標題數量做範圍檢查，越界或負數的引用直接丟掉。
+所以一個重點永遠不可能被歸因到一篇不存在的報導。
+
+這也表示模型沒有辦法「補充」標題以外的事實 —— prompt 明講不准，
+而引用機制讓任何超出範圍的宣稱都無處掛載。
+
+沒設 AI 金鑰時一樣會產生 digest：標題照列，但 `key_points` 是空的，
+`analyzed_by` 標成「本地關鍵字表（非 AI）」。關鍵字統計只能數次數，
+生不出重點 —— 與其包裝成看起來像分析的句子，不如誠實留白。
 
 ## 結構偵測精準度 — `lib/analysis/levels.ts`
 
@@ -728,7 +754,7 @@ npm test
 ```
 
 沙箱連不到任何一個金融 API，所以驗證靠的是 known-answer 測試 + stub 過的
-`fetch`，不是真的打上去。14 個套件、233 項斷言，每個套件跑在自己的行程裡
+`fetch`，不是真的打上去。15 個套件、256 項斷言，每個套件跑在自己的行程裡
 （好幾個會替換 `global.fetch` 並重設模組層快取，共用行程會讓前一個的 stub
 汙染後一個）。
 
@@ -740,6 +766,7 @@ npm test
 | `ohlcv` | 來源鏈；**能用的備援不准報缺口，但 stale 一定要報** |
 | `keys` | 允許清單擋掉 service-role / cron secret；併發請求不互相看見 |
 | `data-gaps` | 「本次失敗」與「先天限制」分類；沒見過的訊息不准被消音 |
+| `news` | 新聞重點的引用只能指向真的存在的標題；越界／負數引用會被丟掉 |
 | `gdelt` | 零結果與真失敗要分得開；查詢失敗會退回單一詞再試 |
 | `db` | 首次設定錯誤翻譯、schema 常數與 .sql 檔不得漂移、DATABASE_URL 不可由瀏覽器設定 |
 | `bt` `lv` `oi` `lex` `fred` `plan` | 回測幾何、結構聚類、未平倉四象限、關鍵字情緒、CSV 解析、計畫組裝 |

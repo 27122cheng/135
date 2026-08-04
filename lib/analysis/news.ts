@@ -1,5 +1,5 @@
 import { completeAI, jsonSchema } from "@/lib/ai";
-import type { BiasItem } from "@/types/signal";
+import type { BiasItem, NewsDigest, NewsKeyPoint, NewsSource } from "@/types/signal";
 import { fetchGdeltNews } from "../data-sources/gdelt";
 import { fetchFinnhubMarketNews } from "../data-sources/finnhub";
 import { scoreHeadlines } from "./news-lexicon";
@@ -15,40 +15,96 @@ export interface NewsAnalysisResult {
   biasItems: BiasItem[];
   summary: string | null;
   sources: string[];
+  /** The full read-out shown on the card; null when there were no headlines. */
+  digest: NewsDigest | null;
 }
+
+/** How many headlines the model is shown. Also the size of the citable list. */
+const PROMPT_LIMIT = 20;
 
 function buildPrompt(articles: Article[]): string {
   const list = articles
-    .slice(0, 20)
-    .map((a, i) => `${i + 1}. [${a.datetime}] (${a.source}) ${a.headline}`)
+    .map((a, i) => `[${i}] (${a.source}, ${a.datetime.slice(0, 16)}) ${a.headline}`)
     .join("\n");
   return (
-    `你是外匯/大宗商品新聞分析助手。以下是過去48小時內的新聞標題列表：\n\n${list}\n\n` +
-    `請只根據以上標題進行推論，不准補充未提供的事實。`
+    `你是外匯/大宗商品新聞分析助手。以下是過去 48 小時內的新聞標題，每則前面是它的編號：\n\n` +
+    `${list}\n\n` +
+    `請做兩件事：\n` +
+    `1. 歸納出 2-4 個對這個商品最重要的新聞重點，每個重點標明它偏多、偏空還是中性，` +
+    `並用編號指出它是根據哪幾則標題。\n` +
+    `2. 給一個整體情緒分數與摘要。\n\n` +
+    `嚴格規則：只准根據以上標題推論，不准補充標題裡沒有的事實或數字。` +
+    `引用時只能用上面出現過的編號，不可以自己編。` +
+    `如果標題與這個商品關聯很弱，就誠實說關聯不大、分數給接近 0，不要硬湊。`
   );
 }
 
-interface Sentiment {
+interface RawKeyPoint {
+  point?: unknown;
+  impact?: unknown;
+  sources?: unknown;
+}
+
+interface Analysis {
   score: number;
   summary: string;
+  keyPoints: NewsKeyPoint[];
 }
 
 /**
- * Batch sentiment over all headlines in one call — one request per symbol
- * rather than one per headline, which is what keeps this inside a 30 req/min
- * free tier.
+ * Builds the schema against a known headline count so citation indices can be
+ * range-checked at parse time. A point citing a headline we never supplied is
+ * dropped rather than shown — the same rule the trade plan applies to prices.
  */
-const SENTIMENT_SCHEMA = jsonSchema<Sentiment>(
-  "sentiment",
-  `輸出嚴格的 JSON（不要有其他文字、不要 markdown code fence），格式為：\n` +
-    `{"score": number, "summary": string}\n` +
-    `score 是 -1 到 +1 的情緒分數（正值偏多、負值偏空），summary 是不超過100字的繁體中文摘要。`,
-  (v) => {
-    if (typeof v.score !== "number" || !Number.isFinite(v.score)) return null;
-    if (typeof v.summary !== "string" || v.summary.trim() === "") return null;
-    return { score: Math.max(-1, Math.min(1, v.score)), summary: v.summary.trim() };
-  },
-);
+function analysisSchema(headlineCount: number) {
+  return jsonSchema<Analysis>(
+    "news-analysis",
+    `輸出嚴格的 JSON（不要有其他文字、不要 markdown code fence），格式為：\n` +
+      `{"score": number, "summary": string, "key_points": [{"point": string, ` +
+      `"impact": "long"|"short"|"neutral", "sources": number[]}]}\n` +
+      `score 是 -1 到 +1 的情緒分數（正值偏多、負值偏空）。\n` +
+      `summary 是不超過 100 字的繁體中文整體摘要。\n` +
+      `key_points 2-4 個，每個 point 用一句繁體中文（40 字內），` +
+      `sources 填該重點依據的標題編號（0 到 ${headlineCount - 1}）。`,
+    (v) => {
+      if (typeof v.score !== "number" || !Number.isFinite(v.score)) return null;
+      if (typeof v.summary !== "string" || v.summary.trim() === "") return null;
+
+      const rawPoints = Array.isArray(v.key_points) ? (v.key_points as RawKeyPoint[]) : [];
+      const keyPoints: NewsKeyPoint[] = [];
+      for (const raw of rawPoints) {
+        if (typeof raw.point !== "string" || raw.point.trim() === "") continue;
+        const impact =
+          raw.impact === "long" || raw.impact === "short" || raw.impact === "neutral"
+            ? raw.impact
+            : "neutral";
+        // Keep only citations that point at a headline that exists.
+        const sources = Array.isArray(raw.sources)
+          ? raw.sources.filter(
+              (n): n is number =>
+                typeof n === "number" && Number.isInteger(n) && n >= 0 && n < headlineCount,
+            )
+          : [];
+        keyPoints.push({ point: raw.point.trim(), impact, sources });
+      }
+
+      return {
+        score: Math.max(-1, Math.min(1, v.score)),
+        summary: v.summary.trim(),
+        keyPoints: keyPoints.slice(0, 4),
+      };
+    },
+  );
+}
+
+function toSources(articles: Article[]): NewsSource[] {
+  return articles.map((a) => ({
+    headline: a.headline,
+    domain: a.source,
+    url: a.url,
+    datetime: a.datetime,
+  }));
+}
 
 /**
  * Zero-key path: keyword sentiment over the same headlines. Weight is capped
@@ -59,12 +115,27 @@ function lexiconResult(articles: Article[], gaps: string[]): NewsAnalysisResult 
     articles.map((a) => a.headline),
   );
   const sources = articles.slice(0, 10).map((a) => a.url);
+  const digestSources = toSources(articles.slice(0, PROMPT_LIMIT));
 
   if (matched === 0) {
     gaps.push(
       `新聞面改用本地關鍵字評分，但 ${articles.length} 則標題中無可辨識的多空關鍵字`,
     );
-    return { biasItems: [], summary: null, sources };
+    // Still return the digest: the headlines are worth reading even when the
+    // keyword table found nothing to score.
+    return {
+      biasItems: [],
+      summary: null,
+      sources,
+      digest: {
+        score: 0,
+        summary: `近 48 小時 ${articles.length} 則標題中沒有可辨識的多空關鍵字，本地評分無法判斷方向。`,
+        key_points: [],
+        headline_count: articles.length,
+        sources: digestSources,
+        analyzed_by: "本地關鍵字表（非 AI）",
+      },
+    };
   }
 
   gaps.push("新聞面改用本地關鍵字評分（準確度低於 AI 評分，權重上限 1）");
@@ -84,10 +155,21 @@ function lexiconResult(articles: Article[], gaps: string[]): NewsAnalysisResult 
           },
         ];
 
+  const summary = `［關鍵字評分，非 AI］近 48 小時 ${articles.length} 則新聞中 ${matched} 則含多空關鍵字，整體${direction === "long" ? "偏多" : direction === "short" ? "偏空" : "中性"}（${score.toFixed(2)}）。`;
   return {
     biasItems,
-    summary: `［關鍵字評分，非 AI］近 48 小時 ${articles.length} 則新聞中 ${matched} 則含多空關鍵字，整體${direction === "long" ? "偏多" : direction === "short" ? "偏空" : "中性"}（${score.toFixed(2)}）。`,
+    summary,
     sources,
+    digest: {
+      score,
+      summary,
+      // Keyword counting can't produce a takeaway, only a tally — so no key
+      // points rather than a sentence dressed up to look like analysis.
+      key_points: [],
+      headline_count: articles.length,
+      sources: digestSources,
+      analyzed_by: "本地關鍵字表（非 AI）",
+    },
   };
 }
 
@@ -109,11 +191,14 @@ export async function analyzeNews(
     // No gap pushed here on purpose. fetchGdeltNews has already said either
     // "取得失敗" or "查無相關新聞", and Finnhub is optional — adding a generic
     // "no news" line on top would report the same fact twice.
-    return { biasItems: [], summary: null, sources: [] };
+    return { biasItems: [], summary: null, sources: [], digest: null };
   }
 
-  const result = await completeAI(buildPrompt(articles), SENTIMENT_SCHEMA, gaps, {
-    maxTokens: 500,
+  // Only the headlines the model is shown are citable, so the same slice backs
+  // both the prompt and the digest's source list — the indices must line up.
+  const shown = articles.slice(0, PROMPT_LIMIT);
+  const result = await completeAI(buildPrompt(shown), analysisSchema(shown.length), gaps, {
+    maxTokens: 900,
   });
   if (!result) {
     // Every provider unconfigured, over quota, or failing — fall back to keyword
@@ -122,7 +207,7 @@ export async function analyzeNews(
     return lexiconResult(articles, gaps);
   }
 
-  const { score, summary } = result.value;
+  const { score, summary, keyPoints } = result.value;
   const direction = score > 0.15 ? "long" : score < -0.15 ? "short" : "neutral";
   const weight = Math.abs(score) >= 0.5 ? 2 : Math.abs(score) >= 0.15 ? 1 : 0;
   const biasItems: BiasItem[] = [
@@ -135,5 +220,17 @@ export async function analyzeNews(
       source: `GDELT 2.0 doc API + Finnhub /news + ${result.provider} 情緒評分`,
     },
   ];
-  return { biasItems, summary, sources: articles.slice(0, 10).map((a) => a.url) };
+  return {
+    biasItems,
+    summary,
+    sources: articles.slice(0, 10).map((a) => a.url),
+    digest: {
+      score,
+      summary,
+      key_points: keyPoints,
+      headline_count: articles.length,
+      sources: toSources(shown),
+      analyzed_by: result.provider,
+    },
+  };
 }

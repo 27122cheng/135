@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { TradeSignal } from "@/types/signal";
+import type { NewsDigest, TradeSignal } from "@/types/signal";
 import type { AppliedIntervention } from "@/types/journal";
 import { Card, CardContent } from "@/components/ui/card";
 import { GradeBadge } from "@/components/grade-badge";
@@ -8,6 +8,110 @@ import { TradePlanCard } from "@/components/trade-plan-card";
 import { formatPrice, formatTime } from "@/lib/format";
 import { groupDataGaps, KEY_SOURCES } from "@/lib/data-gaps";
 import { cn } from "@/lib/utils";
+
+const IMPACT_STYLE: Record<string, { label: string; className: string }> = {
+  long: { label: "偏多", className: "bg-emerald-500/15 text-emerald-400" },
+  short: { label: "偏空", className: "bg-red-500/15 text-red-400" },
+  neutral: { label: "中性", className: "bg-neutral-700 text-neutral-300" },
+};
+
+/**
+ * What the news actually said, and what the AI made of it.
+ *
+ * The sentiment score alone was already feeding the 新聞面 dimension, but the
+ * headlines behind it and the reasoning over them were never shown — so a
+ * number moved the grade and nobody could check it. Each takeaway links to the
+ * headlines it was drawn from; the model cites by index into a list we supplied,
+ * so a citation can never point at an article that doesn't exist.
+ */
+function NewsDigestCard({ digest }: { digest: NewsDigest }) {
+  const tone =
+    digest.score > 0.15 ? "text-emerald-400" : digest.score < -0.15 ? "text-red-400" : "text-neutral-400";
+  return (
+    <details className="rounded-xl border border-neutral-800 bg-neutral-900/40" open>
+      <summary className="cursor-pointer list-none px-4 py-3">
+        <span className="text-sm font-medium text-neutral-200">新聞重點</span>
+        <span className="ml-2 text-xs text-neutral-500">
+          {digest.headline_count} 則 · 情緒分{" "}
+          <span className={`font-mono ${tone}`}>{digest.score.toFixed(2)}</span>
+        </span>
+      </summary>
+
+      <div className="space-y-3 px-4 pb-4">
+        <p className="text-xs leading-relaxed text-neutral-300">{digest.summary}</p>
+
+        {digest.key_points.length > 0 && (
+          <ul className="space-y-2">
+            {digest.key_points.map((k, i) => {
+              const style = IMPACT_STYLE[k.impact] ?? IMPACT_STYLE.neutral;
+              return (
+                <li key={i} className="border-l-2 border-neutral-700 pl-3">
+                  <div className="flex items-start gap-2">
+                    <span
+                      className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${style.className}`}
+                    >
+                      {style.label}
+                    </span>
+                    <p className="text-xs leading-relaxed text-neutral-200">{k.point}</p>
+                  </div>
+                  {k.sources.length > 0 && (
+                    <p className="mt-1 flex flex-wrap gap-x-2 text-[10px] text-neutral-600">
+                      依據：
+                      {k.sources.map((idx) => {
+                        const src = digest.sources[idx];
+                        if (!src) return null;
+                        return (
+                          <a
+                            key={idx}
+                            href={src.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline hover:text-neutral-400"
+                            title={src.headline}
+                          >
+                            [{idx}] {src.domain}
+                          </a>
+                        );
+                      })}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        <details className="border-t border-neutral-800 pt-2">
+          <summary className="cursor-pointer text-[11px] text-neutral-600 hover:text-neutral-400">
+            看 {digest.sources.length} 則原始標題
+          </summary>
+          <ul className="mt-2 space-y-1.5">
+            {digest.sources.map((s, i) => (
+              <li key={i} className="text-[11px] leading-relaxed">
+                <span className="font-mono text-neutral-700">[{i}]</span>{" "}
+                <a
+                  href={s.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-neutral-400 hover:text-neutral-200 hover:underline"
+                >
+                  {s.headline}
+                </a>
+                <span className="ml-1 text-neutral-700">
+                  — {s.domain} · {s.datetime.slice(5, 16).replace("T", " ")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+
+        <p className="text-[10px] text-neutral-600">
+          分析者：{digest.analyzed_by}。只根據上列標題推論，未補充標題以外的事實。
+        </p>
+      </div>
+    </details>
+  );
+}
 
 /**
  * 本次已套用的干涉 — required by the spec to show not just what was tightened
@@ -227,6 +331,8 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
       <TradePlanCard plan={signal.trade_plan} backtest={signal.plan_backtest} />
 
       {signal.interventions.length > 0 && <Interventions items={signal.interventions} />}
+
+      {signal.news_digest && <NewsDigestCard digest={signal.news_digest} />}
 
       <Section title="完整價位與分批出場">
         {isNoTrade && (

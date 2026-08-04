@@ -142,6 +142,7 @@ function buildNoPriceSignal(
     },
     plan_backtest: null,
     interventions: [],
+    news_digest: null,
     narrative:
       `${meta.symbol} 無法產生有效訊號：所有 OHLCV 來源皆取得失敗（行情代理、Finnhub、Stooq 都沒有回應可用資料）。` +
       `請檢查 /api/diagnostics 確認各資料來源在部署環境的連線狀態。` +
@@ -359,6 +360,10 @@ async function buildSignalForSymbol(
       entry_structures: technical.entryStructures,
       path_obstacles: technical.pathObstacles,
       news_summary: news.summary,
+      news_key_points: news.digest?.key_points.map((k) => ({
+        point: k.point,
+        impact: k.impact,
+      })),
     },
     gaps,
   );
@@ -434,6 +439,7 @@ async function buildSignalForSymbol(
     bias_items: biasItems,
     entry_structures: technical.entryStructures,
     path_obstacles: technical.pathObstacles,
+    news_digest: news.digest,
     narrative,
     trade_plan: tradePlan,
     plan_backtest: planBacktest,
