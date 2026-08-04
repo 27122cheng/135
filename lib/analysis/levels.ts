@@ -38,7 +38,7 @@ export interface PriceLevel {
 }
 
 /** Higher timeframes get a larger share of the strength budget. */
-const TIMEFRAME_RANK: Record<Timeframe, number> = { M15: 0, H1: 1, H4: 2, D1: 3, W1: 4 };
+const TIMEFRAME_RANK: Record<Timeframe, number> = { H4: 0, D1: 1, W1: 2 };
 
 export function collectSwings(
   candlesByTf: Partial<Record<Timeframe, Candle[]>>,

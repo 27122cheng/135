@@ -1,4 +1,7 @@
-import { cachedOrFetch } from "./cache";
+import { fetchFree } from "./free-source";
+
+/** Static XML file on a CDN; self-imposed budget, updated once daily. */
+const GLD_LIMIT = { perMinute: 10, perDay: 200 };
 import { fetchText } from "./http";
 
 export interface GldHoldings {
@@ -16,8 +19,14 @@ export interface GldHoldings {
  * Verify against a live response once deployed with outbound access.
  */
 export async function fetchGldHoldings(gaps: string[]): Promise<GldHoldings | null> {
-  const key = "spdr:gld:holdings";
-  const result = await cachedOrFetch(key, 60 * 60 * 1000, async () => {
+  const result = await fetchFree<GldHoldings>({
+    source: "spdr-gld",
+    label: "SPDR GLD 持倉",
+    key: "spdr:gld:holdings",
+    ttlMs: 60 * 60 * 1000,
+    limit: GLD_LIMIT,
+    gaps,
+    fn: async () => {
     const url = "https://www.spdrgoldshares.com/assets/dynamic/GLD/GLD_US_ProductDetails.xml";
     const xml = await fetchText(url, { headers: { "User-Agent": "Mozilla/5.0" } }, 15000);
     if (!xml) return null;
@@ -33,10 +42,11 @@ export async function fetchGldHoldings(gaps: string[]): Promise<GldHoldings | nu
     const tonnesInTrust = Number(tonnesMatch[1].replace(/,/g, ""));
     if (!Number.isFinite(tonnesInTrust)) return null;
     return { tonnesInTrust, asOf: dateMatch?.[1]?.trim() ?? new Date().toISOString().slice(0, 10) };
+    },
   });
   if (!result) {
     gaps.push("SPDR GLD 持倉資料取得失敗或 XML 格式與預期不符（來源未經即時驗證，見 README）");
     return null;
   }
-  return result;
+  return result.value;
 }

@@ -1,6 +1,12 @@
 import { getKey } from "../api-keys";
-import { cachedOrFetch, checkRateLimit } from "./cache";
+import { fetchFree } from "./free-source";
 import { fetchJson } from "./http";
+
+/**
+ * Documented free tier: 60 requests/minute, shared across every Finnhub
+ * endpoint — so all call sites here spend the same bucket.
+ */
+const FINNHUB_LIMIT = { perMinute: 60 };
 
 export interface EconomicEvent {
   event: string;
@@ -30,30 +36,31 @@ export async function fetchEconomicCalendar(gaps: string[]): Promise<EconomicEve
   // key is not reported as a gap here — the caller decides if anything is lost.
   const apiKey = getKey("FINNHUB_API_KEY");
   if (!apiKey) return null;
-  if (!checkRateLimit("finnhub", 3600)) {
-    gaps.push("Finnhub API 已達速率限制");
-    return null;
-  }
   const from = new Date().toISOString().slice(0, 10);
   const to = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const key = `finnhub:calendar:${from}:${to}`;
-  return cachedOrFetch(key, 60 * 60 * 1000, async () => {
-    const url = `https://finnhub.io/api/v1/calendar/economic?from=${from}&to=${to}&token=${apiKey}`;
-    const data = await fetchJson<FinnhubCalendarResponse>(url);
-    if (!data || !Array.isArray(data.economicCalendar)) {
-      gaps.push("Finnhub 財經日曆回應為空");
-      return null;
-    }
-    return data.economicCalendar.map((e) => ({
-      event: e.event,
-      country: e.country,
-      time: e.time,
-      impact: e.impact ?? null,
-      actual: e.actual ?? null,
-      estimate: e.estimate ?? null,
-      previous: e.prev ?? null,
-    }));
+  const result = await fetchFree<EconomicEvent[]>({
+    source: "finnhub",
+    label: "Finnhub 財經日曆",
+    key: `finnhub:calendar:${from}:${to}`,
+    ttlMs: 60 * 60 * 1000,
+    limit: FINNHUB_LIMIT,
+    gaps,
+    fn: async () => {
+      const url = `https://finnhub.io/api/v1/calendar/economic?from=${from}&to=${to}&token=${apiKey}`;
+      const data = await fetchJson<FinnhubCalendarResponse>(url);
+      if (!data || !Array.isArray(data.economicCalendar)) return null;
+      return data.economicCalendar.map((e) => ({
+        event: e.event,
+        country: e.country,
+        time: e.time,
+        impact: e.impact ?? null,
+        actual: e.actual ?? null,
+        estimate: e.estimate ?? null,
+        previous: e.prev ?? null,
+      }));
+    },
   });
+  return result?.value ?? null;
 }
 
 export interface FinnhubNewsItem {
@@ -85,27 +92,28 @@ export async function fetchFinnhubMarketNews(
   // Finnhub key is silent. analyzeNews reports a gap only if both come back empty.
   const apiKey = getKey("FINNHUB_API_KEY");
   if (!apiKey) return null;
-  if (!checkRateLimit("finnhub", 3600)) {
-    gaps.push("Finnhub API 已達速率限制");
-    return null;
-  }
-  const key = `finnhub:news:${category}`;
-  const items = await cachedOrFetch(key, 10 * 60 * 1000, async () => {
-    const url = `https://finnhub.io/api/v1/news?category=${category}&token=${apiKey}`;
-    const data = await fetchJson<FinnhubNewsRaw[]>(url);
-    if (!Array.isArray(data)) {
-      gaps.push(`Finnhub 新聞 (${category}) 回應為空`);
-      return null;
-    }
-    return data.map((n) => ({
-      headline: n.headline,
-      source: n.source,
-      url: n.url,
-      datetime: new Date(n.datetime * 1000).toISOString(),
-      summary: n.summary,
-    }));
+  const result = await fetchFree<FinnhubNewsItem[]>({
+    source: "finnhub",
+    label: `Finnhub 新聞 (${category})`,
+    key: `finnhub:news:${category}`,
+    ttlMs: 10 * 60 * 1000,
+    limit: FINNHUB_LIMIT,
+    gaps,
+    fn: async () => {
+      const url = `https://finnhub.io/api/v1/news?category=${category}&token=${apiKey}`;
+      const data = await fetchJson<FinnhubNewsRaw[]>(url);
+      if (!Array.isArray(data)) return null;
+      return data.map((n) => ({
+        headline: n.headline,
+        source: n.source,
+        url: n.url,
+        datetime: new Date(n.datetime * 1000).toISOString(),
+        summary: n.summary,
+      }));
+    },
   });
-  if (!items) return null;
+  if (!result) return null;
+  const items = result.value;
   const cutoff = Date.now() - 48 * 60 * 60 * 1000;
   const lowerKeywords = keywords.map((k) => k.toLowerCase());
   const filtered = items.filter(
@@ -138,27 +146,26 @@ export async function fetchEarningsCalendar(gaps: string[]): Promise<EarningsEve
   // changes no score and is not worth reporting as a gap.
   const apiKey = getKey("FINNHUB_API_KEY");
   if (!apiKey) return null;
-  if (!checkRateLimit("finnhub", 3600)) {
-    gaps.push("Finnhub API 已達速率限制");
-    return null;
-  }
   const from = new Date().toISOString().slice(0, 10);
   const to = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const key = `finnhub:earnings:${from}:${to}`;
-  const result = await cachedOrFetch(key, 60 * 60 * 1000, async () => {
-    const url = `https://finnhub.io/api/v1/calendar/earnings?from=${from}&to=${to}&token=${apiKey}`;
-    const data = await fetchJson<FinnhubEarningsResponse>(url);
-    if (!data || !Array.isArray(data.earningsCalendar)) return null;
-    return data.earningsCalendar.map((e) => ({
-      symbol: e.symbol,
-      date: e.date,
-      epsEstimate: e.epsEstimate ?? null,
-      epsActual: e.epsActual ?? null,
-    }));
+  const result = await fetchFree<EarningsEvent[]>({
+    source: "finnhub",
+    label: "Finnhub 財報日曆",
+    key: `finnhub:earnings:${from}:${to}`,
+    ttlMs: 60 * 60 * 1000,
+    limit: FINNHUB_LIMIT,
+    gaps,
+    fn: async () => {
+      const url = `https://finnhub.io/api/v1/calendar/earnings?from=${from}&to=${to}&token=${apiKey}`;
+      const data = await fetchJson<FinnhubEarningsResponse>(url);
+      if (!data || !Array.isArray(data.earningsCalendar)) return null;
+      return data.earningsCalendar.map((e) => ({
+        symbol: e.symbol,
+        date: e.date,
+        epsEstimate: e.epsEstimate ?? null,
+        epsActual: e.epsActual ?? null,
+      }));
+    },
   });
-  if (!result) {
-    gaps.push("Finnhub 財報日曆回應為空");
-    return null;
-  }
-  return result;
+  return result?.value ?? null;
 }

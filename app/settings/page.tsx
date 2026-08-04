@@ -16,33 +16,33 @@ interface KeyInfo {
 
 const KEYS: KeyInfo[] = [
   {
-    name: "TWELVE_DATA_API_KEY",
-    label: "Twelve Data",
-    what: "K 線主要來源。不設也能跑（Yahoo→Stooq 備援），但 Yahoo 常擋雲端機房 IP。",
-    where: "註冊後 Dashboard 首頁直接顯示",
-    url: "https://twelvedata.com/pricing",
+    name: "GEMINI_API_KEY",
+    label: "Google Gemini",
+    what: "AI 主力。免費 1500 次/日，不用信用卡。負責新聞情緒、綜合敘述、交易計畫判斷。",
+    where: "登入 Google 帳號 → Get API key → Create API key",
+    url: "https://aistudio.google.com/apikey",
     priority: "high",
   },
   {
-    name: "ANTHROPIC_API_KEY",
-    label: "Anthropic",
-    what: "AI 綜合敘述與交易計畫判斷。不設會改用本地預設規則。需付費。",
-    where: "Console → Settings → API Keys → Create Key",
-    url: "https://console.anthropic.com",
+    name: "GROQ_API_KEY",
+    label: "Groq",
+    what: "AI 第一備援（llama-3.3-70b）。免費 30 次/分，速度很快。Gemini 額度用完時自動接手。",
+    where: "註冊後 API Keys → Create API Key",
+    url: "https://console.groq.com/keys",
     priority: "high",
   },
   {
-    name: "ANTHROPIC_MODEL",
-    label: "Anthropic 模型（選填）",
-    what: "留空用 claude-opus-5。填 claude-haiku-4-5 會明顯更快、約 1/5 價格。",
-    where: "直接填模型名稱，不是金鑰",
-    url: "",
-    priority: "medium",
+    name: "OPENROUTER_API_KEY",
+    label: "OpenRouter（選填）",
+    what: "AI 第二備援，走 :free 模型。前兩個都掛掉才會用到。",
+    where: "註冊後 Keys → Create Key",
+    url: "https://openrouter.ai/keys",
+    priority: "low",
   },
   {
     name: "FINNHUB_API_KEY",
-    label: "Finnhub",
-    what: "額外新聞來源＋美股指數財報日曆。新聞面已由 GDELT 免費供應，優先度低。",
+    label: "Finnhub（選填）",
+    what: "額外新聞來源＋美股財報日曆。新聞面已由 GDELT 免費供應，優先度低。",
     where: "註冊後 Dashboard 直接顯示",
     url: "https://finnhub.io/register",
     priority: "low",
@@ -62,6 +62,58 @@ const KEYS: KeyInfo[] = [
     where: "填 Email，金鑰寄到信箱",
     url: "https://www.eia.gov/opendata/register.php",
     priority: "low",
+  },
+];
+
+/** Collapsed by default — model ids and provider order are rarely touched. */
+const ADVANCED_KEYS: KeyInfo[] = [
+  {
+    name: "GEMINI_MODEL",
+    label: "Gemini 模型",
+    what: "留空用 gemini-2.5-flash。",
+    where: "填模型名稱，不是金鑰",
+    url: "",
+    priority: "medium",
+  },
+  {
+    name: "GROQ_MODEL",
+    label: "Groq 模型",
+    what: "留空用 llama-3.3-70b-versatile。",
+    where: "填模型名稱，不是金鑰",
+    url: "",
+    priority: "medium",
+  },
+  {
+    name: "OPENROUTER_MODEL",
+    label: "OpenRouter 模型",
+    what: "留空用 meta-llama/llama-3.3-70b-instruct:free。免費模型會不定期下架，掛了就換一個。",
+    where: "填模型名稱，不是金鑰",
+    url: "https://openrouter.ai/models?q=free",
+    priority: "medium",
+  },
+  {
+    name: "AI_PROVIDER_ORDER",
+    label: "供應商順序",
+    what: "留空用 gemini,groq,openrouter,anthropic。用逗號分隔，可只填想用的。",
+    where: "例如 groq,gemini",
+    url: "",
+    priority: "medium",
+  },
+  {
+    name: "ANTHROPIC_API_KEY",
+    label: "Anthropic（付費，選填）",
+    what: "唯一付費選項，排在最後。前面任一個免費供應商能用就永遠不會走到這裡。",
+    where: "Console → Settings → API Keys",
+    url: "https://console.anthropic.com",
+    priority: "medium",
+  },
+  {
+    name: "ANTHROPIC_MODEL",
+    label: "Anthropic 模型",
+    what: "留空用 claude-haiku-4-5。",
+    where: "填模型名稱，不是金鑰",
+    url: "",
+    priority: "medium",
   },
 ];
 
@@ -86,6 +138,74 @@ export default function SettingsPage() {
     setTimeout(() => setSaved(false), 2000);
   }
 
+  // Model-name fields hold an identifier, not a secret, so they render as plain
+  // text with the model id as placeholder rather than a masked "貼上金鑰" box.
+  const isModelField = (name: UserSettableKey) =>
+    name.endsWith("_MODEL") || name === "AI_PROVIDER_ORDER";
+
+  const PLACEHOLDERS: Partial<Record<UserSettableKey, string>> = {
+    GEMINI_MODEL: "gemini-2.5-flash",
+    GROQ_MODEL: "llama-3.3-70b-versatile",
+    OPENROUTER_MODEL: "meta-llama/llama-3.3-70b-instruct:free",
+    ANTHROPIC_MODEL: "claude-haiku-4-5",
+    AI_PROVIDER_ORDER: "gemini,groq,openrouter",
+  };
+
+  function renderField(k: KeyInfo) {
+    const model = isModelField(k.name);
+    return (
+      <div key={k.name} className={`rounded-xl border ${PRIORITY_STYLE[k.priority]} bg-neutral-900/40 p-4`}>
+        <div className="mb-1 flex items-center gap-2">
+          <span className="text-sm font-medium text-neutral-100">{k.label}</span>
+          {k.priority === "high" && (
+            <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-400">
+              建議設定
+            </span>
+          )}
+          {keys[k.name] && (
+            <span className="rounded-full bg-neutral-700 px-2 py-0.5 text-[10px] text-neutral-300">
+              已設定
+            </span>
+          )}
+        </div>
+        <p className="mb-2 text-[11px] leading-relaxed text-neutral-500">{k.what}</p>
+
+        <input
+          type={model || reveal[k.name] ? "text" : "password"}
+          value={keys[k.name] ?? ""}
+          onChange={(e) => setKeys({ ...keys, [k.name]: e.target.value })}
+          placeholder={PLACEHOLDERS[k.name] ?? "貼上金鑰"}
+          autoComplete="off"
+          spellCheck={false}
+          className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 font-mono text-sm text-neutral-100 placeholder:font-sans placeholder:text-neutral-700"
+        />
+
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+          {!model && (
+            <button
+              type="button"
+              onClick={() => setReveal({ ...reveal, [k.name]: !reveal[k.name] })}
+              className="text-neutral-600 hover:text-neutral-400"
+            >
+              {reveal[k.name] ? "隱藏" : "顯示"}
+            </button>
+          )}
+          {k.url && (
+            <a
+              href={k.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="whitespace-nowrap text-neutral-500 underline hover:text-neutral-300"
+            >
+              去申請 →
+            </a>
+          )}
+          <span className="text-neutral-700">{k.where}</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <main className="mx-auto max-w-2xl px-4 py-5">
       <div className="mb-4 flex items-baseline justify-between gap-3">
@@ -107,57 +227,26 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <div className="flex flex-col gap-3">
-        {KEYS.map((k) => (
-          <div key={k.name} className={`rounded-xl border ${PRIORITY_STYLE[k.priority]} bg-neutral-900/40 p-4`}>
-            <div className="mb-1 flex items-center gap-2">
-              <span className="text-sm font-medium text-neutral-100">{k.label}</span>
-              {k.priority === "high" && (
-                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-400">
-                  建議設定
-                </span>
-              )}
-              {keys[k.name] && (
-                <span className="rounded-full bg-neutral-700 px-2 py-0.5 text-[10px] text-neutral-300">
-                  已設定
-                </span>
-              )}
-            </div>
-            <p className="mb-2 text-[11px] leading-relaxed text-neutral-500">{k.what}</p>
-
-            <input
-              type={reveal[k.name] ? "text" : "password"}
-              value={keys[k.name] ?? ""}
-              onChange={(e) => setKeys({ ...keys, [k.name]: e.target.value })}
-              placeholder={k.name === "ANTHROPIC_MODEL" ? "claude-haiku-4-5" : "貼上金鑰"}
-              autoComplete="off"
-              spellCheck={false}
-              className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 font-mono text-sm text-neutral-100 placeholder:font-sans placeholder:text-neutral-700"
-            />
-
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-              <button
-                type="button"
-                onClick={() => setReveal({ ...reveal, [k.name]: !reveal[k.name] })}
-                className="text-neutral-600 hover:text-neutral-400"
-              >
-                {reveal[k.name] ? "隱藏" : "顯示"}
-              </button>
-              {k.url && (
-                <a
-                  href={k.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="whitespace-nowrap text-neutral-500 underline hover:text-neutral-300"
-                >
-                  去申請 →
-                </a>
-              )}
-              <span className="text-neutral-700">{k.where}</span>
-            </div>
-          </div>
-        ))}
+      <div className="mb-5 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
+        <p className="text-xs leading-relaxed text-neutral-400">
+          免費 AI 供應商通常保留「用你送出的內容做訓練」的權利。本站送給 AI 的只有
+          <span className="text-neutral-200"> 公開市場資料</span>
+          —— 價格、公開新聞標題、CFTC 持倉、計算出來的分數。
+          不會送出你的帳戶、部位大小或任何個人資料。
+        </p>
       </div>
+
+      <div className="flex flex-col gap-3">{KEYS.map(renderField)}</div>
+
+      <details className="mt-3 rounded-xl border border-neutral-800 bg-neutral-900/40 p-4">
+        <summary className="cursor-pointer text-sm text-neutral-400 hover:text-neutral-200">
+          進階：模型名稱、供應商順序、付費選項
+        </summary>
+        <p className="mt-2 text-[11px] leading-relaxed text-neutral-600">
+          全部留空就好。免費模型偶爾會下架，那時候才需要進來換一個。
+        </p>
+        <div className="mt-3 flex flex-col gap-3">{ADVANCED_KEYS.map(renderField)}</div>
+      </details>
 
       <div className="mt-5 flex items-center gap-3">
         <button

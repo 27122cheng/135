@@ -8,9 +8,19 @@
  * server configuration such as the Supabase service role key or CRON_SECRET.
  */
 export const USER_SETTABLE_KEYS = [
-  "TWELVE_DATA_API_KEY",
+  // AI providers, free tier first — see lib/ai/index.ts for the fallback order.
+  "GEMINI_API_KEY",
+  "GROQ_API_KEY",
+  "OPENROUTER_API_KEY",
+  // Model overrides; free tiers retire model ids fairly often.
+  "GEMINI_MODEL",
+  "GROQ_MODEL",
+  "OPENROUTER_MODEL",
+  "AI_PROVIDER_ORDER",
+  // Paid, opt-in only. Last in the chain, so a free deployment never reaches it.
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_MODEL",
+  // Market and macro data.
   "FINNHUB_API_KEY",
   "FRED_API_KEY",
   "EIA_API_KEY",

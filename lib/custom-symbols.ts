@@ -64,7 +64,6 @@ export function toCommodityMeta(s: CustomSymbol): CommodityMeta {
     symbol: s.symbol,
     label: s.label,
     category: "index",
-    twelveDataSymbol: s.yahooSymbol,
     yfinanceSymbol: s.yahooSymbol,
     stooqSymbol: s.stooqSymbol || s.yahooSymbol,
     implemented: true,

@@ -1,9 +1,12 @@
-# 多商品交易訊號網站 — Stage 2
+# 多商品交易訊號網站 — Stage 2（全免費版）
 
 Next.js 14 (App Router) + TypeScript + TailwindCSS. All 9 symbols
 (EURUSD/USDJPY/GBPUSD/XAUUSD/NAS100/GER40/US30/WTI/SPX500) are wired
-end-to-end. A Vercel Cron job refreshes every 4h into Supabase, and
+end-to-end. A GitHub Actions workflow refreshes every 4h into Postgres, and
 `/history` lets you browse past signals by symbol/grade/date.
+
+**沒有任何一項需要付費**，而且完全不設金鑰也能跑 —— 見
+「[全免費技術堆疊](#全免費技術堆疊)」。
 
 ## Getting started
 
@@ -16,9 +19,9 @@ npm run dev
 Open http://localhost:3000. Pick any symbol in the left panel — each calls
 `GET /api/signal/[symbol]`, which runs the whole
 fetch → analyze → score → grade → AI-narrative pipeline server-side.
-`/history` reads persisted runs from Supabase (see the Cron section below —
-it's empty until the cron job has run at least once against a configured
-Supabase project).
+`/history` reads persisted runs from whichever database is configured (see
+「排程與儲存」below — it's empty until the refresh workflow has run at least
+once).
 
 **No key is required to run the app.** Every external call is wrapped in
 try/catch; on failure it logs a human-readable reason to the signal's
@@ -81,9 +84,9 @@ rather than guessed.
 | 技術面 | `lib/analysis/technical.ts` + `lib/analysis/levels.ts` | OHLCV → swing HH/HL/LH/LL, EMA20/50/200 排列, RSI(14) 背離, MACD histogram, 整數關卡；結構區改用**跨時框聚類**（見下） |
 | 基本面 | `lib/analysis/fundamental.ts` | Config-driven per symbol: 實質利率(DGS10−T10YIE，僅XAUUSD), DXY 趨勢, VIX, EIA 原油庫存(僅WTI), Finnhub 財報日曆(僅美股指數) |
 | 籌碼面 | `lib/analysis/positioning.ts` | CFTC COT (Socrata, legacy futures-only report) 非商業淨部位、52週極值、週變化，依 config 合約代碼與方向反轉設定 |
-| 新聞面 | `lib/analysis/news.ts` | GDELT 2.0 DOC API + Finnhub `/news` → Claude 評 -1~+1 情緒分並摘要，關鍵字依 config 逐商品設定 |
+| 新聞面 | `lib/analysis/news.ts` | GDELT 2.0 DOC API + Finnhub `/news` → AI 評 -1~+1 情緒分並摘要（走 `lib/ai` 的供應商鏈），關鍵字依 config 逐商品設定 |
 | 資金流 | `lib/analysis/fundflow.ts` + `lib/analysis/open-interest.ts` | SPDR GLD 持倉快照(僅XAUUSD)、DXY 方向、VIX、**未平倉量分析**（價量未平倉四象限、52週水位、異常變化偵測） |
-| AI綜合 | `lib/analysis/ai-narrative.ts` | 上述五面向的結構化 JSON → Claude 產生 `narrative`（prompt 明確禁止補充未提供的事實） |
+| AI綜合 | `lib/analysis/ai-narrative.ts` | 上述五面向的結構化 JSON → AI 產生 `narrative`（prompt 明確禁止補充未提供的事實） |
 
 ## 結構偵測精準度 — `lib/analysis/levels.ts`
 
@@ -161,43 +164,145 @@ CFTC 未平倉量是**每週**資料：週二收盤結算、週五公布，所�
 （不用擲硬幣灌高勝率），並在 UI 標示；K 棒不足時回傳 null 並記入 `data_gaps`，
 不生一個假數字。
 
-## Cron + persistence (Stage 2)
+## 排程與儲存
 
-1. Apply `supabase/schema.sql` to your Supabase project (SQL editor or
-   `supabase db push`) — creates `signals` with public read / service-role
-   write via RLS.
-2. Set `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server-only,
-   never expose to the client) and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
-3. Deploy to Vercel — `vercel.json` registers `/api/cron/refresh-signals`
-   on a `0 */4 * * *` schedule. It builds all 9 signals in parallel
-   (`Promise.allSettled`, one symbol's failure doesn't block the others)
-   and inserts each as a new row (append-only, so `/history` shows a
-   timeline, not just the latest state).
-4. Optionally set `CRON_SECRET` — Vercel sends it automatically as
-   `Authorization: Bearer <value>` when the env var exists, and the route
-   rejects any other caller.
+### 為什麼不用 Vercel Cron
 
-Nine symbols × the full analysis pipeline can run past Vercel's timeout —
-`maxDuration = 60` is declared on the route (the Hobby ceiling; a higher
-value fails deployment there). Raise it if your plan allows more.
+Vercel Hobby 方案的 cron **一天只能跑一次**，規格要求每 4 小時。所以排程搬到
+GitHub Actions（`.github/workflows/refresh.yml`，`cron: "0 */4 * * *"`），
+應用端只留一個 `/api/refresh` 端點給它打。`vercel.json` 的 `crons` 已移除。
+
+設定步驟：
+
+1. 套用 `supabase/schema.sql`（純 SQL，Neon 與 Supabase 都適用）。
+2. 設定資料庫（二選一，見下節）。
+3. 在 GitHub repo → **Settings → Secrets and variables → Actions** 新增：
+   - `APP_URL` — 例如 `https://your-app.vercel.app`
+   - `CRON_SECRET` — 自己想一組字串，同一組也要填進 Vercel 環境變數
+4. 到 **Actions** 分頁按 **Run workflow** 手動跑一次確認。
+
+workflow **一次打一個商品**（9 次請求，中間 sleep 20 秒），原因有兩個：
+九個商品的完整 pipeline 塞不進 Vercel Hobby 的 60 秒函式上限；而且分開打之後
+單一商品失敗只賠掉它自己。免費資料源多半是「每分鐘」限流，慢慢打反而更穩。
+
+### 資料庫：`DATABASE_URL` 一個變數切換
+
+| 設了 `DATABASE_URL` | 用什麼 |
+|---|---|
+| 有 | 該連線字串指向的 Postgres（Neon 免費方案，或任何 Postgres） |
+| 沒有 | Supabase（`NEXT_PUBLIC_SUPABASE_URL` + 金鑰） |
+
+程式碼層面是 `lib/db/index.ts` 的 `SignalStore` 介面，兩個實作
+（`postgres-store.ts` / `supabase-store.ts`）。換資料庫不用改任何一行程式。
+
+Neon 用的是 HTTP driver 而不是 TCP 連線池 —— serverless 函式生命週期很短，
+連線池會在每次呼叫時建了又丟，而免費方案的連線數上限抓得很緊。
+
+兩邊都是 append-only 寫入，所以 `/history` 看到的是時間軸而不是只有最新狀態。
+
+## 全免費技術堆疊
+
+付費依賴全部換掉，其餘規格不變。
+
+| 層 | 用什麼 | 免費額度 | 換掉了什麼 |
+|---|---|---|---|
+| AI 主用 | Gemini `gemini-2.5-flash` | 1500 次/日、1M context | Claude（付費） |
+| AI 備援 | Groq `llama-3.3-70b-versatile` | 30 次/分 | — |
+| AI 第三備援 | OpenRouter `:free` 模型 | 依帳戶而定 | — |
+| 行情 | 自架 yfinance 代理 + 30 分快取 | 無公開上限（自訂預算） | Twelve Data（免費只開 3 市場）、Alpha Vantage（剩 25 次/日） |
+| 行情備援 | Stooq CSV（免金鑰） | — | — |
+| 總經／新聞／籌碼 | FRED、GDELT 2.0、CFTC Socrata、EIA | 本來就免費 | 不變 |
+| 排程 | GitHub Actions | 公開 repo 免費 | Vercel Cron（Hobby 一天只能一次） |
+| 資料庫 | Neon 免費 Postgres 或 Supabase 免費層 | — | — |
+
+### AI 層：可切換介面 — `lib/ai/`
+
+免費層的模型與額度變動很快，所以**任何一家的 SDK 都不准寫進業務邏輯**。
+分析程式只認識一個介面：
+
+```ts
+// lib/ai/provider.ts — 這個檔案不提任何廠商名稱
+export interface AIProvider {
+  readonly name: string;
+  readonly tier: "free" | "paid";
+  isConfigured(): boolean;
+  complete<T>(prompt: string, schema: ResponseSchema<T>, options?): Promise<T>;
+}
+```
+
+- `lib/ai/index.ts` 是註冊表與 fallback chain，`completeAI()` 是唯一入口。
+- `lib/ai/providers/*.ts` 是實作，全部走純 `fetch`，**沒有安裝任何廠商 SDK**
+  （`@anthropic-ai/sdk` 這次一併移除了）。
+- Groq 與 OpenRouter 都是 OpenAI 相容格式，共用同一份實作
+  （`openai-compatible.ts`），加第四家只是加一筆設定。
+- 換順序不用改程式：`AI_PROVIDER_ORDER=groq,gemini`。
+
+`ResponseSchema` 帶一個 `parse()`：模型答錯格式**算這家失敗**，直接換下一家，
+呼叫端永遠拿不到半個解析成功的物件。
+
+### 隱私
+
+免費層通常保留拿 prompt 去訓練的權利。本專案送給 AI 的只有**公開市場資料** ——
+價格、公開新聞標題、CFTC 持倉、算好的分數。要加任何新欄位進 prompt 之前，
+先確認它不是使用者的私人資料。
+
+### 行情：為什麼要自架代理
+
+`lib/data-sources/yfinance.ts` + `app/api/proxy/ohlcv/route.ts`。
+
+同時涵蓋外匯＋指數＋商品的行情服務現在全部要錢了。`yfinance` 這個 Python
+套件包的其實是 Yahoo 的公開 chart 端點 —— 九個代碼全支援、免金鑰。所以改成
+從自己的伺服器打它，快取 30 分鐘，並記帳。
+
+兩件要講清楚的事：
+
+1. 這是**沒有 SLA 的非公開端點**，隨時可能改格式或封鎖機房 IP。所以
+   `ohlcv.ts` 保留真正的備援（Finnhub → Stooq），不把它當唯一來源。
+2. 資料是 **EOD 或延遲約 15 分鐘**。這可以接受（最小時框是 H4），但絕不會
+   被當成即時報價呈現 —— `/api/proxy/ohlcv` 的回應裡直接帶 `delayed: true`。
+
+時間框架只做 **H4 / D1 / W1**，不做日內。H4 沒有原生 interval，是拿真實的
+1 小時 K 棒**重新聚合**出來的，不是內插。
+
+Finnhub 是規格指定的備援，程式有寫，但九個內建商品的 `finnhubSymbol` 都是
+`null` —— 免費層的外匯／商品／指數 K 線是付費功能，打過去只會拿到 403。
+留著是給使用者自己新增的美股用的（那個免費層真的有）。
+
+### 硬性要求：額度追蹤、指數退避、stale 標記
+
+`lib/data-sources/quota.ts` + `free-source.ts`。每個免費來源都走同一個
+`fetchFree()`，優先順序由強到弱：
+
+1. **新鮮快取** — 免費、當下
+2. **實際呼叫** — 花額度
+3. **過期快取，標記 stale** — 舊，但是真的
+4. **null + 一筆 `data_gaps`** — 誠實的沒有
+
+**沒有第五個選項。** 拿到 null 的呼叫端必須降級訊號，不准補假資料或隨機值。
+超額時回傳的 stale 結果會附上「這是 X 分鐘前的快取」寫進 `data_gaps`，
+使用者看得到。連續失敗會指數退避（2s 起跳、每次加倍、上限 5 分鐘），成功即歸零。
+
+**範圍限制（請務必知道）**：這些計數器活在**行程記憶體**裡。Serverless 實例
+是短命的、而且可能同時有好幾個 warm，所以真正的上限是「實例數 × 額度」而不是
+「額度」。對「一個實例連續跑 9 個商品」這種主要情境是有效的防護，對整個叢集則不是。
+要做到精確需要共用計數器（Postgres／Redis）。`/api/diagnostics` 會回傳即時計數。
 
 ## 零金鑰可跑
 
-除了 `ANTHROPIC_API_KEY` 之外，**所有資料來源都有免金鑰的公開端點**，不設定任何
-環境變數也能產生完整訊號：
+**所有資料來源都有免金鑰的公開端點**，不設定任何環境變數也能產生完整訊號：
 
 | 面向 | 免金鑰來源 | 選用的升級 |
 |---|---|---|
-| OHLCV | Yahoo chart 端點 → Stooq CSV | `TWELVE_DATA_API_KEY` |
+| OHLCV | 自架 yfinance 代理 → Stooq CSV | — |
 | 基本面（總經） | FRED `fredgraph.csv`（免金鑰，資料與官方 API 相同） | `FRED_API_KEY` |
 | WTI 原油庫存 | FRED `WCESTUS1`（EIA 原始資料，FRED 轉載） | `EIA_API_KEY` |
 | 新聞面 | GDELT 2.0 DOC API | `FINNHUB_API_KEY`（另加財報日曆） |
 | 籌碼面 | CFTC Socrata COT | — |
 | 資金流 | SPDR GLD 持倉 XML + CFTC 未平倉量 | — |
 
-### 關於 `ANTHROPIC_API_KEY`
+### 連 AI 金鑰都沒有的話
 
-**沒有免金鑰的 LLM API** —— 任何 LLM 服務都要註冊。未設定時三個 AI 環節各有本地備援：
+三個 AI 環節各有本地備援，訊號依然完整：
 
 | AI 環節 | 無金鑰時的備援 | 損失 |
 |---|---|---|
@@ -205,59 +310,67 @@ value fails deployment there). Raise it if your plan allows more.
 | AI 綜合敘述 | 本地組裝的衝突提示文字 | 沒有跨面向的綜合判讀 |
 | AI 交易計畫 | 預設規則（各取第一個候選、風報比 <1:1 則觀望） | 沒有「哪個進場點最好」的判斷 |
 
-所以零金鑰時六個面向都有分數、訊號完整可用，只是少了 AI 的判斷品質。
-卡片會顯示「預設規則」而非「AI 判斷」，關鍵字評分的來源也會標明「非 AI 評分」。
-
-**成本**：預設模型是 `claude-opus-5`（$5/$25 per MTok）。每個訊號約 3 次呼叫，
-9 商品 × 每 4 小時 = 每天約 162 次。要壓成本可用 `ANTHROPIC_MODEL=claude-haiku-4-5`
-（$1/$5 per MTok，約 1/5 價格）。若想改用其他供應商的免費額度（Gemini、Groq
-等），需要自行替換 `lib/analysis/` 下三個檔案的 SDK 呼叫。
+六個面向都有分數、訊號完整可用，只是少了 AI 的判斷品質。卡片會顯示「預設規則」
+而非「AI 判斷」，關鍵字評分的來源也會標明「非 AI 評分」。
 
 一個運作中的備援來源不會被記成 `data_gaps` —— 只有當某個面向的**所有**來源都失敗時才會。
+唯一例外是 stale 通知：資料已經三小時舊是使用者必須知道的事實，不管後面有沒有來源救得回來。
 
 ## 申請免費金鑰的步驟
 
-**先確認你真的需要**：目前只有 `ANTHROPIC_API_KEY` 會影響輸出品質，其餘四個都已經有
-免金鑰來源在供應資料（見上表）。下面按「值不值得花時間」排序。
+全部免費、全部不用信用卡。**兩把就夠**（Gemini + Groq），其餘可以完全不管。
 
-拿到金鑰後有兩個地方可以貼，見下方「[在網站裡直接貼金鑰](#在網站裡直接貼金鑰--settings)」。
-最簡單的是開 `/settings` 貼上按儲存，立即生效。
+拿到金鑰後直接開網站的 `/settings` 貼上按儲存，立即生效 —— 不用碰 Vercel，
+也不用重新部署。細節見「[在網站裡直接貼金鑰](#在網站裡直接貼金鑰--settings)」。
 
-### 1. Anthropic（唯一影響 AI 判斷的，需付費）
+### 1. Google Gemini（AI 主力，最值得申請）
 
-1. 開 https://console.anthropic.com 註冊帳號
-2. 左側 **Settings → API Keys → Create Key**，複製 `sk-ant-...`
-3. **Billing** 頁面儲值（最低額度即可試用）
-4. 貼進 `/settings` 的 Anthropic 欄位（或 Vercel 環境變數 `ANTHROPIC_API_KEY`）
+1. 開 https://aistudio.google.com/apikey
+2. 用 Google 帳號登入（不用另外註冊、不用信用卡）
+3. 按 **Create API key**，選一個 Google Cloud 專案（沒有就讓它新建）
+4. 複製 `AIza...` 開頭那串，貼進 `/settings` 的 **Google Gemini** 欄位
 
-想省錢就把「Anthropic 模型」欄位填 `claude-haiku-4-5`（約 1/5 價格，且明顯更快）。
+免費額度 1500 次/日。新聞情緒、綜合敘述、交易計畫三個環節都靠它。
 
-### 2. Twelve Data（OHLCV 主要來源，免費且不用信用卡）
+### 2. Groq（AI 備援，速度最快）
 
-1. 開 https://twelvedata.com/pricing 選 **Basic — Free**
-2. Email 註冊並驗證
-3. 登入後 Dashboard 首頁就有 **API Key**
-4. 貼進 `TWELVE_DATA_API_KEY`
+1. 開 https://console.groq.com/keys
+2. 用 Google 或 GitHub 帳號登入
+3. 按 **Create API Key**，取個名字
+4. 複製 `gsk_...` 開頭那串，貼進 **Groq** 欄位
 
-免費額度 800 次/日、8 次/分。**最值得申請的免費金鑰** —— Yahoo 對雲端機房 IP
-常限流，設定這個等於買一條穩定的主線路。
+免費 30 次/分。Gemini 額度用完或掛掉時自動接手，**強烈建議兩把都申請** ——
+一天跑 6 次刷新 × 9 商品 × 3 次呼叫 = 162 次，單靠 Gemini 的每分鐘限制會擠。
 
-### 3. Finnhub（新聞與財報日曆，免費不用信用卡）
+### 3. OpenRouter（第二備援，選填）
+
+1. 開 https://openrouter.ai/keys，用 Google/GitHub 登入
+2. **Create Key**，複製 `sk-or-...`
+3. 貼進 **OpenRouter** 欄位
+
+走 `:free` 模型。前兩個都掛掉才會用到，優先度低。免費模型偶爾會下架，
+真的掛了就到 https://openrouter.ai/models?q=free 挑一個填進「進階 → OpenRouter 模型」。
+
+### 4. Finnhub（選填）
 
 1. 開 https://finnhub.io/register，Email 註冊
 2. 登入後 Dashboard 直接顯示 **API Key**
-3. 貼進 `FINNHUB_API_KEY`
 
-免費 60 次/分。新聞面已由 GDELT 免金鑰供應，加了它只是多一個來源＋美股指數的
-財報日曆（權重 0 的參考項目），**優先度最低**。
+免費 60 次/分。新聞已由 GDELT 免金鑰供應，加它只是多一個來源＋美股財報日曆
+（權重 0 的參考項目）。**注意**：它的 K 線資料是付費功能，所以幫不上行情。
 
-### 4. FRED（總經）／ 5. EIA（原油庫存）—— 通常不需要
+### 5. FRED（總經）／ 6. EIA（原油庫存）—— 通常不需要
 
 兩者現在都走免金鑰路徑（FRED 用 `fredgraph.csv`、原油庫存用 FRED 的 `WCESTUS1`），
 資料完全相同。真的要申請：
 
 - FRED：https://fredaccount.stlouisfed.org/apikey → 註冊 → Request API Key → 立即取得
 - EIA：https://www.eia.gov/opendata/register.php → 填 Email → 金鑰寄到信箱
+
+### 不需要申請的
+
+行情（yfinance 代理、Stooq）、新聞（GDELT）、籌碼（CFTC）、資金流（SPDR GLD）
+全部免金鑰，什麼都不用做。
 
 ## 在網站裡直接貼金鑰 — `/settings`
 
@@ -335,41 +448,53 @@ CFTC 代碼取自公開資料整理、未逐一即時驗證 —— CFTC 代碼�
 
 1. **來源主機擋雲端機房 IP。** `query1.finance.yahoo.com` 對資料中心 IP 常回
    429/401，本機能通不代表 Vercel 能通。這種情況會自動往下掉到 Stooq；
-   若兩者都被擋，設定 `TWELVE_DATA_API_KEY` 走主要來源。
+   若兩者都被擋，`/api/diagnostics` 的 `verdict` 會直說沒有可用的行情來源。
 2. **Serverless 逾時。** 預設只有 10 秒，這條 pipeline 一定超過。兩個 API route
    都已宣告 `maxDuration = 60`（Hobby 方案上限；更高需要 Pro）。
 
 即使所有來源都失敗，`/api/signal/[symbol]` 也會回 **HTTP 200 + `grade: "no-trade"`**
 的訊號（價格欄位為 0 並標明無資料，不是猜的價格），畫面一定看得到東西而不是空白。
 
-### Vercel Cron 方案限制
+### 排程沒跑？
 
-`vercel.json` 用的是 spec 要求的 `0 */4 * * *`（每 4 小時）。**Hobby 方案只允許每日一次的
-cron**，這個排程需要 Pro 方案；若你在 Hobby，把它改成例如 `0 0 * * *` 才會被接受。
+排程在 GitHub Actions，不在 Vercel。到 repo 的 **Actions → Refresh signals** 看執行紀錄。
+最常見的是 `APP_URL` 或 `CRON_SECRET` secret 沒設 —— 前者會讓步驟直接失敗並印出訊息，
+後者會讓每個商品收到 401。
 
 ## APIs used
 
 | API | Auth | Used for | Notes |
 |---|---|---|---|
-| [Twelve Data](https://twelvedata.com) `/time_series` | `TWELVE_DATA_API_KEY` | OHLCV, primary | Free tier 800 req/day; local daily counter in `lib/data-sources/cache.ts` prevents exceeding it — now shared across 9 symbols so budget accordingly. |
-| Yahoo Finance chart endpoint (`query1.finance.yahoo.com/v8/finance/chart/...`) | none | OHLCV, first keyless fallback (what `yfinance` wraps) | No native 4h interval — H4 candles are resampled from real fetched 1h candles, not fabricated. Commonly rate-limits datacenter IPs. |
-| [Stooq](https://stooq.com) `q/d/l/` CSV | none | OHLCV, second keyless fallback (daily/weekly only) | Last resort when Yahoo is blocked. Tickers in `CommodityMeta.stooqSymbol` are unverified live; a wrong one yields no rows and falls through. |
+| Yahoo Finance chart endpoint (`query1.finance.yahoo.com/v8/finance/chart/...`), proxied by `/api/proxy/ohlcv` | none | OHLCV, primary | What `yfinance` wraps. No native 4h interval — H4 candles are resampled from real fetched 1h candles, not fabricated. Undocumented endpoint, no SLA; commonly rate-limits datacenter IPs. 30-min cache, self-imposed 60/min + 2000/day budget. |
+| [Finnhub](https://finnhub.io) `/stock/candle` | `FINNHUB_API_KEY` | OHLCV, fallback | Skipped for all 9 built-ins: forex/commodity/index candles are a paid feature, so `finnhubSymbol` is `null` for them. Usable for user-added US equities. |
+| [Stooq](https://stooq.com) `q/d/l/` CSV | none | OHLCV, last-resort fallback (daily/weekly only) | Used when the proxy is blocked. Tickers in `CommodityMeta.stooqSymbol` are unverified live; a wrong one yields no rows and falls through. |
 | [FRED](https://fred.stlouisfed.org) `graph/fredgraph.csv` | **none** | DXY (`DTWEXBGS`), DGS10, DGS2, T10YIE, VIX (`VIXCLS`), crude stocks (`WCESTUS1`) | Keyless CSV download serving the same observations as the API. `FRED_API_KEY` switches to the JSON API but changes no data. Endpoint shape not live-verified from the build sandbox. |
 | [Finnhub](https://finnhub.io) `/calendar/economic`, `/news`, `/calendar/earnings` | `FINNHUB_API_KEY` | Economic calendar, market news, earnings season (Stage 2) | No commodity-specific "company-news" for gold/indices, so `/news?category=general` is filtered by keyword instead. |
 | [GDELT 2.0 DOC API](https://api.gdeltproject.org/api/v2/doc/doc) | none | News, last 48h | Free, no key. |
 | [CFTC Socrata](https://publicreporting.cftc.gov) `resource/6dca-aqww.json` | none | Weekly COT (legacy futures-only report) | Contract codes per symbol in `config/fundamentals.ts`; only Gold (`088691`) was validated in Stage 1, the other 7 codes are best-recollection and **unverified live** (see caveat below) — `null` for GER40 (Eurex, no CFTC data). |
 | [EIA Open Data](https://www.eia.gov/opendata/) `v2/petroleum/stoc/wstk/data` | `EIA_API_KEY` (optional) | WTI weekly crude inventory | Falls back to FRED's `WCESTUS1`, which mirrors the same EIA series without a key, so this key is never required. |
 | SPDR Gold Shares (`spdrgoldshares.com/assets/dynamic/GLD/GLD_US_ProductDetails.xml`) | none | GLD bullion holdings | **Unverified in this build** — outbound network in this sandbox is restricted to an allowlist (npm/PyPI/Anthropic/GitHub) so this endpoint's exact XML schema could not be live-tested here; the parser fails safe to `data_gaps` on any mismatch. |
-| Anthropic Messages API | `ANTHROPIC_API_KEY` | News sentiment scoring, AI綜合 narrative | Both prompts explicitly restrict the model to reasoning over the JSON/headlines provided — no outside facts. |
-| Supabase | `NEXT_PUBLIC_SUPABASE_URL` + anon/service-role keys | Signal history persistence | Standard `@supabase/supabase-js` client; anon key is read-only via RLS, service-role key (server-only) writes from the cron route. |
+| [Gemini](https://aistudio.google.com) `generateContent` | `GEMINI_API_KEY` | News sentiment, AI綜合 narrative, trade-plan selection | Primary AI provider, free 1500/day. `thinkingBudget: 0` — 2.5 Flash otherwise spends the output budget on reasoning tokens and can return empty text. |
+| [Groq](https://console.groq.com) `/chat/completions` | `GROQ_API_KEY` | Same three, as fallback | Free 30 req/min. OpenAI-compatible shape, shared implementation with OpenRouter. |
+| [OpenRouter](https://openrouter.ai) `/chat/completions` | `OPENROUTER_API_KEY` | Same three, third fallback | `:free` models. Model ids get retired periodically — override with `OPENROUTER_MODEL`. |
+| Anthropic Messages API | `ANTHROPIC_API_KEY` | Same three, opt-in paid | Last in the chain, never reached when a free provider works. Called via plain `fetch`; the SDK dependency was removed. |
+| Neon / any Postgres | `DATABASE_URL` | Signal history persistence | HTTP driver, not a TCP pool — serverless functions are too short-lived for pooling and free tiers cap connections. |
+| Supabase | `NEXT_PUBLIC_SUPABASE_URL` + anon/service-role keys | Signal history persistence (when `DATABASE_URL` is unset) | Anon key is read-only via RLS, service-role key (server-only) writes from `/api/refresh`. |
 
 ### Example responses
 
-Unchanged from Stage 1 — this sandbox's network policy still blocks every
-host above, so live verification isn't possible here. See Stage 1's commit
-for documented example payloads (Twelve Data, FRED, CFTC, GDELT, Claude
-news-sentiment call); the same shapes apply to the new symbols, just with
-different `symbol`/`cftc_contract_market_code` values.
+This sandbox's network policy blocks every host above, so live verification
+isn't possible here. The response shapes each provider is parsed against are
+documented inline in `lib/ai/providers/*.ts` and `lib/data-sources/*.ts`.
+
+Instead of live calls, every non-trivial module has known-answer tests:
+quota exhaustion and exponential backoff, the four-tier `fetchFree` fallback
+including the stale path, H4 resampling arithmetic, schema parsing (including
+JSON buried in a markdown fence), the provider fallback chain with a stubbed
+`fetch` (order, skipping unconfigured providers, 429 fall-through), and the
+trade-plan index constraint — including that a model returning a raw price,
+an out-of-range index, or a string index all fall back to the deterministic
+plan rather than reaching the output.
 
 ## Known Stage-2 limitations (all surfaced via `data_gaps`, never silently faked)
 

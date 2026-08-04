@@ -4,16 +4,18 @@
  * out turns a wall of warnings into a short to-do list.
  */
 
-const KEY_PATTERN = /缺少 ([A-Z0-9_]+)/;
+const KEY_PATTERN = /(?:缺少|未設定) ([A-Z0-9_]+)/;
 
 /**
- * Where each key comes from. All except Anthropic are optional upgrades —
- * every other dimension has a keyless public source, so they should no longer
- * appear as gaps at all.
+ * Where each key comes from. Every one is free; the whole stack runs without
+ * any of them, just with weaker AI judgement — so these are upgrades, not
+ * requirements.
  */
 export const KEY_SOURCES: Record<string, string> = {
-  ANTHROPIC_API_KEY: "console.anthropic.com（付費；AI 判斷唯一無免費替代的部分）",
-  TWELVE_DATA_API_KEY: "twelvedata.com（選用，已有 yfinance／Stooq 免金鑰來源）",
+  GEMINI_API_KEY: "aistudio.google.com/apikey（免費 1500 次/日，AI 主力）",
+  GROQ_API_KEY: "console.groq.com/keys（免費 30 次/分，AI 備援）",
+  OPENROUTER_API_KEY: "openrouter.ai/keys（免費 :free 模型，AI 第二備援）",
+  ANTHROPIC_API_KEY: "console.anthropic.com（付費，選用；免費供應商可用時不會走到）",
   FRED_API_KEY: "fred.stlouisfed.org（選用，已改用 FRED 免金鑰 CSV 端點）",
   FINNHUB_API_KEY: "finnhub.io（選用，新聞已由 GDELT 免金鑰供應）",
   EIA_API_KEY: "eia.gov/opendata（選用，庫存已由 FRED WCESTUS1 供應）",

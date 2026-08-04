@@ -74,8 +74,8 @@ function buildNoPriceSignal(
     },
     plan_backtest: null,
     narrative:
-      `${meta.symbol} 無法產生有效訊號：所有 OHLCV 來源皆取得失敗（Twelve Data 與 yfinance 備援都沒有回應可用資料）。` +
-      `請檢查 /api/diagnostics 確認各資料來源在部署環境的連線狀態，或設定 TWELVE_DATA_API_KEY。` +
+      `${meta.symbol} 無法產生有效訊號：所有 OHLCV 來源皆取得失敗（行情代理、Finnhub、Stooq 都沒有回應可用資料）。` +
+      `請檢查 /api/diagnostics 確認各資料來源在部署環境的連線狀態。` +
       (biasItems.length > 0
         ? `其餘面向仍取得 ${biasItems.length} 項因子，已列於下方供參考，但沒有價格就沒有可執行的進出場。`
         : ""),
@@ -110,9 +110,9 @@ async function buildSignalForSymbol(
   // OHLCV and the five non-technical dimensions don't depend on each other,
   // so they run concurrently — serverless request budgets are tight.
   const ohlcvPromise = Promise.all([
-    fetchOHLCV(meta, "D1", 260, gaps),
-    fetchOHLCV(meta, "H4", 260, gaps),
-    fetchOHLCV(meta, "W1", 110, gaps),
+    fetchOHLCV(meta, "D1", gaps),
+    fetchOHLCV(meta, "H4", gaps),
+    fetchOHLCV(meta, "W1", gaps),
   ]);
   const nonTechnicalPromise = (async () => {
     // Positioning first — fundFlow reuses its COT reports instead of re-fetching.

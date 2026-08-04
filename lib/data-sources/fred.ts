@@ -1,6 +1,12 @@
 import { getKey } from "../api-keys";
-import { cachedOrFetch, checkRateLimit } from "./cache";
+import { fetchFree } from "./free-source";
 import { fetchJson, fetchText } from "./http";
+
+/**
+ * FRED documents 120 requests/minute. The keyless fredgraph.csv path used when
+ * no key is set publishes no limit, so the same conservative budget covers both.
+ */
+const FRED_LIMIT = { perMinute: 100 };
 
 export interface FredPoint {
   date: string;
@@ -83,26 +89,25 @@ export async function fetchFredSeries(
   label: FredLabel,
   gaps: string[],
 ): Promise<FredSeriesResult | null> {
-  if (!checkRateLimit("fred", 100000)) {
-    gaps.push(`FRED (${label}) 已達速率限制`);
-    return null;
-  }
   const seriesId = FRED_SERIES[label];
-  const key = `fred:${seriesId}`;
-  return cachedOrFetch(key, 30 * 60 * 1000, async () => {
-    const apiKey = getKey("FRED_API_KEY");
-    const points = (apiKey ? await fetchFredApi(seriesId, apiKey) : null) ?? (await fetchFredCsv(seriesId));
-    if (!points || points.length === 0) {
-      gaps.push(`FRED ${label} (${seriesId}) 取得失敗或回應為空`);
-      return null;
-    }
-    const latest = [...points].reverse().find((p) => p.value !== null) ?? null;
-    if (!latest) {
-      gaps.push(`FRED ${label} (${seriesId}) 近期無有效數值`);
-      return null;
-    }
-    return { label, seriesId, latest, points };
+  const result = await fetchFree<FredSeriesResult>({
+    source: "fred",
+    label: `FRED ${label} (${seriesId})`,
+    key: `fred:${seriesId}`,
+    ttlMs: 30 * 60 * 1000,
+    limit: FRED_LIMIT,
+    gaps,
+    fn: async () => {
+      const apiKey = getKey("FRED_API_KEY");
+      const points =
+        (apiKey ? await fetchFredApi(seriesId, apiKey) : null) ?? (await fetchFredCsv(seriesId));
+      if (!points || points.length === 0) return null;
+      const latest = [...points].reverse().find((p) => p.value !== null) ?? null;
+      if (!latest) return null;
+      return { label, seriesId, latest, points };
+    },
   });
+  return result?.value ?? null;
 }
 
 export interface RealRateResult {

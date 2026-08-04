@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
-import { getSupabaseAnonClient } from "@/lib/supabase";
+import { getSignalStore } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 /** Filterable history read for the /history page: ?symbol=&grade=&from=&to=&limit= */
 export async function GET(request: Request) {
-  const supabase = getSupabaseAnonClient();
-  if (!supabase) {
+  const store = getSignalStore();
+  if (!store) {
     return NextResponse.json(
       {
         error:
-          "Supabase 未設定（缺少 NEXT_PUBLIC_SUPABASE_URL 或 NEXT_PUBLIC_SUPABASE_ANON_KEY），歷史訊號功能無法使用",
+          "未設定資料庫（DATABASE_URL，或 NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY），歷史訊號功能無法使用",
         rows: [],
       },
       { status: 501 },
@@ -18,25 +18,20 @@ export async function GET(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const symbol = searchParams.get("symbol");
-  const grade = searchParams.get("grade");
-  const from = searchParams.get("from");
-  const to = searchParams.get("to");
-  const limit = Math.min(Number(searchParams.get("limit") ?? "50") || 50, 200);
-
-  let query = supabase
-    .from("signals")
-    .select("*")
-    .order("generated_at", { ascending: false })
-    .limit(limit);
-  if (symbol) query = query.eq("symbol", symbol);
-  if (grade) query = query.eq("grade", grade);
-  if (from) query = query.gte("generated_at", from);
-  if (to) query = query.lte("generated_at", to);
-
-  const { data, error } = await query;
-  if (error) {
-    return NextResponse.json({ error: error.message, rows: [] }, { status: 502 });
+  try {
+    const rows = await store.listSignals({
+      symbol: searchParams.get("symbol"),
+      grade: searchParams.get("grade"),
+      from: searchParams.get("from"),
+      to: searchParams.get("to"),
+      // Capped so a crafted ?limit= can't ask the database for everything.
+      limit: Math.min(Number(searchParams.get("limit") ?? "50") || 50, 200),
+    });
+    return NextResponse.json({ rows });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "讀取歷史訊號失敗", rows: [] },
+      { status: 502 },
+    );
   }
-  return NextResponse.json({ rows: data ?? [] });
 }

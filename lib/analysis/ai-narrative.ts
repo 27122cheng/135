@@ -1,5 +1,4 @@
-import { getKey } from "../api-keys";
-import Anthropic from "@anthropic-ai/sdk";
+import { completeAI, textSchema } from "@/lib/ai";
 import type { BiasItem, EntryStructure, PathObstacle } from "@/types/signal";
 
 export interface NarrativeInput {
@@ -28,40 +27,27 @@ function fallbackNarrative(input: NarrativeInput): string {
   );
 }
 
+const SCHEMA = textSchema(
+  "用繁體中文輸出一段 150-250 字的敘述性段落，不要用 JSON，不要條列，不要 markdown。",
+);
+
 /**
- * AI綜合：把五個結構化面向的 JSON 交給 Claude 產生 narrative 與衝突提醒。
+ * AI綜合：把五個結構化面向的 JSON 交給 AI 產生 narrative 與衝突提醒。
  * Prompt 明確要求只能根據傳入資料推論，不准補充未提供的事實。
+ *
+ * Goes through the provider chain (lib/ai), so it works on whichever free tier
+ * is configured and degrades to deterministic local prose when none is.
  */
 export async function generateNarrative(input: NarrativeInput, gaps: string[]): Promise<string> {
-  const apiKey = getKey("ANTHROPIC_API_KEY");
-  if (!apiKey) {
-    gaps.push("缺少 ANTHROPIC_API_KEY，AI 綜合敘述改用本地備援文字");
+  const prompt =
+    `你是交易訊號的綜合分析助手。以下是結構化 JSON 資料，請只根據這些資料進行推論並指出潛在衝突` +
+    `（例如某個面向的方向與整體訊號方向相反）。不准補充未提供的事實或數字，不准臆測未包含在資料中的消息。\n\n` +
+    JSON.stringify(input, null, 2);
+
+  const result = await completeAI(prompt, SCHEMA, gaps, { maxTokens: 700 });
+  if (!result) {
+    gaps.push("AI 綜合敘述改用本地備援文字");
     return fallbackNarrative(input);
   }
-  try {
-    const client = new Anthropic({ apiKey });
-    const message = await client.messages.create({
-      model: getKey("ANTHROPIC_MODEL") ?? "claude-opus-5",
-      max_tokens: 700,
-      messages: [
-        {
-          role: "user",
-          content:
-            `你是交易訊號的綜合分析助手。以下是結構化 JSON 資料，請只根據這些資料進行推論並指出潛在衝突` +
-            `（例如某個面向的方向與整體訊號方向相反）。不准補充未提供的事實或數字，不准臆測未包含在資料中的消息。` +
-            `用繁體中文輸出一段 150-250 字的敘述性段落，不要用 JSON，不要條列。\n\n${JSON.stringify(input, null, 2)}`,
-        },
-      ],
-    });
-    const block = message.content.find((b) => b.type === "text");
-    const text = block && block.type === "text" ? block.text.trim() : "";
-    if (!text) {
-      gaps.push("AI 綜合敘述回應為空，改用本地備援文字");
-      return fallbackNarrative(input);
-    }
-    return text;
-  } catch {
-    gaps.push("呼叫 Anthropic API 產生 AI 綜合敘述失敗，改用本地備援文字");
-    return fallbackNarrative(input);
-  }
+  return result.value;
 }

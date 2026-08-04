@@ -1,5 +1,11 @@
-import { cachedOrFetch } from "./cache";
+import { fetchFree } from "./free-source";
 import { fetchJson } from "./http";
+
+/**
+ * GDELT publishes no rate limit for the DOC API. Self-imposed so a refresh
+ * loop over 9 symbols can't look like a scraper.
+ */
+const GDELT_LIMIT = { perMinute: 30, perDay: 2000 };
 
 export interface GdeltArticle {
   headline: string;
@@ -56,24 +62,28 @@ function simplify(query: string): string | null {
 
 /** Free, no-key GDELT 2.0 DOC API — last 48h of articles matching `query`. */
 export async function fetchGdeltNews(query: string, gaps: string[]): Promise<GdeltArticle[] | null> {
-  const key = `gdelt:${query}`;
-  const result = await cachedOrFetch(key, 15 * 60 * 1000, async () => {
-    const primary = await queryGdelt(query);
-    if (primary && primary.length > 0) return primary;
-    const simplified = simplify(query);
-    if (simplified) {
-      const retry = await queryGdelt(simplified);
-      if (retry && retry.length > 0) return retry;
-    }
-    // Distinguish "worked, nothing matched" from "the call failed".
-    return primary ?? null;
+  const result = await fetchFree<GdeltArticle[]>({
+    source: "gdelt",
+    label: `GDELT 新聞查詢 (${query})`,
+    key: `gdelt:${query}`,
+    ttlMs: 15 * 60 * 1000,
+    limit: GDELT_LIMIT,
+    gaps,
+    fn: async () => {
+      const primary = await queryGdelt(query);
+      if (primary && primary.length > 0) return primary;
+      const simplified = simplify(query);
+      if (simplified) {
+        const retry = await queryGdelt(simplified);
+        if (retry && retry.length > 0) return retry;
+      }
+      // Distinguish "worked, nothing matched" from "the call failed".
+      return primary ?? null;
+    },
   });
-  if (!result) {
-    gaps.push(`GDELT 新聞查詢 (${query}) 取得失敗`);
-    return null;
-  }
-  if (result.length === 0) {
+  if (!result) return null;
+  if (result.value.length === 0) {
     gaps.push(`GDELT 近 48 小時查無 ${query} 相關新聞`);
   }
-  return result;
+  return result.value;
 }

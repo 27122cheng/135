@@ -66,7 +66,6 @@ export async function POST(request: Request) {
     symbol,
     label,
     category: "index",
-    twelveDataSymbol: yahooSymbol,
     yfinanceSymbol: yahooSymbol,
     stooqSymbol: stooqSymbol || yahooSymbol,
     implemented: true,

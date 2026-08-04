@@ -1,5 +1,4 @@
-import { getKey } from "../api-keys";
-import Anthropic from "@anthropic-ai/sdk";
+import { completeAI, jsonSchema } from "@/lib/ai";
 import type { BiasItem, Grade, TradePlan, TradeSignal } from "@/types/signal";
 
 interface Candidate {
@@ -115,7 +114,7 @@ function fallbackPlan(input: TradePlanInput): TradePlan {
     risk_reward: rr,
     confidence: input.grade === "A+" || input.grade === "A" ? "medium" : "low",
     summary:
-      "未使用 AI 判斷（未設定 ANTHROPIC_API_KEY 或呼叫失敗），改用預設規則：" +
+      "未使用 AI 判斷（未設定 AI 金鑰、額度用盡或呼叫失敗），改用預設規則：" +
       "取最接近的進場點、最近的保護結構做停損、路徑上第一個障礙做停利。",
     wait_for: null,
     decided_by: "fallback",
@@ -151,14 +150,7 @@ function buildPrompt(input: TradePlanInput): string {
         `關鍵面向因資料缺口而無法判斷、或進場點離結構太遠。\n\n`) +
     `嚴格規則：\n` +
     `1. 你只能從上面清單中「選編號」，絕對不可以自己提出任何新的價格數字。\n` +
-    `2. 只准根據以上提供的資料推論，不准補充未提供的事實。\n\n` +
-    `輸出嚴格的 JSON（不要 markdown code fence、不要其他文字）：\n` +
-    `{"stance": "enter"|"wait", "entry_index": number, "sl_index": number, "tp_index": number, ` +
-    `"entry_reason": string, "sl_reason": string, "tp_reason": string, ` +
-    `"confidence": "high"|"medium"|"low", "summary": string, "wait_for": string}\n` +
-    `stance="wait" 時，三個 index 可填 0（會被忽略），但 wait_for 必填：用一句繁體中文說明「要等什麼條件出現才考慮進場」。\n` +
-    `stance="enter" 時，三個 reason 各用一句繁體中文說明為何選這個點，wait_for 填空字串。\n` +
-    `summary 一律用繁體中文 80 字內總結你的判斷邏輯與主要風險。`
+    `2. 只准根據以上提供的資料推論，不准補充未提供的事實。`
   );
 }
 
@@ -175,26 +167,38 @@ interface AiResponse {
   wait_for?: string;
 }
 
-function parse(text: string): AiResponse | null {
-  try {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    return JSON.parse(match[0]) as AiResponse;
-  } catch {
-    return null;
-  }
-}
+/**
+ * Shape only — the index *values* are validated against the real candidate
+ * lists in buildTradePlan, since the schema has no view of how many candidates
+ * were offered. That check is what stops a model from naming a price we never
+ * computed, so it must not be relaxed into this schema.
+ */
+const PLAN_SCHEMA = jsonSchema<AiResponse>(
+  "trade-plan",
+  `輸出嚴格的 JSON（不要 markdown code fence、不要其他文字）：\n` +
+    `{"stance": "enter"|"wait", "entry_index": number, "sl_index": number, "tp_index": number, ` +
+    `"entry_reason": string, "sl_reason": string, "tp_reason": string, ` +
+    `"confidence": "high"|"medium"|"low", "summary": string, "wait_for": string}\n` +
+    `stance="wait" 時，三個 index 可填 0（會被忽略），但 wait_for 必填：用一句繁體中文說明「要等什麼條件出現才考慮進場」。\n` +
+    `stance="enter" 時，三個 reason 各用一句繁體中文說明為何選這個點，wait_for 填空字串。\n` +
+    `summary 一律用繁體中文 80 字內總結你的判斷邏輯與主要風險。`,
+  (v) => (typeof v.stance === "string" ? (v as AiResponse) : null),
+);
 
 function validIndex(value: unknown, list: Candidate[]): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 && value < list.length;
 }
 
 /**
- * Asks Claude to decide 進場 vs 觀望, and when entering, to pick the best
+ * Asks the AI to decide 進場 vs 觀望, and when entering, to pick the best
  * entry/SL/TP *by index* from candidates derived entirely from real structure.
  * Any invalid or out-of-range index — i.e. any attempt to answer with a price
  * we didn't offer — falls back to the deterministic plan rather than trusting
  * the model with a raw number.
+ *
+ * That guarantee is provider-independent by construction: the model never sees
+ * a field where a price would be accepted, so swapping Gemini for Groq or
+ * anything else cannot widen what it is able to say.
  */
 export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Promise<TradePlan> {
   const noCandidates =
@@ -202,11 +206,6 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
     input.slCandidates.length === 0 ||
     input.tpCandidates.length === 0;
 
-  const apiKey = getKey("ANTHROPIC_API_KEY");
-  if (!apiKey) {
-    gaps.push("缺少 ANTHROPIC_API_KEY，交易計畫改用預設規則判斷");
-    return fallbackPlan(input);
-  }
   if (noCandidates && !input.gradeForcesWait) {
     return waitPlan(
       "沒有足夠的真實結構可以組成進場／停損／停利，依規則觀望。",
@@ -215,74 +214,63 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
     );
   }
 
-  try {
-    const client = new Anthropic({ apiKey });
-    const message = await client.messages.create({
-      model: getKey("ANTHROPIC_MODEL") ?? "claude-opus-5",
-      max_tokens: 900,
-      messages: [{ role: "user", content: buildPrompt(input) }],
-    });
-    const block = message.content.find((b) => b.type === "text");
-    const parsed = parse(block && block.type === "text" ? block.text : "");
-    if (!parsed) {
-      gaps.push("交易計畫 AI 回應格式無法解析，改用預設規則");
-      return fallbackPlan(input);
-    }
-
-    const wantsWait = parsed.stance !== "enter";
-    // The hard scoring rules win: a no-trade grade can never become an entry.
-    if (wantsWait || input.gradeForcesWait || noCandidates) {
-      if (!wantsWait && input.gradeForcesWait) {
-        gaps.push("AI 建議進場但評等為 no-trade，依硬性規則強制改為觀望");
-      }
-      return waitPlan(
-        parsed.summary?.trim() || "AI 判斷目前不值得進場。",
-        parsed.wait_for?.trim() || "等待更明確的訊號出現。",
-        "ai",
-      );
-    }
-
-    if (
-      !validIndex(parsed.entry_index, input.entryCandidates) ||
-      !validIndex(parsed.sl_index, input.slCandidates) ||
-      !validIndex(parsed.tp_index, input.tpCandidates)
-    ) {
-      gaps.push("交易計畫 AI 回傳的價位編號無效（可能試圖給出清單外的價格），已改用預設規則");
-      return fallbackPlan(input);
-    }
-
-    const entry = input.entryCandidates[parsed.entry_index];
-    const sl = input.slCandidates[parsed.sl_index];
-    const tp = input.tpCandidates[parsed.tp_index];
-    const rr = riskReward(input.direction, entry.price, sl.price, tp.price);
-    if (rr === null) {
-      gaps.push("AI 選出的停損／停利方向不合理（停損未在虧損側或停利未在獲利側），已改用預設規則");
-      return fallbackPlan(input);
-    }
-
-    const confidence =
-      parsed.confidence === "high" || parsed.confidence === "medium" || parsed.confidence === "low"
-        ? parsed.confidence
-        : "medium";
-
-    return {
-      stance: "enter",
-      entry: round(entry.price),
-      stop_loss: round(sl.price),
-      take_profit: round(tp.price),
-      entry_reason: parsed.entry_reason?.trim() || entry.label,
-      stop_loss_reason: parsed.sl_reason?.trim() || sl.label,
-      take_profit_reason: parsed.tp_reason?.trim() || tp.label,
-      risk_reward: rr,
-      confidence,
-      summary: parsed.summary?.trim() || "（AI 未提供總結）",
-      wait_for: null,
-      decided_by: "ai",
-    };
-  } catch {
-    gaps.push("呼叫 Anthropic API 產生交易計畫失敗，改用預設規則");
+  const result = await completeAI(buildPrompt(input), PLAN_SCHEMA, gaps, { maxTokens: 900 });
+  if (!result) {
+    gaps.push("交易計畫改用預設規則判斷");
     return fallbackPlan(input);
   }
+  const parsed = result.value;
+
+  const wantsWait = parsed.stance !== "enter";
+  // The hard scoring rules win: a no-trade grade can never become an entry.
+  if (wantsWait || input.gradeForcesWait || noCandidates) {
+    if (!wantsWait && input.gradeForcesWait) {
+      gaps.push("AI 建議進場但評等為 no-trade，依硬性規則強制改為觀望");
+    }
+    return waitPlan(
+      parsed.summary?.trim() || "AI 判斷目前不值得進場。",
+      parsed.wait_for?.trim() || "等待更明確的訊號出現。",
+      "ai",
+    );
+  }
+
+  if (
+    !validIndex(parsed.entry_index, input.entryCandidates) ||
+    !validIndex(parsed.sl_index, input.slCandidates) ||
+    !validIndex(parsed.tp_index, input.tpCandidates)
+  ) {
+    gaps.push("交易計畫 AI 回傳的價位編號無效（可能試圖給出清單外的價格），已改用預設規則");
+    return fallbackPlan(input);
+  }
+
+  const entry = input.entryCandidates[parsed.entry_index];
+  const sl = input.slCandidates[parsed.sl_index];
+  const tp = input.tpCandidates[parsed.tp_index];
+  const rr = riskReward(input.direction, entry.price, sl.price, tp.price);
+  if (rr === null) {
+    gaps.push("AI 選出的停損／停利方向不合理（停損未在虧損側或停利未在獲利側），已改用預設規則");
+    return fallbackPlan(input);
+  }
+
+  const confidence =
+    parsed.confidence === "high" || parsed.confidence === "medium" || parsed.confidence === "low"
+      ? parsed.confidence
+      : "medium";
+
+  return {
+    stance: "enter",
+    entry: round(entry.price),
+    stop_loss: round(sl.price),
+    take_profit: round(tp.price),
+    entry_reason: parsed.entry_reason?.trim() || entry.label,
+    stop_loss_reason: parsed.sl_reason?.trim() || sl.label,
+    take_profit_reason: parsed.tp_reason?.trim() || tp.label,
+    risk_reward: rr,
+    confidence,
+    summary: parsed.summary?.trim() || "（AI 未提供總結）",
+    wait_for: null,
+    decided_by: "ai",
+  };
 }
 
 /** Builds the candidate lists from an already-computed signal's real structures. */

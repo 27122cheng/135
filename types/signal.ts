@@ -3,7 +3,12 @@
  * Field names/values mirror the Stage 1 spec exactly — do not rename.
  */
 
-export type Timeframe = "M15" | "H1" | "H4" | "D1" | "W1";
+/**
+ * H4 / D1 / W1 only. Intraday below 4h is deliberately out of scope: the free
+ * data tier is end-of-day or 15-minute-delayed, and a 15-minute-old M15 candle
+ * is worse than useless for a decision — it looks current and isn't.
+ */
+export type Timeframe = "H4" | "D1" | "W1";
 
 export type BiasDimension =
   | "技術面"
@@ -164,12 +169,17 @@ export interface CommodityMeta {
   symbol: string;
   label: string;
   category: "forex" | "metal" | "index" | "energy";
-  /** Twelve Data symbol used for OHLCV requests. */
-  twelveDataSymbol: string;
-  /** yfinance-compatible fallback ticker. */
+  /** Primary OHLCV ticker, served through our own yfinance proxy. */
   yfinanceSymbol: string;
-  /** Stooq ticker — a second keyless fallback (daily/weekly only). Unverified live. */
+  /** Stooq ticker — keyless fallback (daily/weekly only). Unverified live. */
   stooqSymbol: string;
+  /**
+   * Finnhub ticker, when the free tier actually covers it. Null for all nine
+   * built-ins: Finnhub gates candle data for forex, commodities and indices
+   * behind a paid plan, so a request would only spend a round-trip to get a
+   * 403. Left in place for user-added US equities, which the free tier does serve.
+   */
+  finnhubSymbol?: string | null;
   /** Whether the signal pipeline is wired for this symbol (all true as of Stage 2). */
   implemented: boolean;
 }
@@ -179,7 +189,6 @@ export const COMMODITIES: CommodityMeta[] = [
     symbol: "EURUSD",
     label: "EUR/USD",
     category: "forex",
-    twelveDataSymbol: "EUR/USD",
     yfinanceSymbol: "EURUSD=X",
     stooqSymbol: "eurusd",
     implemented: true,
@@ -188,7 +197,6 @@ export const COMMODITIES: CommodityMeta[] = [
     symbol: "USDJPY",
     label: "USD/JPY",
     category: "forex",
-    twelveDataSymbol: "USD/JPY",
     yfinanceSymbol: "JPY=X",
     stooqSymbol: "usdjpy",
     implemented: true,
@@ -197,7 +205,6 @@ export const COMMODITIES: CommodityMeta[] = [
     symbol: "GBPUSD",
     label: "GBP/USD",
     category: "forex",
-    twelveDataSymbol: "GBP/USD",
     yfinanceSymbol: "GBPUSD=X",
     stooqSymbol: "gbpusd",
     implemented: true,
@@ -206,7 +213,6 @@ export const COMMODITIES: CommodityMeta[] = [
     symbol: "XAUUSD",
     label: "XAU/USD (黃金)",
     category: "metal",
-    twelveDataSymbol: "XAU/USD",
     yfinanceSymbol: "GC=F",
     stooqSymbol: "xauusd",
     implemented: true,
@@ -215,7 +221,6 @@ export const COMMODITIES: CommodityMeta[] = [
     symbol: "NAS100",
     label: "NAS100 (那斯達克)",
     category: "index",
-    twelveDataSymbol: "NDX",
     yfinanceSymbol: "NQ=F",
     stooqSymbol: "^ndx",
     implemented: true,
@@ -224,7 +229,6 @@ export const COMMODITIES: CommodityMeta[] = [
     symbol: "GER40",
     label: "GER40 (DAX)",
     category: "index",
-    twelveDataSymbol: "DAX",
     yfinanceSymbol: "^GDAXI",
     stooqSymbol: "^dax",
     implemented: true,
@@ -233,7 +237,6 @@ export const COMMODITIES: CommodityMeta[] = [
     symbol: "US30",
     label: "US30 (道瓊)",
     category: "index",
-    twelveDataSymbol: "DJI",
     yfinanceSymbol: "^DJI",
     stooqSymbol: "^dji",
     implemented: true,
@@ -242,7 +245,6 @@ export const COMMODITIES: CommodityMeta[] = [
     symbol: "WTI",
     label: "WTI (美國原油)",
     category: "energy",
-    twelveDataSymbol: "WTI/USD",
     yfinanceSymbol: "CL=F",
     stooqSymbol: "cl.f",
     implemented: true,
@@ -251,7 +253,6 @@ export const COMMODITIES: CommodityMeta[] = [
     symbol: "SPX500",
     label: "SPX500",
     category: "index",
-    twelveDataSymbol: "SPX",
     yfinanceSymbol: "^GSPC",
     stooqSymbol: "^spx",
     implemented: true,

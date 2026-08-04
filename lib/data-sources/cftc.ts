@@ -1,4 +1,11 @@
-import { cachedOrFetch } from "./cache";
+import { fetchFree } from "./free-source";
+
+/**
+ * Socrata throttles unauthenticated reads per IP but publishes no exact
+ * number. COT updates once a week, so the 6h TTL means this budget is barely
+ * touched in normal operation.
+ */
+const CFTC_LIMIT = { perMinute: 20, perDay: 500 };
 import { fetchJson } from "./http";
 
 export interface CotReport {
@@ -27,8 +34,14 @@ export async function fetchCotReport(
   contractCode: string,
   gaps: string[],
 ): Promise<CotReport[] | null> {
-  const key = `cftc:${contractCode}`;
-  const result = await cachedOrFetch(key, 6 * 60 * 60 * 1000, async () => {
+  const result = await fetchFree<CotReport[]>({
+    source: "cftc",
+    label: `CFTC COT (${label})`,
+    key: `cftc:${contractCode}`,
+    ttlMs: 6 * 60 * 60 * 1000,
+    limit: CFTC_LIMIT,
+    gaps,
+    fn: async () => {
     const where = encodeURIComponent(`cftc_contract_market_code='${contractCode}'`);
     const url =
       `https://publicreporting.cftc.gov/resource/6dca-aqww.json?$where=${where}` +
@@ -54,10 +67,7 @@ export async function fetchCotReport(
       .filter((r): r is CotReport => r !== null)
       .sort((a, b) => a.reportDate.localeCompare(b.reportDate));
     return reports.length > 0 ? reports : null;
+    },
   });
-  if (!result) {
-    gaps.push(`CFTC COT (${label}) 取得失敗或回應為空`);
-    return null;
-  }
-  return result;
+  return result?.value ?? null;
 }
