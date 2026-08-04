@@ -8,6 +8,7 @@ import { analyzeFundamental } from "./analysis/fundamental";
 import { analyzePositioning } from "./analysis/positioning";
 import { analyzeNews } from "./analysis/news";
 import { analyzeFundFlow } from "./analysis/fundflow";
+import { analyzeOpenInterest } from "./analysis/open-interest";
 import { generateNarrative } from "./analysis/ai-narrative";
 import { buildTradePlan, collectCandidates } from "./analysis/trade-plan";
 import { scoreSignal } from "./scoring";
@@ -142,12 +143,17 @@ async function buildSignalForSymbol(
   const atrD1 = d1 ? computeAtr(d1.candles, 14) : null;
   if (atrD1 == null) gaps.push("D1 K棒不足以計算 ATR(14)");
 
+  // Open interest needs both the COT reports and price over the same weeks, so
+  // it runs here rather than inside fundFlow — pure computation, no fetching.
+  const openInterestItems = analyzeOpenInterest(meta, positioning.reports, d1?.candles ?? null, gaps);
+
   const biasItems: BiasItem[] = [
     ...technical.biasItems,
     ...fundamentalItems,
     ...positioning.biasItems,
     ...news.biasItems,
     ...fundFlowItems,
+    ...openInterestItems,
   ];
 
   const { direction, tie } = pickDirection(biasItems);

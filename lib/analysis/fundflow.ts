@@ -39,22 +39,8 @@ export async function analyzeFundFlow(
     }
   }
 
-  if (cotReports && cotReports.length >= 2) {
-    const invert = config.cotInverted ? -1 : 1;
-    const latest = cotReports.at(-1)!;
-    const prev = cotReports.at(-2)!;
-    const oiChange = latest.openInterest - prev.openInterest;
-    const netSigned = latest.netNonCommercial * invert;
-    items.push({
-      dimension: "資金流",
-      factor: `${meta.label} 未平倉量週變化 ${oiChange >= 0 ? "+" : ""}${oiChange.toLocaleString()} 口`,
-      direction:
-        oiChange > 0 && netSigned >= 0 ? "long" : oiChange < 0 && netSigned < 0 ? "short" : "neutral",
-      weight: oiChange === 0 ? 0 : 1,
-      evidence: `open interest ${prev.openInterest.toLocaleString()} (${prev.reportDate}) → ${latest.openInterest.toLocaleString()} (${latest.reportDate})`,
-      source: "CFTC Socrata 6dca-aqww",
-    });
-  }
+  // 未平倉量 is analyzed in lib/analysis/open-interest.ts, which needs price
+  // alongside the COT data — the caller runs it once both have resolved.
 
   if (config.useDxy) {
     const dxy = await fetchFredSeries("DXY", gaps);

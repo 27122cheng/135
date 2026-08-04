@@ -82,8 +82,40 @@ rather than guessed.
 | 基本面 | `lib/analysis/fundamental.ts` | Config-driven per symbol: 實質利率(DGS10−T10YIE，僅XAUUSD), DXY 趨勢, VIX, EIA 原油庫存(僅WTI), Finnhub 財報日曆(僅美股指數) |
 | 籌碼面 | `lib/analysis/positioning.ts` | CFTC COT (Socrata, legacy futures-only report) 非商業淨部位、52週極值、週變化，依 config 合約代碼與方向反轉設定 |
 | 新聞面 | `lib/analysis/news.ts` | GDELT 2.0 DOC API + Finnhub `/news` → Claude 評 -1~+1 情緒分並摘要，關鍵字依 config 逐商品設定 |
-| 資金流 | `lib/analysis/fundflow.ts` | SPDR GLD 持倉快照(僅XAUUSD)、COT 未平倉量週變化、DXY 方向、VIX |
+| 資金流 | `lib/analysis/fundflow.ts` + `lib/analysis/open-interest.ts` | SPDR GLD 持倉快照(僅XAUUSD)、DXY 方向、VIX、**未平倉量分析**（價量未平倉四象限、52週水位、異常變化偵測） |
 | AI綜合 | `lib/analysis/ai-narrative.ts` | 上述五面向的結構化 JSON → Claude 產生 `narrative`（prompt 明確禁止補充未提供的事實） |
+
+## 未平倉量分析 — `lib/analysis/open-interest.ts`
+
+資料來源是**已經在抓的 CFTC Socrata COT**（`open_interest_all` 欄位），免金鑰、
+不需額外請求。三項分析：
+
+**1. 價量未平倉四象限** — 把兩份 COT 報告之間的未平倉量變化，對上同期間的
+D1 收盤價變化：
+
+| 價格 | 未平倉量 | 判讀 | 方向 | 權重 |
+|---|---|---|---|---|
+| ↑ | ↑ | 價漲量增：新資金進場推升，趨勢確認 | long | 2 |
+| ↓ | ↑ | 價跌量增：新空單進場推跌，趨勢確認 | short | 2 |
+| ↑ | ↓ | 價漲量減：空頭回補而非新買盤，動能存疑 | short | 1 |
+| ↓ | ↓ | 價跌量減：多頭平倉而非新空單，賣壓耗盡 | long | 1 |
+
+後兩象限是**警示**而非趨勢確認，所以方向與價格走勢相反、權重較低 —— 這是標準
+讀法：靠回補推的漲勢缺乏新買盤支撐。價格變動 <0.3% 或未平倉量變動 <1% 時視為
+訊號不明確，記 neutral/權重 0，不硬套象限。
+
+**2. 52週水位** — 未平倉量在自身一年區間的百分位。≥90 表示部位擁擠、≤10 表示
+乏人問津。兩者都是風險提示不是方向判斷，所以 direction=neutral、權重 0。
+
+**3. 異常變化偵測** — 本週變化對比歷史週變化的標準差，≥2σ 標記為異常。歷史變化
+無波動時（標準差為 0，z-score 無定義）改用「平均週變化的倍數」判定，避免漏掉尖峰。
+
+### 限制（重要）
+
+CFTC 未平倉量是**每週**資料：週二收盤結算、週五公布，所以最多落後價格約 3 個
+交易日。它衡量的是一週的參與度與資金承諾，**不是即時或當日訊號**。想要日內
+未平倉量需要交易所直連資料，沒有免金鑰來源。GER40 在 Eurex 交易、CFTC 無資料，
+因此沒有這項分析。
 
 ## Cron + persistence (Stage 2)
 
