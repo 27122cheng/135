@@ -3,6 +3,10 @@
 import { COMMODITIES, type SupportedSymbol } from "@/types/signal";
 import { cn } from "@/lib/utils";
 
+/**
+ * Horizontally scrollable chip row — works the same on a phone and a desktop,
+ * and replaces the fixed-width sidebar that got clipped on narrow screens.
+ */
 export function CommodityList({
   selected,
   onSelect,
@@ -11,31 +15,24 @@ export function CommodityList({
   onSelect: (symbol: SupportedSymbol) => void;
 }) {
   return (
-    <nav className="flex flex-col gap-1">
-      {COMMODITIES.map((c) => (
-        <button
-          key={c.symbol}
-          type="button"
-          disabled={!c.implemented}
-          onClick={() => c.implemented && onSelect(c.symbol)}
-          className={cn(
-            "flex items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors",
-            c.implemented
-              ? "cursor-pointer hover:bg-neutral-800"
-              : "cursor-not-allowed opacity-40",
-            selected === c.symbol && c.implemented
-              ? "bg-neutral-800 text-neutral-50"
-              : "text-neutral-300",
-          )}
-        >
-          <span>{c.label}</span>
-          {!c.implemented && (
-            <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-500">
-              敬請期待
-            </span>
-          )}
-        </button>
-      ))}
+    <nav className="-mx-4 overflow-x-auto px-4 pb-1">
+      <div className="flex gap-2">
+        {COMMODITIES.map((c) => (
+          <button
+            key={c.symbol}
+            type="button"
+            onClick={() => onSelect(c.symbol)}
+            className={cn(
+              "shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm transition-colors",
+              selected === c.symbol
+                ? "border-neutral-100 bg-neutral-100 font-medium text-neutral-900"
+                : "border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100",
+            )}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
     </nav>
   );
 }

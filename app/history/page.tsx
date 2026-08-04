@@ -5,6 +5,8 @@ import Link from "next/link";
 import { COMMODITIES } from "@/types/signal";
 import type { Grade, SignalRow } from "@/types/signal";
 import { GradeBadge } from "@/components/grade-badge";
+import { formatTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 const GRADES: Grade[] = ["A+", "A", "B", "C", "no-trade"];
 
@@ -47,7 +49,7 @@ export default function HistoryPage() {
   }, [symbol, grade, from, to]);
 
   return (
-    <main className="mx-auto max-w-6xl p-6">
+    <main className="mx-auto max-w-2xl px-4 py-5">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-lg font-bold text-neutral-100">歷史訊號</h1>
         <Link href="/" className="text-sm text-neutral-400 hover:underline">
@@ -124,46 +126,39 @@ export default function HistoryPage() {
       )}
 
       {!loading && !error && rows.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-neutral-800">
-          <table className="w-full text-sm">
-            <thead className="bg-neutral-900 text-neutral-500">
-              <tr>
-                <th className="px-3 py-2 text-left">時間</th>
-                <th className="px-3 py-2 text-left">商品</th>
-                <th className="px-3 py-2 text-left">方向</th>
-                <th className="px-3 py-2 text-left">等級</th>
-                <th className="px-3 py-2 text-left">bias</th>
-                <th className="px-3 py-2 text-left">entry_struct</th>
-                <th className="px-3 py-2 text-left">total</th>
-                <th className="px-3 py-2 text-left">敘述</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="border-t border-neutral-800 text-neutral-300">
-                  <td className="px-3 py-2 whitespace-nowrap text-neutral-500">
-                    {new Date(r.generated_at).toLocaleString()}
-                  </td>
-                  <td className="px-3 py-2 font-medium">{r.symbol}</td>
-                  <td className="px-3 py-2">
-                    <span className={r.direction === "long" ? "text-emerald-400" : "text-red-400"}>
-                      {r.direction === "long" ? "多" : "空"}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">
-                    <GradeBadge grade={r.grade} />
-                  </td>
-                  <td className="px-3 py-2 tabular-nums">{r.bias_score}</td>
-                  <td className="px-3 py-2 tabular-nums">{r.entry_structure_score}</td>
-                  <td className="px-3 py-2 tabular-nums">{r.total_score}</td>
-                  <td className="max-w-md truncate px-3 py-2 text-neutral-400" title={r.narrative}>
-                    {r.narrative}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ul className="flex flex-col gap-2">
+          {rows.map((r) => (
+            <li key={r.id} className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="font-medium text-neutral-100">{r.symbol}</span>
+                  <span
+                    className={cn(
+                      "ml-2 text-sm",
+                      r.direction === "long" ? "text-emerald-400" : "text-red-400",
+                    )}
+                  >
+                    {r.direction === "long" ? "做多" : "做空"}
+                  </span>
+                  <span className="ml-2 text-xs text-neutral-500">
+                    {formatTime(r.generated_at)}
+                  </span>
+                </div>
+                <GradeBadge grade={r.grade} />
+              </div>
+              <p className="mt-1.5 text-xs text-neutral-500">
+                方向分 <span className="font-mono text-neutral-400">{r.bias_score}</span>
+                <span className="mx-1.5 text-neutral-700">+</span>
+                結構分 <span className="font-mono text-neutral-400">{r.entry_structure_score}</span>
+                <span className="mx-1.5 text-neutral-700">=</span>
+                總分 <span className="font-mono text-neutral-300">{r.total_score}</span>
+              </p>
+              <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-neutral-500">
+                {r.narrative}
+              </p>
+            </li>
+          ))}
+        </ul>
       )}
     </main>
   );

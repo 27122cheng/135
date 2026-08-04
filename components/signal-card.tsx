@@ -1,253 +1,267 @@
 import type { TradeSignal } from "@/types/signal";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import { GradeBadge } from "@/components/grade-badge";
 import { DimensionBars } from "@/components/dimension-bars";
+import { formatPrice, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-function PriceReasonRow({
+/** True when the pipeline couldn't get a price at all (see buildNoPriceSignal). */
+function hasNoPrice(signal: TradeSignal): boolean {
+  return signal.entry_zone.low === 0 && signal.entry_zone.high === 0;
+}
+
+function PriceRow({
   label,
-  price,
-  reason,
+  value,
+  detail,
   tone,
 }: {
   label: string;
-  price: number | string;
-  reason: string;
-  tone?: "up" | "down" | "neutral";
+  value: string;
+  detail: string;
+  tone: "entry" | "sl" | "tp";
 }) {
   return (
-    <details className="group rounded-lg border border-neutral-800 bg-neutral-950/50 px-3 py-2">
-      <summary className="flex cursor-pointer list-none items-center justify-between text-sm">
-        <span className="text-neutral-400">{label}</span>
+    <details className="group border-b border-neutral-800 last:border-0">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 py-2.5">
+        <span className="flex items-center gap-2 text-sm text-neutral-400">
+          <span
+            className={cn(
+              "h-2 w-2 shrink-0 rounded-full",
+              tone === "entry" && "bg-neutral-400",
+              tone === "sl" && "bg-red-500",
+              tone === "tp" && "bg-emerald-500",
+            )}
+          />
+          {label}
+          <span className="text-xs text-neutral-600 group-open:hidden">▾</span>
+        </span>
         <span
           className={cn(
-            "font-mono font-semibold",
-            tone === "up" && "text-emerald-400",
-            tone === "down" && "text-red-400",
-            (!tone || tone === "neutral") && "text-neutral-100",
+            "text-right font-mono text-base font-semibold tabular-nums",
+            tone === "sl" && "text-red-400",
+            tone === "tp" && "text-emerald-400",
+            tone === "entry" && "text-neutral-100",
           )}
         >
-          {price}
+          {value}
         </span>
       </summary>
-      <p className="mt-2 text-xs leading-relaxed text-neutral-400">{reason}</p>
+      <p className="whitespace-pre-line pb-3 text-xs leading-relaxed text-neutral-500">{detail}</p>
     </details>
+  );
+}
+
+function Section({
+  title,
+  children,
+  defaultOpen = false,
+}: {
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  return (
+    <Card>
+      <details open={defaultOpen}>
+        <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-neutral-300">
+          {title}
+        </summary>
+        <div className="px-4 pb-4">{children}</div>
+      </details>
+    </Card>
   );
 }
 
 export function SignalCard({ signal }: { signal: TradeSignal }) {
   const isNoTrade = signal.grade === "no-trade";
+  const noPrice = hasNoPrice(signal);
+  const entryLabel = noPrice
+    ? "無資料"
+    : signal.entry_zone.low === signal.entry_zone.high
+      ? formatPrice(signal.entry_zone.low)
+      : `${formatPrice(signal.entry_zone.low)} – ${formatPrice(signal.entry_zone.high)}`;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
+      {/* Headline: symbol, direction, grade, and the three prices that matter. */}
+      <Card>
+        <CardContent className="p-4 pt-4">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-bold text-neutral-100">{signal.symbol}</h2>
+              <p className="mt-0.5 text-xs text-neutral-500">
+                {formatTime(signal.generated_at)} ·{" "}
+                <span
+                  className={signal.direction === "long" ? "text-emerald-400" : "text-red-400"}
+                >
+                  {signal.direction === "long" ? "做多" : "做空"}
+                </span>
+              </p>
+            </div>
+            <GradeBadge grade={signal.grade} />
+          </div>
+
+          {isNoTrade && (
+            <p className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+              {noPrice
+                ? "無法取得價格資料，此訊號不成立。"
+                : "評等為 no-trade，以下價位僅供參考，不構成有效交易訊號。"}
+            </p>
+          )}
+
+          <div className="rounded-lg border border-neutral-800 bg-neutral-950/50 px-3">
+            <PriceRow
+              label="進場"
+              value={entryLabel}
+              detail={signal.entry_zone.reason}
+              tone="entry"
+            />
+            <PriceRow
+              label="停損"
+              value={noPrice ? "無資料" : formatPrice(signal.stop_loss.price)}
+              detail={`${signal.stop_loss.reason}\n結構：${signal.stop_loss.structure}\n失效條件：${signal.stop_loss.invalidation}`}
+              tone="sl"
+            />
+            {signal.take_profits.length === 0 ? (
+              <PriceRow
+                label="停利"
+                value="無"
+                detail="path_obstacles 中找不到方向正確的結構，因此不提供停利價位。"
+                tone="tp"
+              />
+            ) : (
+              signal.take_profits.map((tp, i) => (
+                <PriceRow
+                  key={i}
+                  label={`停利 TP${i + 1} · ${tp.allocation_pct}%`}
+                  value={formatPrice(tp.price)}
+                  detail={`${tp.reason}\n結構：${tp.structure}`}
+                  tone="tp"
+                />
+              ))
+            )}
+          </div>
+
+          <div className="mt-3 flex items-center justify-between text-xs text-neutral-500">
+            <span>
+              方向分 <span className="font-mono text-neutral-300">{signal.bias_score}</span>
+              <span className="mx-1.5 text-neutral-700">+</span>
+              結構分 <span className="font-mono text-neutral-300">{signal.entry_structure_score}</span>
+            </span>
+            <span>
+              總分 <span className="font-mono text-base text-neutral-100">{signal.total_score}</span>
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Six dimensions — the main "why", so it stays open. */}
+      <Card>
+        <CardContent className="p-4 pt-4">
+          <p className="mb-3 text-sm font-medium text-neutral-300">六面向分數</p>
+          <DimensionBars direction={signal.direction} biasItems={signal.bias_items} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-4 pt-4">
+          <p className="mb-2 text-sm font-medium text-neutral-300">AI 綜合敘述</p>
+          <p className="text-sm leading-relaxed text-neutral-300">{signal.narrative}</p>
+        </CardContent>
+      </Card>
+
+      <Section title={`進場結構（${signal.entry_structures.length}）`}>
+        {signal.entry_structures.length === 0 ? (
+          <p className="text-xs text-neutral-600">無資料</p>
+        ) : (
+          <ul className="flex flex-col gap-1.5">
+            {signal.entry_structures.map((s, i) => (
+              <li key={i} className="flex items-center justify-between gap-2 text-xs">
+                <span className="text-neutral-400">
+                  <span className="text-neutral-500">{s.timeframe}</span> {s.type}
+                  <span className={s.role === "support" ? "ml-1.5 text-emerald-500" : "ml-1.5 text-red-500"}>
+                    {s.role === "support" ? "支撐" : "壓力"}
+                  </span>
+                  <span className="ml-1.5 text-amber-500">{"★".repeat(s.strength)}</span>
+                </span>
+                <span className="shrink-0 font-mono text-neutral-300">
+                  {formatPrice(s.price)}
+                  <span className="ml-1.5 text-neutral-600">{s.distance_pct}%</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+
+      <Section title={`路徑障礙（${signal.path_obstacles.length}）`}>
+        {signal.path_obstacles.length === 0 ? (
+          <p className="text-xs text-neutral-600">無資料</p>
+        ) : (
+          <ul className="flex flex-col gap-1.5">
+            {signal.path_obstacles.map((o, i) => {
+              const tpIndex = signal.take_profits.findIndex((tp) => tp.price === o.price);
+              return (
+                <li key={i} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-neutral-400">
+                    <span className="text-neutral-500">{o.timeframe}</span> {o.type}
+                    <span className="ml-1.5 text-amber-500">{"★".repeat(o.strength)}</span>
+                    {tpIndex >= 0 && (
+                      <span className="ml-1.5 rounded bg-emerald-500/20 px-1.5 py-0.5 text-emerald-400">
+                        TP{tpIndex + 1}
+                      </span>
+                    )}
+                  </span>
+                  <span className="shrink-0 font-mono text-neutral-300">{formatPrice(o.price)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Section>
+
+      <Section title={`全部因子（${signal.bias_items.length}）`}>
+        {signal.bias_items.length === 0 ? (
+          <p className="text-xs text-neutral-600">無資料</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {signal.bias_items.map((b, i) => (
+              <li key={i} className="text-xs leading-relaxed">
+                <span
+                  className={cn(
+                    "mr-1.5 font-medium",
+                    b.direction === "long" && "text-emerald-400",
+                    b.direction === "short" && "text-red-400",
+                    b.direction === "neutral" && "text-neutral-500",
+                  )}
+                >
+                  {b.dimension}
+                  {b.weight > 0 && ` ×${b.weight}`}
+                </span>
+                <span className="text-neutral-300">{b.factor}</span>
+                <span className="block text-neutral-600">
+                  {b.evidence} · {b.source}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+
+      {/* Moved to the bottom and collapsed — it was burying the actual signal. */}
       {signal.data_gaps.length > 0 && (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300">
-          <p className="mb-1 font-semibold">⚠ 資料缺口（data_gaps）</p>
-          <ul className="list-inside list-disc space-y-0.5">
+        <details className="rounded-xl border border-amber-500/30 bg-amber-500/5">
+          <summary className="cursor-pointer list-none px-4 py-3 text-sm text-amber-400">
+            ⚠ {signal.data_gaps.length} 項資料缺口（點開查看）
+          </summary>
+          <ul className="list-inside list-disc space-y-1 px-4 pb-4 text-xs leading-relaxed text-amber-300/80">
             {signal.data_gaps.map((g, i) => (
               <li key={i}>{g}</li>
             ))}
           </ul>
-        </div>
+        </details>
       )}
-
-      <Card>
-        <CardHeader className="flex-row items-center justify-between">
-          <div>
-            <CardTitle className="text-lg">{signal.symbol}</CardTitle>
-            <p className="text-xs text-neutral-500">
-              {new Date(signal.generated_at).toLocaleString()} · 方向{" "}
-              <span className={signal.direction === "long" ? "text-emerald-400" : "text-red-400"}>
-                {signal.direction === "long" ? "做多 LONG" : "做空 SHORT"}
-              </span>
-            </p>
-          </div>
-          <GradeBadge grade={signal.grade} />
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <div className="flex flex-wrap gap-2 text-xs">
-            <Badge variant="outline">bias_score {signal.bias_score}</Badge>
-            <Badge variant="outline">entry_structure_score {signal.entry_structure_score}</Badge>
-            <Badge variant="outline">total_score {signal.total_score}</Badge>
-          </div>
-
-          {isNoTrade && (
-            <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-300">
-              no-trade：以下價位僅供參考，不構成有效交易訊號。
-            </p>
-          )}
-
-          <div className="grid gap-2 sm:grid-cols-3">
-            <PriceReasonRow
-              label="進場區間 (entry_zone)"
-              price={
-                signal.entry_zone.low === signal.entry_zone.high
-                  ? signal.entry_zone.low
-                  : `${signal.entry_zone.low} ~ ${signal.entry_zone.high}`
-              }
-              reason={signal.entry_zone.reason}
-              tone="neutral"
-            />
-            <PriceReasonRow
-              label="停損 (stop_loss)"
-              price={signal.stop_loss.price}
-              reason={`${signal.stop_loss.reason}\n結構：${signal.stop_loss.structure}\n失效條件：${signal.stop_loss.invalidation}`}
-              tone="down"
-            />
-            <div className="flex flex-col gap-2">
-              {signal.take_profits.length === 0 && (
-                <p className="rounded-lg border border-neutral-800 bg-neutral-950/50 px-3 py-2 text-xs text-neutral-500">
-                  無停利價位（path_obstacles 中找不到方向正確的結構）
-                </p>
-              )}
-              {signal.take_profits.map((tp, i) => (
-                <PriceReasonRow
-                  key={i}
-                  label={`停利 TP${i + 1} (${tp.allocation_pct}%)`}
-                  price={tp.price}
-                  reason={`${tp.reason}\n結構：${tp.structure}`}
-                  tone="up"
-                />
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <p className="mb-2 text-xs font-semibold text-neutral-400">六面向分數（正負分開顯示）</p>
-            <DimensionBars direction={signal.direction} biasItems={signal.bias_items} />
-          </div>
-
-          <div>
-            <p className="mb-2 text-xs font-semibold text-neutral-400">AI 綜合敘述</p>
-            <p className="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 text-sm leading-relaxed text-neutral-200">
-              {signal.narrative}
-            </p>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <p className="mb-2 text-xs font-semibold text-neutral-400">
-                進場結構清單（entry_structures）
-              </p>
-              <StructureTable
-                rows={signal.entry_structures.map((s) => ({
-                  price: s.price,
-                  type: s.type,
-                  role: s.role === "support" ? "支撐" : "壓力",
-                  strength: s.strength,
-                  distance: `${s.distance_pct}%`,
-                }))}
-              />
-            </div>
-            <div>
-              <p className="mb-2 text-xs font-semibold text-neutral-400">
-                路徑障礙清單（path_obstacles → 對應 TP）
-              </p>
-              <ObstacleTable signal={signal} />
-            </div>
-          </div>
-
-          <details className="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3">
-            <summary className="cursor-pointer text-xs font-semibold text-neutral-400">
-              全部 bias_items（{signal.bias_items.length}）
-            </summary>
-            <ul className="mt-2 space-y-2">
-              {signal.bias_items.map((b, i) => (
-                <li key={i} className="text-xs text-neutral-400">
-                  <span
-                    className={cn(
-                      "mr-1 font-semibold",
-                      b.direction === "long" && "text-emerald-400",
-                      b.direction === "short" && "text-red-400",
-                      b.direction === "neutral" && "text-neutral-500",
-                    )}
-                  >
-                    [{b.dimension}/w{b.weight}/{b.direction}]
-                  </span>
-                  {b.factor} — <span className="text-neutral-500">{b.evidence}</span>{" "}
-                  <span className="text-neutral-600">({b.source})</span>
-                </li>
-              ))}
-            </ul>
-          </details>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function StructureTable({
-  rows,
-}: {
-  rows: { price: number; type: string; role: string; strength: number; distance: string }[];
-}) {
-  if (rows.length === 0) {
-    return <p className="text-xs text-neutral-600">無資料</p>;
-  }
-  return (
-    <div className="overflow-hidden rounded-lg border border-neutral-800">
-      <table className="w-full text-xs">
-        <thead className="bg-neutral-900 text-neutral-500">
-          <tr>
-            <th className="px-2 py-1 text-left">價格</th>
-            <th className="px-2 py-1 text-left">類型</th>
-            <th className="px-2 py-1 text-left">角色</th>
-            <th className="px-2 py-1 text-left">強度</th>
-            <th className="px-2 py-1 text-left">距離</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i} className="border-t border-neutral-800 text-neutral-300">
-              <td className="px-2 py-1 font-mono">{r.price}</td>
-              <td className="px-2 py-1">{r.type}</td>
-              <td className="px-2 py-1">{r.role}</td>
-              <td className="px-2 py-1">{"★".repeat(r.strength)}</td>
-              <td className="px-2 py-1">{r.distance}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ObstacleTable({ signal }: { signal: TradeSignal }) {
-  if (signal.path_obstacles.length === 0) {
-    return <p className="text-xs text-neutral-600">無資料</p>;
-  }
-  const tpByPrice = new Map(signal.take_profits.map((tp, i) => [tp.price, i + 1]));
-  return (
-    <div className="overflow-hidden rounded-lg border border-neutral-800">
-      <table className="w-full text-xs">
-        <thead className="bg-neutral-900 text-neutral-500">
-          <tr>
-            <th className="px-2 py-1 text-left">價格</th>
-            <th className="px-2 py-1 text-left">類型</th>
-            <th className="px-2 py-1 text-left">時框</th>
-            <th className="px-2 py-1 text-left">強度</th>
-            <th className="px-2 py-1 text-left">對應TP</th>
-          </tr>
-        </thead>
-        <tbody>
-          {signal.path_obstacles.map((o, i) => (
-            <tr key={i} className="border-t border-neutral-800 text-neutral-300">
-              <td className="px-2 py-1 font-mono">{o.price}</td>
-              <td className="px-2 py-1">{o.type}</td>
-              <td className="px-2 py-1">{o.timeframe}</td>
-              <td className="px-2 py-1">{"★".repeat(o.strength)}</td>
-              <td className="px-2 py-1">
-                {tpByPrice.has(o.price) ? (
-                  <Badge variant="success">TP{tpByPrice.get(o.price)}</Badge>
-                ) : (
-                  <span className="text-neutral-600">—</span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

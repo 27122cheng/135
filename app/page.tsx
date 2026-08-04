@@ -55,36 +55,35 @@ export default function Home() {
   }, [selected]);
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-6xl gap-6 p-6">
-      <aside className="w-56 shrink-0">
-        <div className="mb-4 flex items-center justify-between">
-          <h1 className="text-lg font-bold text-neutral-100">多商品交易訊號</h1>
-        </div>
-        <CommodityList selected={selected} onSelect={setSelected} />
-        <Link
-          href="/history"
-          className="mt-4 block rounded-lg px-3 py-2 text-sm text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
-        >
+    <main className="mx-auto min-h-screen max-w-2xl px-4 py-5">
+      <header className="mb-3 flex items-baseline justify-between gap-3">
+        <h1 className="text-base font-bold text-neutral-100">多商品交易訊號</h1>
+        <Link href="/history" className="shrink-0 text-sm text-neutral-500 hover:text-neutral-200">
           歷史訊號 →
         </Link>
-      </aside>
+      </header>
 
-      <section className="flex-1">
-        {loading && (
-          <p className="text-sm text-neutral-500">
-            載入 {selected} 訊號中…（首次查詢需向多個外部來源取資料，可能要 10–30 秒）
-          </p>
-        )}
-        {error && (
-          <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
-            <p>取得訊號失敗：{error}</p>
-            <a href="/api/diagnostics" className="mt-2 block underline hover:text-red-200">
-              開啟 /api/diagnostics 檢查各資料來源在部署環境的連線狀態 →
-            </a>
-          </div>
-        )}
-        {!loading && !error && signal && <SignalCard signal={signal} />}
-      </section>
+      <div className="mb-4">
+        <CommodityList selected={selected} onSelect={setSelected} />
+      </div>
+
+      {loading && (
+        <p className="py-8 text-center text-sm text-neutral-500">
+          載入 {selected} 訊號中…
+          <span className="mt-1 block text-xs text-neutral-600">
+            需向多個外部來源取資料，約 10–30 秒
+          </span>
+        </p>
+      )}
+      {error && (
+        <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-300">
+          <p>取得訊號失敗：{error}</p>
+          <a href="/api/diagnostics" className="mt-2 block text-xs underline hover:text-red-200">
+            檢查各資料來源連線狀態 →
+          </a>
+        </div>
+      )}
+      {!loading && !error && signal && <SignalCard signal={signal} />}
     </main>
   );
 }
