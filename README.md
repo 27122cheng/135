@@ -211,6 +211,66 @@ SPDR 官方持倉 XML 有兩個問題：它會擋雲端機房 IP，而且**只�
 （不用擲硬幣灌高勝率），並在 UI 標示；K 棒不足時回傳 null 並記入 `data_gaps`，
 不生一個假數字。
 
+## 復盤怎麼設定（一次性，約 5 分鐘）
+
+`/review` 與交易日誌需要資料庫。這是整個專案唯一**不能**在網站 `/settings` 裡設定的東西 ——
+資料庫連線字串能寫入整個資料庫，所以只放伺服器端環境變數，不進瀏覽器可設定的允許清單。
+
+### 步驟 1：開一個 Neon 免費 Postgres
+
+1. 到 https://neon.tech，用 GitHub 或 Google 登入（免費方案不用信用卡）
+2. **Create project** → 名字隨便取，region 挑離你近的
+3. 建好後首頁會顯示 **Connection string**，長這樣：
+   `postgresql://neondb_owner:xxxx@ep-xxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require`
+4. 整串複製起來
+
+### 步驟 2：建資料表
+
+在 Neon 專案頁面左側點 **SQL Editor**，把本專案 `supabase/schema.sql` 的
+**整個檔案內容**貼進去按 Run。
+
+那個檔案是純 SQL，Neon 與 Supabase 都適用，會建 `signals`（歷史訊號）
+與 `trade_journal`（交易日誌）兩張表。可以重複執行 —— 全部都是
+`create table if not exists`。
+
+### 步驟 3：把連線字串給 Vercel
+
+Vercel 專案 → **Settings → Environment Variables** → 新增：
+
+| Name | Value |
+|---|---|
+| `DATABASE_URL` | 步驟 1 複製的那整串 |
+
+存檔後到 **Deployments** 頁按 **Redeploy**。環境變數不會套用到既有的部署。
+
+### 步驟 4：確認
+
+打開 `/review`。設定成功的話會看到「還沒有交易紀錄」加上底部的記錄表單，
+而不是紅色錯誤。也可以開 `/api/diagnostics` 看 `database` 欄位是不是 `postgres`。
+
+常見兩個錯誤，畫面會直接告訴你怎麼修：
+
+- **「資料表尚未建立」** → 步驟 2 沒做，或貼到了別的資料庫
+- **「資料庫連線被拒」** → 連線字串複製不完整（Neon 的密碼在字串中間，很容易漏）
+
+### 用 Supabase 也可以
+
+不想用 Neon 就改設 `NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_ANON_KEY`、
+`SUPABASE_SERVICE_ROLE_KEY` 三把，一樣先跑 `supabase/schema.sql`。
+`DATABASE_URL` 有設的話以它為準。
+
+### 設定完之後怎麼用
+
+1. 平倉一筆交易後，到 `/review` 底部的表單記一筆：標的、方向、進出場價、
+   結果、當時評等。虧損的話**必須**選一個 S1–S8 停損原因。
+2. 按「記錄」之後，畫面會直接展開 severity 是怎麼算出來的（三個項目各加幾分），
+   不是給你一個沒來由的數字。
+3. 累積到某個 tag 在近 30 筆裡出現 ≥3 次、且平均 severity ≥3，
+   下一次產生訊號時就會自動加嚴，訊號卡上會出現「本次已套用的干涉」，
+   並列出是哪幾筆歷史停損造成的。
+
+干涉是**逐商品**的：EURUSD 的連續失誤不會影響黃金的訊號。
+
 ## 停損復盤與干涉機制（Stage 3）
 
 訊號產生 → 交易 → 停損 → 分類原因 → 自動加嚴下一次的訊號。這是唯一會讓系統

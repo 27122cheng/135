@@ -80,9 +80,13 @@ export default function ReviewPage() {
       {error && (
         <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-300">
           <p>{error}</p>
-          <p className="mt-1 text-xs text-amber-400/70">
-            交易日誌需要資料庫。設定 DATABASE_URL（Neon 免費 Postgres）或 Supabase，
-            並套用 supabase/schema.sql。
+          <p className="mt-1 text-xs leading-relaxed text-amber-400/70">
+            交易日誌需要資料庫，兩步驟：① 在 Vercel 加環境變數 <code>DATABASE_URL</code>
+            （Neon 免費 Postgres）或 Supabase 三把金鑰 → ② 對該資料庫執行{" "}
+            <code>supabase/schema.sql</code>，然後 Redeploy。
+            <br />
+            資料庫連線字串<span className="text-amber-300">不能</span>在本站的金鑰設定頁填 ——
+            那個頁面只收資料來源的金鑰，能寫入資料庫的憑證只放伺服器端。
           </p>
         </div>
       )}

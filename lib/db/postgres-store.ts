@@ -15,6 +15,30 @@ import type { HistoryFilter, SignalStore } from "./index";
  * a connection pool would be created and thrown away on every invocation, and
  * free tiers cap connections hard.
  */
+
+/**
+ * Turns the two failures a first-time setup actually hits into instructions.
+ *
+ * Postgres says `relation "trade_journal" does not exist`, which is accurate
+ * and useless to someone who has just pasted a connection string and doesn't
+ * know a schema step exists. Everything else is passed through unchanged —
+ * inventing friendly text for an unknown error would hide it.
+ */
+export function explain(err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/relation ".*" does not exist/i.test(message)) {
+    return new Error(
+      `資料表尚未建立 —— 請先對這個資料庫執行 supabase/schema.sql（純 SQL，Neon 與 Supabase 都適用）。原始錯誤：${message}`,
+    );
+  }
+  if (/password authentication failed|no pg_hba|SASL/i.test(message)) {
+    return new Error(
+      `資料庫連線被拒，請確認 DATABASE_URL 正確且包含密碼。原始錯誤：${message}`,
+    );
+  }
+  return new Error(message);
+}
+
 export function postgresStore(connectionString: string): SignalStore {
   const sql = neon(connectionString);
 
@@ -22,9 +46,10 @@ export function postgresStore(connectionString: string): SignalStore {
     kind: "postgres",
 
     async insertSignal(signal: TradeSignal): Promise<void> {
-      // Parameterised throughout — every value here is interpolated by the
-      // driver, never concatenated into the statement.
-      await sql`
+      try {
+        // Parameterised throughout — every value here is interpolated by the
+        // driver, never concatenated into the statement.
+        await sql`
         insert into signals (
           symbol, direction, grade, bias_score, entry_structure_score, total_score,
           entry_zone, stop_loss, take_profits, bias_items, entry_structures,
@@ -40,13 +65,17 @@ export function postgresStore(connectionString: string): SignalStore {
           ${JSON.stringify(signal.data_gaps)}, ${signal.generated_at}
         )
       `;
+      } catch (err) {
+        throw explain(err);
+      }
     },
 
     async listSignals(filter: HistoryFilter): Promise<SignalRow[]> {
-      // Each filter is optional, so rather than assembling SQL by hand the
-      // predicates are written as "parameter is null OR column matches" — the
-      // statement stays constant and every value stays a bound parameter.
-      const rows = await sql`
+      try {
+        // Each filter is optional, so rather than assembling SQL by hand the
+        // predicates are written as "parameter is null OR column matches" — the
+        // statement stays constant and every value stays a bound parameter.
+        const rows = await sql`
         select * from signals
         where (${filter.symbol ?? null}::text is null or symbol = ${filter.symbol ?? null})
           and (${filter.grade ?? null}::text is null or grade = ${filter.grade ?? null})
@@ -55,14 +84,18 @@ export function postgresStore(connectionString: string): SignalStore {
         order by generated_at desc
         limit ${filter.limit}
       `;
-      return rows as unknown as SignalRow[];
+        return rows as unknown as SignalRow[];
+      } catch (err) {
+        throw explain(err);
+      }
     },
 
     async insertJournalEntry(
       entry: JournalEntryInput,
       severity: number | null,
     ): Promise<JournalEntry> {
-      const rows = await sql`
+      try {
+        const rows = await sql`
         insert into trade_journal (
           signal_id, symbol, direction, grade, entry_price, exit_price,
           result, pnl_pct, closed_at, stop_reason_tag, severity, review_note
@@ -73,17 +106,27 @@ export function postgresStore(connectionString: string): SignalStore {
         )
         returning *
       `;
-      return rows[0] as unknown as JournalEntry;
+        return rows[0] as unknown as JournalEntry;
+      } catch (err) {
+        throw explain(err);
+      }
     },
 
-    async listJournal(options: { symbol?: string | null; limit: number }): Promise<JournalEntry[]> {
-      const rows = await sql`
+    async listJournal(options: {
+      symbol?: string | null;
+      limit: number;
+    }): Promise<JournalEntry[]> {
+      try {
+        const rows = await sql`
         select * from trade_journal
         where (${options.symbol ?? null}::text is null or symbol = ${options.symbol ?? null})
         order by closed_at desc
         limit ${options.limit}
       `;
-      return rows as unknown as JournalEntry[];
+        return rows as unknown as JournalEntry[];
+      } catch (err) {
+        throw explain(err);
+      }
     },
   };
 }
