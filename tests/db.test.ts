@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { check, report } from "./_harness";
 import { explain } from "@/lib/db/postgres-store";
+import { REQUIRED_TABLES, SCHEMA_SQL, schemaStatements } from "@/lib/db/schema";
 import { USER_SETTABLE_KEYS } from "@/lib/api-key-names";
 import { parseUserKeyHeader } from "@/lib/api-keys";
 
@@ -36,6 +39,38 @@ import { parseUserKeyHeader } from "@/lib/api-keys";
   );
   check("a DATABASE_URL header is dropped", !("DATABASE_URL" in parsed), parsed);
   check("the legitimate key still passes", parsed.GEMINI_API_KEY === "ok", parsed);
+}
+
+// The embedded schema must stay byte-identical to the canonical .sql file,
+// otherwise /api/setup would create tables that differ from what a manual run
+// produces — and nobody would notice until a column was missing.
+{
+  const disk = readFileSync(join(process.cwd(), "supabase/schema.sql"), "utf8");
+  check(
+    "embedded SCHEMA_SQL matches supabase/schema.sql",
+    SCHEMA_SQL === disk,
+    SCHEMA_SQL === disk ? undefined : "編輯 supabase/schema.sql 後也要更新 lib/db/schema.ts",
+  );
+}
+
+// Statement splitting: Neon's HTTP endpoint takes one statement per request.
+{
+  const statements = schemaStatements();
+  check("splits into multiple statements", statements.length >= 12, statements.length);
+  check("no empty statements", statements.every((s) => s.length > 0));
+  check("no statement still carries a comment", !statements.some((s) => s.includes("--")),
+    statements.find((s) => s.includes("--")));
+  check(
+    "every statement starts with DDL",
+    statements.every((s) => /^(create|alter|drop)\b/i.test(s)),
+    statements.find((s) => !/^(create|alter|drop)\b/i.test(s)),
+  );
+  check("both tables are created", REQUIRED_TABLES.every((t) =>
+    statements.some((s) => new RegExp(`create table if not exists public\\.${t}\\b`, "i").test(s))));
+
+  // A comment ending a line must not swallow the semicolon that follows it.
+  const tricky = schemaStatements("create table a (x int); -- comment\ncreate table b (y int);");
+  check("a trailing comment does not merge statements", tricky.length === 2, tricky);
 }
 
 report("db setup errors");

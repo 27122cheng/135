@@ -235,12 +235,20 @@ SPDR 官方持倉 XML 有兩個問題：它會擋雲端機房 IP，而且**只�
 
 ### 步驟 2：建資料表
 
-在 Neon 專案頁面左側點 **SQL Editor**，把本專案 `supabase/schema.sql` 的
-**整個檔案內容**貼進去按 Run。
+**最簡單：先做完步驟 3（Redeploy），然後開 `/review` 按「建立資料表」。**
+網站會自己對 `DATABASE_URL` 指向的資料庫套用結構，不用開任何 SQL 編輯器 ——
+在手機上尤其省事。
 
-那個檔案是純 SQL，Neon 與 Supabase 都適用，會建 `signals`（歷史訊號）
-與 `trade_journal`（交易日誌）兩張表。可以重複執行 —— 全部都是
-`create table if not exists`。
+想手動做也可以：Neon 專案頁面左側 **SQL Editor**，把 `supabase/schema.sql`
+的整個檔案內容貼進去按 Run。
+
+不管哪一種，跑的都是同一份 SQL，會建 `signals`（歷史訊號）與
+`trade_journal`（交易日誌）兩張表。可以重複執行 —— 全部都是
+`create table if not exists`，不會破壞既有資料。
+
+> `/api/setup` 的存取控制：設了 `CRON_SECRET` 就必須帶對應的 Bearer token；
+> 沒設的話只在資料表還不存在時可用，建完就自動鎖起來。
+> Supabase 使用者走自己的 SQL Editor（anon/service key 不是 Postgres 連線）。
 
 ### 步驟 3：把連線字串給 Vercel
 

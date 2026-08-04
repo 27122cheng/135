@@ -80,14 +80,19 @@ export default function ReviewPage() {
       {error && (
         <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-300">
           <p>{error}</p>
-          <p className="mt-1 text-xs leading-relaxed text-amber-400/70">
-            交易日誌需要資料庫，兩步驟：① 在 Vercel 加環境變數 <code>DATABASE_URL</code>
-            （Neon 免費 Postgres）或 Supabase 三把金鑰 → ② 對該資料庫執行{" "}
-            <code>supabase/schema.sql</code>，然後 Redeploy。
-            <br />
-            資料庫連線字串<span className="text-amber-300">不能</span>在本站的金鑰設定頁填 ——
-            那個頁面只收資料來源的金鑰，能寫入資料庫的憑證只放伺服器端。
-          </p>
+          {/* The one error with a one-tap fix gets a button instead of a
+              paragraph telling the reader to go and paste SQL somewhere. */}
+          {error.includes("資料表尚未建立") ? (
+            <SetupButton onDone={load} />
+          ) : (
+            <p className="mt-1 text-xs leading-relaxed text-amber-400/70">
+              交易日誌需要資料庫，兩步驟：① 在 Vercel 加環境變數 <code>DATABASE_URL</code>
+              （Neon 免費 Postgres）或 Supabase 三把金鑰 → ② 建立資料表，然後 Redeploy。
+              <br />
+              資料庫連線字串<span className="text-amber-300">不能</span>在本站的金鑰設定頁填 ——
+              那個頁面只收資料來源的金鑰，能寫入資料庫的憑證只放伺服器端。
+            </p>
+          )}
         </div>
       )}
 
@@ -140,6 +145,49 @@ export default function ReviewPage() {
         </div>
       )}
     </main>
+  );
+}
+
+/**
+ * Creates the tables via /api/setup. Only appears when the database is
+ * reachable but empty — the one failure with a fix the app can perform itself.
+ */
+function SetupButton({ onDone }: { onDone: () => void }) {
+  const [state, setState] = useState<"idle" | "running" | "failed">("idle");
+  const [detail, setDetail] = useState<string | null>(null);
+
+  async function run() {
+    setState("running");
+    setDetail(null);
+    try {
+      const res = await fetch("/api/setup", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.ready) {
+        throw new Error(data.error ?? data.errors?.[0]?.error ?? `HTTP ${res.status}`);
+      }
+      onDone();
+    } catch (err) {
+      setState("failed");
+      setDetail(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        onClick={run}
+        disabled={state === "running"}
+        className="rounded-lg bg-amber-400 px-4 py-2 text-sm font-medium text-neutral-900 hover:bg-amber-300 disabled:opacity-50"
+      >
+        {state === "running" ? "建立中…" : "建立資料表"}
+      </button>
+      <p className="mt-2 text-[11px] leading-relaxed text-amber-400/70">
+        會對 <code>DATABASE_URL</code> 指向的資料庫執行 <code>supabase/schema.sql</code>。
+        全部是 <code>create table if not exists</code>，重複執行不會破壞既有資料。
+      </p>
+      {detail && <p className="mt-1 text-[11px] text-red-300">{detail}</p>}
+    </div>
   );
 }
 
