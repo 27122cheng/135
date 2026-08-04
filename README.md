@@ -14,7 +14,7 @@ end-to-end. A GitHub Actions workflow refreshes every 4h into Postgres, and
 npm install
 cp .env.example .env.local   # 可以完全空白 — 見下方「零金鑰可跑」
 npm run dev
-npm test                     # 12 個測試套件，189 項斷言
+npm test                     # 13 個測試套件，214 項斷言
 ```
 
 Open http://localhost:3000. Pick any symbol in the left panel — each calls
@@ -728,7 +728,7 @@ npm test
 ```
 
 沙箱連不到任何一個金融 API，所以驗證靠的是 known-answer 測試 + stub 過的
-`fetch`，不是真的打上去。12 個套件、189 項斷言，每個套件跑在自己的行程裡
+`fetch`，不是真的打上去。13 個套件、214 項斷言，每個套件跑在自己的行程裡
 （好幾個會替換 `global.fetch` 並重設模組層快取，共用行程會讓前一個的 stub
 汙染後一個）。
 
