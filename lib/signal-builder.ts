@@ -26,6 +26,45 @@ function pickDirection(biasItems: BiasItem[]): { direction: "long" | "short"; ti
   return { direction: net > 0 ? "long" : "short", tie: false };
 }
 
+/**
+ * Fallback when no timeframe returned candles: a structurally valid, honest
+ * no-trade signal. Every price field is 0 and labelled as unavailable — this
+ * is deliberately not a guess at the market price.
+ */
+function buildNoPriceSignal(
+  meta: CommodityMeta,
+  gaps: string[],
+  biasItems: BiasItem[],
+): TradeSignal {
+  return {
+    symbol: meta.symbol,
+    direction: "long",
+    generated_at: new Date().toISOString(),
+    bias_score: 0,
+    entry_structure_score: 0,
+    total_score: 0,
+    grade: "no-trade",
+    entry_zone: { low: 0, high: 0, reason: "無價格資料，無法計算進場區間" },
+    stop_loss: {
+      price: 0,
+      structure: "無價格資料",
+      reason: "無法取得任何時框的 K 棒，無結構可錨定停損",
+      invalidation: "no-trade：訊號不成立",
+    },
+    take_profits: [],
+    bias_items: biasItems,
+    entry_structures: [],
+    path_obstacles: [],
+    narrative:
+      `${meta.symbol} 無法產生有效訊號：所有 OHLCV 來源皆取得失敗（Twelve Data 與 yfinance 備援都沒有回應可用資料）。` +
+      `請檢查 /api/diagnostics 確認各資料來源在部署環境的連線狀態，或設定 TWELVE_DATA_API_KEY。` +
+      (biasItems.length > 0
+        ? `其餘面向仍取得 ${biasItems.length} 項因子，已列於下方供參考，但沒有價格就沒有可執行的進出場。`
+        : ""),
+    data_gaps: [...new Set(gaps)],
+  };
+}
+
 /** End-to-end Stage 2 pipeline: works for any of the 9 COMMODITIES via config/fundamentals.ts. */
 export async function buildTradeSignal(symbol: string): Promise<TradeSignal> {
   const meta = COMMODITIES.find((c) => c.symbol === symbol);
@@ -42,11 +81,26 @@ async function buildSignalForSymbol(
 ): Promise<TradeSignal> {
   const gaps: string[] = [];
 
-  const [d1, h4, w1] = await Promise.all([
+  // OHLCV and the five non-technical dimensions don't depend on each other,
+  // so they run concurrently — serverless request budgets are tight.
+  const ohlcvPromise = Promise.all([
     fetchOHLCV(meta, "D1", 260, gaps),
     fetchOHLCV(meta, "H4", 260, gaps),
     fetchOHLCV(meta, "W1", 110, gaps),
   ]);
+  const nonTechnicalPromise = (async () => {
+    // Positioning first — fundFlow reuses its COT reports instead of re-fetching.
+    const positioning = await analyzePositioning(meta, config, gaps);
+    const [fundamentalItems, news, fundFlowItems] = await Promise.all([
+      analyzeFundamental(meta, config, gaps),
+      analyzeNews(config.gdeltQuery, config.newsKeywords, gaps),
+      analyzeFundFlow(meta, config, positioning.reports, gaps),
+    ]);
+    return { positioning, fundamentalItems, news, fundFlowItems };
+  })();
+
+  const [[d1, h4, w1], nonTechnical] = await Promise.all([ohlcvPromise, nonTechnicalPromise]);
+  const { positioning, fundamentalItems, news, fundFlowItems } = nonTechnical;
 
   const candlesByTf = {
     D1: d1?.candles,
@@ -56,22 +110,22 @@ async function buildSignalForSymbol(
 
   const currentPrice = d1?.candles.at(-1)?.close ?? h4?.candles.at(-1)?.close ?? w1?.candles.at(-1)?.close;
   if (currentPrice == null) {
-    gaps.push("所有時框的 OHLCV 皆取得失敗，無法計算即時價位");
-    throw new Error(`${meta.symbol}: no OHLCV data available from any source`);
+    // Without a price there is no entry, no structure and no valid signal — but
+    // the other five dimensions may still have produced real findings, so return
+    // a no-trade signal carrying them plus the reason, instead of failing the
+    // whole request and leaving the UI with nothing to show.
+    gaps.push("所有時框的 OHLCV 皆取得失敗，無法計算即時價位，訊號強制為 no-trade");
+    return buildNoPriceSignal(meta, gaps, [
+      ...fundamentalItems,
+      ...positioning.biasItems,
+      ...news.biasItems,
+      ...fundFlowItems,
+    ]);
   }
 
   const technical = analyzeTechnical(candlesByTf, currentPrice, gaps);
   const atrD1 = d1 ? computeAtr(d1.candles, 14) : null;
   if (atrD1 == null) gaps.push("D1 K棒不足以計算 ATR(14)");
-
-  // Positioning first — fundFlow reuses its COT reports instead of re-fetching.
-  const positioning = await analyzePositioning(meta, config, gaps);
-
-  const [fundamentalItems, news, fundFlowItems] = await Promise.all([
-    analyzeFundamental(meta, config, gaps),
-    analyzeNews(config.gdeltQuery, config.newsKeywords, gaps),
-    analyzeFundFlow(meta, config, positioning.reports, gaps),
-  ]);
 
   const biasItems: BiasItem[] = [
     ...technical.biasItems,

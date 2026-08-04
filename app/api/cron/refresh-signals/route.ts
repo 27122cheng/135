@@ -4,7 +4,9 @@ import { buildTradeSignal } from "@/lib/signal-builder";
 import { getSupabaseServerClient } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+// 60s is the Hobby-plan ceiling; a higher value fails deployment there.
+// Building 9 symbols may still exceed it — raise this if your plan allows.
+export const maxDuration = 60;
 
 /**
  * Vercel Cron target (see vercel.json, every 4h). Builds a fresh signal for

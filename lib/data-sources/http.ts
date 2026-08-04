@@ -7,7 +7,7 @@
 export async function fetchJson<T>(
   url: string,
   init?: RequestInit,
-  timeoutMs = 10000,
+  timeoutMs = 6000,
 ): Promise<T | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -25,7 +25,7 @@ export async function fetchJson<T>(
 export async function fetchText(
   url: string,
   init?: RequestInit,
-  timeoutMs = 10000,
+  timeoutMs = 6000,
 ): Promise<string | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);

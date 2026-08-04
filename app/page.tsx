@@ -17,10 +17,24 @@ export default function Home() {
     setLoading(true);
     setError(null);
     setSignal(null);
-    fetch(`/api/signal/${selected}`)
+    // Without this the page can sit on "載入中" forever if the serverless
+    // function times out and never sends a usable response.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 70000);
+    fetch(`/api/signal/${selected}`, { signal: controller.signal })
       .then(async (res) => {
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+        const text = await res.text();
+        let data: unknown;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          // A gateway timeout/5xx returns HTML, not JSON — show something useful.
+          throw new Error(`伺服器回應非 JSON (HTTP ${res.status}): ${text.slice(0, 120)}`);
+        }
+        if (!res.ok) {
+          const err = (data as { error?: string }).error;
+          throw new Error(err ?? `HTTP ${res.status}`);
+        }
         return data as TradeSignal;
       })
       .then((data) => {
@@ -30,10 +44,13 @@ export default function Home() {
         if (!cancelled) setError(err.message);
       })
       .finally(() => {
+        clearTimeout(timeout);
         if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
+      clearTimeout(timeout);
+      controller.abort();
     };
   }, [selected]);
 
@@ -53,11 +70,18 @@ export default function Home() {
       </aside>
 
       <section className="flex-1">
-        {loading && <p className="text-sm text-neutral-500">載入 {selected} 訊號中…</p>}
-        {error && (
-          <p className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
-            取得訊號失敗：{error}
+        {loading && (
+          <p className="text-sm text-neutral-500">
+            載入 {selected} 訊號中…（首次查詢需向多個外部來源取資料，可能要 10–30 秒）
           </p>
+        )}
+        {error && (
+          <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
+            <p>取得訊號失敗：{error}</p>
+            <a href="/api/diagnostics" className="mt-2 block underline hover:text-red-200">
+              開啟 /api/diagnostics 檢查各資料來源在部署環境的連線狀態 →
+            </a>
+          </div>
         )}
         {!loading && !error && signal && <SignalCard signal={signal} />}
       </section>

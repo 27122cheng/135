@@ -106,6 +106,32 @@ calls including an Anthropic completion) can run past Vercel's default
 serverless timeout on some plans — `maxDuration = 300` is declared on the
 route, which requires a plan that allows it.
 
+## 部署到 Vercel 後畫面卡在「載入中」/ 沒東西？
+
+先開 **`/api/diagnostics`** —— 它會回報哪些環境變數有設（只回 true/false，不回值），
+並從部署環境實際去 ping 每個上游來源，這是唯一能分辨「沒設金鑰」和
+「這個主機擋掉 Vercel 機房 IP」的方法。`verdict` 欄位會直接告訴你能不能產生訊號。
+
+最常見的三個原因：
+
+1. **Vercel 上沒設環境變數。** 完全沒設金鑰時，OHLCV 只剩 Yahoo 備援一條路。
+   到 Vercel 專案 Settings → Environment Variables 設定 `.env.example` 裡的項目
+   （至少 `TWELVE_DATA_API_KEY`），設定後要 **重新 deploy** 才會生效。
+2. **Yahoo Finance 擋雲端機房 IP。** `query1.finance.yahoo.com` 對資料中心 IP
+   常回 429/401，本機能通不代表 Vercel 能通。診斷端點會顯示實際狀態碼。
+   這種情況只能靠設定 `TWELVE_DATA_API_KEY` 走主要來源。
+3. **Serverless 逾時。** 預設只有 10 秒，這條 pipeline 一定超過。兩個 API route
+   都已宣告 `maxDuration = 60`（Hobby 方案上限；更高需要 Pro）。
+
+即使所有來源都失敗，`/api/signal/[symbol]` 現在也會回 **HTTP 200 + `grade: "no-trade"`**
+的訊號（價格欄位為 0 並標明無資料，不是猜的價格），把失敗原因完整列在
+`data_gaps` 裡，畫面一定看得到東西而不是空白。
+
+### Vercel Cron 方案限制
+
+`vercel.json` 用的是 spec 要求的 `0 */4 * * *`（每 4 小時）。**Hobby 方案只允許每日一次的
+cron**，這個排程需要 Pro 方案；若你在 Hobby，把它改成例如 `0 0 * * *` 才會被接受。
+
 ## APIs used
 
 | API | Auth | Used for | Notes |
