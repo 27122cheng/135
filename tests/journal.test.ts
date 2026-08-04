@@ -42,9 +42,10 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
 
 // ── grade table ───────────────────────────────────────────────────
 {
-  check("total 15 / bias 7 no longer falls to no-trade", gradeSignal(7, 8, 15) === "B");
-  check("A+ still needs all three", gradeSignal(8, 4, 14) === "A+");
-  check("14+ missing structure lands on B", gradeSignal(8, 3, 14) === "B");
+  // total is always bias + structure in real use, so the triples here are too.
+  check("bias 7 / structure 8 now grades A, not no-trade", gradeSignal(7, 8, 15) === "A");
+  check("A+ still needs all three", gradeSignal(10, 4, 14) === "A+");
+  check("A+ blocked by thin structure falls to A", gradeSignal(11, 3, 14) === "A");
   check("A band unchanged", gradeSignal(6, 4, 10) === "A");
   check("B band unchanged", gradeSignal(5, 4, 9) === "B");
   check("C band unchanged", gradeSignal(2, 2, 4) === "C");
@@ -59,11 +60,27 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
   }
   check("nothing with bias>=6 and structure>0 falls to no-trade", !anyNoTrade);
 
-  // Known residual, pinned so it can't shift unnoticed: the A band still caps
-  // at 13, so 13 grades A while 14 grades B. Removing `totalScore <= 13` from
-  // the A rule would close it — a scoring-policy call, not a bug fix.
-  check("residual: total 13 grades A", gradeSignal(6, 7, 13) === "A");
-  check("residual: total 14 grades B", gradeSignal(6, 8, 14) === "B");
+  // The A cap is gone: crossing 13 -> 14 no longer steps a grade down.
+  check("total 13 grades A", gradeSignal(6, 7, 13) === "A");
+  check("total 14 with the same bias still grades A", gradeSignal(6, 8, 14) === "A");
+  check("a strong bias with thin structure keeps A", gradeSignal(8, 3, 11) === "A");
+
+  // With adequate conviction, adding structure must never lower the grade.
+  let inverted: string | null = null;
+  for (let bias = 6; bias <= 14; bias++) {
+    for (let ess = 1; ess <= 14; ess++) {
+      const before = rank(gradeSignal(bias, ess, bias + ess));
+      const after = rank(gradeSignal(bias, ess + 1, bias + ess + 1));
+      if (after < before) inverted = `bias=${bias} ess=${ess}->${ess + 1}`;
+    }
+  }
+  check("more structure never lowers the grade (bias>=6)", inverted === null, inverted);
+
+  // The one inversion left, pinned so it can't move unnoticed: below the bias
+  // floor the B band and the 14+ catch-all sandwich a no-trade middle.
+  check("weak bias, total 9 grades B", gradeSignal(5, 4, 9) === "B");
+  check("weak bias, total 12 is no-trade", gradeSignal(5, 7, 12) === "no-trade");
+  check("weak bias, total 14 grades B again", gradeSignal(5, 9, 14) === "B");
 
   let everBetter = false;
   for (let bias = -2; bias <= 14; bias++) {

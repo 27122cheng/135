@@ -50,13 +50,19 @@ Unchanged from Stage 1, now exercised by all 9 symbols:
   1.5% of the entry zone).
 - `grade`: A+/A/B/C/no-trade per the fixed lookup table; disqualifiers
   (`total<3`, `bias_score<=0`, `entry_structure_score=0`) are checked first.
-  One patch to the table: the A band caps at total 13, so a signal scoring 14+
-  that missed A+ on one component used to match no rule and fall through to
-  `no-trade` — bias 7 / structure 8 was untradeable while a weaker bias 5 /
-  structure 4 graded B. A catch-all now lands those on **B**. Two behaviours
-  are deliberately left as-is and pinned by tests: total 10-13 with
-  `bias_score < 6` stays `no-trade`, and with bias 6-7 a total of 13 still
-  grades A while 14 grades B.
+  Two departures from the literal table, both removing cases where a *better*
+  signal graded worse. (1) The A band no longer caps at total 13 — it reads
+  `total >= 10 且 bias >= 6`. With the cap, bias 6 / structure 7 graded A while
+  bias 6 / structure 8 dropped to B: more structure, lower grade. (2) A
+  catch-all sends any remaining `total >= 14` to **B**; without it those
+  matched no rule and fell to `no-trade`, so bias 7 / structure 8 was
+  untradeable while a weaker bias 5 / structure 4 graded B.
+  One inversion is left on purpose and pinned by tests: below the bias floor
+  (`bias_score < 6`), total 6-9 grades B, total 10-13 is `no-trade`, and total
+  14+ is B again. The middle band is the spec working as intended — weak
+  directional conviction shouldn't trade — and the outer two are the B band and
+  the catch-all. Making it uniform means dropping the catch-all or giving the B
+  band a bias floor; both are scoring-policy calls, not bug fixes.
 - `stop_loss` is hard-anchored on the same protecting structure used for
   `entry_structure_score` (ATR only ever adds a small buffer beyond it,
   never the sole basis). `take_profits` are hard-anchored on real

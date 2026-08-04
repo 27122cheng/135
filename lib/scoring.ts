@@ -38,21 +38,22 @@ export function computeEntryStructureScore(
  * (total<3, bias_score<=0, entry_structure_score=0) are checked first since
  * they are explicit overrides.
  *
- * The A band is capped at 13, so a signal scoring 14+ that misses A+ on one
- * component matched no rule at all and fell through to no-trade — meaning
- * bias 7 / structure 8 (total 15) was untradeable while a weaker bias 5 /
- * structure 4 (total 9) graded B. The catch-all below fixes that: 14+ without
- * A+ lands on B rather than being thrown away.
+ * Two departures from the literal table, both to remove score inversions where
+ * a *better* signal graded worse:
  *
- * Two behaviours this deliberately leaves alone:
- *  - total 10-13 with bias_score < 6 stays no-trade. That is the spec working
- *    as intended — weak directional conviction shouldn't trade regardless of
- *    how much structure sits nearby.
- *  - The A band still caps at 13, so with bias 6-7 a total of 13 grades A while
- *    14 grades B. The catch-all stops the fall to no-trade but not that step
- *    down. Dropping `totalScore <= 13` from the A rule would close it; that is
- *    a scoring-policy change, not a bug fix, so it is left to the operator.
- *    Pinned by tests so it can't shift unnoticed.
+ *  - The A band no longer caps at total 13. With the cap, bias 6 / structure 7
+ *    (total 13) graded A while bias 6 / structure 8 (total 14) dropped to B —
+ *    more structure, lower grade. A now reads "total >= 10 且 bias >= 6".
+ *  - A catch-all sends any remaining total >= 14 to B. Without it those fell
+ *    through every rule to no-trade, so bias 7 / structure 8 was untradeable
+ *    while a weaker bias 5 / structure 4 graded B.
+ *
+ * One inversion is left, deliberately: with bias_score < 6, total 6-9 grades B,
+ * total 10-13 is no-trade, and total 14+ is B again via the catch-all. The
+ * middle band is the spec working as intended (weak directional conviction
+ * shouldn't trade), and the outer two are the B band and the catch-all. Making
+ * it uniform means either dropping the catch-all or giving the B band a bias
+ * floor — both are scoring-policy calls, not bug fixes. Pinned by tests.
  */
 export function gradeSignal(
   biasScore: number,
@@ -69,7 +70,7 @@ export function gradeSignal(
   const bump = Math.max(0, biasThresholdBump);
   if (totalScore < 3 || biasScore <= bump || entryStructureScore === 0) return "no-trade";
   if (totalScore >= 14 && biasScore >= 8 + bump && entryStructureScore >= 4) return "A+";
-  if (totalScore >= 10 && totalScore <= 13 && biasScore >= 6 + bump) return "A";
+  if (totalScore >= 10 && biasScore >= 6 + bump) return "A";
   if (totalScore >= 6 && totalScore <= 9) return "B";
   if (totalScore >= 14) return "B";
   if (totalScore >= 3 && totalScore <= 5) return "C";
