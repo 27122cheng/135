@@ -38,6 +38,7 @@ jobs:
           # only that symbol.
           symbols="EURUSD USDJPY GBPUSD XAUUSD NAS100 GER40 US30 WTI SPX500"
           failed=""
+          skipped=""
 
           for symbol in $symbols; do
             echo "::group::$symbol"
@@ -52,6 +53,13 @@ jobs:
             if [ "$status" = "200" ]; then
               echo "ok"
               head -c 400 "/tmp/$symbol.json"
+            elif [ "$status" = "501" ]; then
+              # No database configured yet. A setup gap, not a failure — the
+              # same treatment the monitor already gives it, so an unfinished
+              # deployment doesn't paint the Actions tab red every 4 hours.
+              echo "::warning::$symbol skipped — no database configured"
+              head -c 200 "/tmp/$symbol.json"
+              skipped="$skipped $symbol"
             else
               echo "HTTP $status" >&2
               head -c 400 "/tmp/$symbol.json" >&2 || true
@@ -65,6 +73,9 @@ jobs:
             sleep 20
           done
 
+          if [ -n "$skipped" ]; then
+            echo "Skipped (not configured):$skipped"
+          fi
           if [ -n "$failed" ]; then
             echo "Failed symbols:$failed" >&2
             exit 1
