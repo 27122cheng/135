@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { BoardRow } from "@/app/api/board/route";
+import { userKeyHeaders } from "@/lib/user-keys-client";
 
 /**
  * 交易總覽 — which instruments have a trade right now, at a glance.
@@ -30,6 +31,11 @@ interface BoardResponse {
   next?: string;
 }
 
+/** Cheap: one query. */
+const READ_INTERVAL_MS = 60_000;
+/** Expensive: nine pipelines. Matches the 5-minute position monitor. */
+const SCAN_INTERVAL_MS = 5 * 60_000;
+
 const GRADE_STYLE: Record<string, string> = {
   "A+": "bg-emerald-500/20 text-emerald-300",
   A: "bg-emerald-500/15 text-emerald-400",
@@ -55,67 +61,16 @@ function ago(iso: string | null): string {
 }
 
 
-/**
- * A freshly built signal, in the shape the board draws.
- *
- * Mirrors `toBoardRow` on the server. Kept small and explicit rather than
- * shared through a module: the two inputs genuinely differ — a stored row has
- * an id and a `generated_at` from the database, a fresh one has neither.
- */
-function fromSignal(
-  base: BoardRow,
-  signal: {
-    direction: "long" | "short";
-    grade: BoardRow["grade"];
-    generated_at: string;
-    data_gaps?: unknown[];
-    trade_plan?: {
-      stance?: "enter" | "wait";
-      entry?: number | null;
-      stop_loss?: number | null;
-      take_profit?: number | null;
-      risk_reward?: number | null;
-      summary?: string;
-      wait_for?: string | null;
-      add_ons?: Array<{
-        sequence: number;
-        price: number;
-        structure: string;
-        new_stop_loss: number;
-      }>;
-    };
-  },
-): BoardRow {
-  const plan = signal.trade_plan;
-  return {
-    ...base,
-    direction: signal.direction,
-    grade: signal.grade,
-    stance: plan?.stance ?? null,
-    entry: plan?.entry ?? null,
-    stopLoss: plan?.stop_loss ?? null,
-    takeProfit: plan?.take_profit ?? null,
-    riskReward: plan?.risk_reward ?? null,
-    addOns: (plan?.add_ons ?? []).map((a) => ({
-      sequence: a.sequence,
-      price: a.price,
-      structure: a.structure,
-      new_stop_loss: a.new_stop_loss,
-    })),
-    summary: plan?.summary ?? null,
-    waitFor: plan?.wait_for ?? null,
-    generatedAt: signal.generated_at,
-    gapCount: Array.isArray(signal.data_gaps) ? signal.data_gaps.length : 0,
-  };
-}
-
 export default function BoardPage() {
   const [data, setData] = useState<BoardResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [rescanning, setRescanning] = useState<Set<string>>(new Set());
-  /** Live results from "全部重新掃描", drawn over the stored rows. */
-  const [fresh, setFresh] = useState<Map<string, BoardRow>>(new Map());
+  const [autoScan, setAutoScan] = useState(true);
+  // The scan timer must see the newest rows without being torn down and
+  // rebuilt every time they change — that would reset the 5-minute clock on
+  // every poll and the rescan would never fire.
+  const dataRef = useRef<BoardResponse | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -129,50 +84,92 @@ export default function BoardPage() {
   }, []);
 
   useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
+
+  useEffect(() => {
     void load();
   }, [load]);
 
-  /**
-   * Re-runs every symbol, in parallel, from the browser.
-   *
-   * Not one server request that loops: nine pipelines do not fit in Vercel
-   * Hobby's 60-second function ceiling, and a single long request gives no
-   * feedback until it either finishes or dies. Nine independent requests each
-   * fit comfortably, and each row updates the moment its own returns.
-   *
-   * Results are held in memory and drawn over the stored rows rather than
-   * written back. `/api/signal` deliberately doesn't persist — pressing this
-   * shouldn't append nine rows to the history the /history page reads, and it
-   * shouldn't fire the Telegram alerts that a *scheduled* scan is supposed to
-   * own. The 4-hourly refresh remains the only thing that writes.
-   */
-  async function rescanAll() {
-    const rows = data?.rows ?? [];
-    setRescanning(new Set(rows.map((r) => r.symbol)));
-    await Promise.all(
-      rows.map(async (row) => {
-        try {
-          const res = await fetch(`/api/signal/${row.symbol}`, { cache: "no-store" });
-          if (res.ok) {
-            const signal = await res.json();
-            setFresh((prev) => new Map(prev).set(row.symbol, fromSignal(row, signal)));
-          }
-        } catch {
-          // Ignored on purpose: a symbol that failed keeps its stored row,
-          // which is older but real.
-        } finally {
-          setRescanning((prev) => {
-            const next = new Set(prev);
-            next.delete(row.symbol);
-            return next;
-          });
-        }
-      }),
-    );
-  }
 
-  const stored = data?.rows ?? [];
-  const rows = stored.map((r) => fresh.get(r.symbol) ?? r);
+  /**
+   * Re-runs symbols in parallel, storing each result.
+   *
+   * Parallel from the browser rather than one looping server request: nine
+   * pipelines do not fit in Vercel Hobby's 60-second ceiling, and a single long
+   * request gives no feedback until it finishes or dies.
+   *
+   * Each result is **written**, then the whole board is re-read from the
+   * database. That extra round trip is the point: the board and the detail page
+   * now render the same stored row, so they cannot disagree. Previously each
+   * built its own copy, and since the AI picks `stance`, the same symbol could
+   * legitimately come back 觀望 in one view and a full entry in the other.
+   */
+  const rescan = useCallback(
+    async (targets: BoardRow[]) => {
+      if (targets.length === 0) return;
+      setRescanning(new Set(targets.map((r) => r.symbol)));
+      await Promise.all(
+        targets.map(async (row) => {
+          try {
+            await fetch(`/api/scan?symbol=${row.symbol}`, {
+              cache: "no-store",
+              headers: userKeyHeaders(),
+            });
+          } catch {
+            // Ignored: a symbol that failed keeps its stored row, which is
+            // older but real. The reload below is the source of truth.
+          } finally {
+            setRescanning((prev) => {
+              const next = new Set(prev);
+              next.delete(row.symbol);
+              return next;
+            });
+          }
+        }),
+      );
+      await load();
+    },
+    [load],
+  );
+
+  /**
+   * Keeps the board current without anyone pressing anything.
+   *
+   * Two different clocks, because the two jobs cost wildly different amounts.
+   * Re-reading the stored rows is one database query, so it runs often. A full
+   * rescan is nine analysis pipelines and burns free-tier AI quota, so it runs
+   * on the 5-minute tick and only over rows that are actually older than that
+   * — a symbol the scheduler just refreshed is not rebuilt for the sake of it.
+   *
+   * Both stop when the tab is hidden. A dashboard left open in a background
+   * tab overnight would otherwise spend the whole daily quota on a screen
+   * nobody is looking at.
+   */
+  useEffect(() => {
+    if (!autoScan) return;
+    const visible = () => document.visibilityState === "visible";
+
+    const readTimer = setInterval(() => {
+      if (visible()) void load();
+    }, READ_INTERVAL_MS);
+
+    const scanTimer = setInterval(() => {
+      if (!visible()) return;
+      const cutoff = Date.now() - SCAN_INTERVAL_MS;
+      const stale = (dataRef.current?.rows ?? []).filter(
+        (r) => !r.generatedAt || new Date(r.generatedAt).getTime() < cutoff,
+      );
+      if (stale.length > 0) void rescan(stale);
+    }, SCAN_INTERVAL_MS);
+
+    return () => {
+      clearInterval(readTimer);
+      clearInterval(scanTimer);
+    };
+  }, [autoScan, load, rescan]);
+
+  const rows = data?.rows ?? [];
   // Trades first, then by grade, then everything else. The question this page
   // answers is "what is actionable", so actionable sorts to the top.
   const order = ["A+", "A", "B", "C", "no-trade"];
@@ -224,13 +221,22 @@ export default function BoardPage() {
             <span>最舊資料 {ago(oldest)}</span>
           </>
         )}
+        <label className="ml-auto flex shrink-0 cursor-pointer items-center gap-1.5 text-[11px] text-neutral-500">
+          <input
+            type="checkbox"
+            checked={autoScan}
+            onChange={(e) => setAutoScan(e.target.checked)}
+            className="h-3 w-3 accent-emerald-500"
+          />
+          每 5 分鐘自動掃描
+        </label>
         <button
           type="button"
-          onClick={() => void rescanAll()}
+          onClick={() => void rescan(rows)}
           disabled={rescanning.size > 0}
-          className="ml-auto rounded-lg border border-neutral-700 px-2.5 py-1 text-[11px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+          className="shrink-0 rounded-lg border border-neutral-700 px-2.5 py-1 text-[11px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
         >
-          {rescanning.size > 0 ? `重新掃描中… 剩 ${rescanning.size}` : "全部重新掃描"}
+          {rescanning.size > 0 ? `掃描中… 剩 ${rescanning.size}` : "立即全部掃描"}
         </button>
       </div>
 
@@ -374,10 +380,17 @@ export default function BoardPage() {
         })}
       </div>
 
-      <p className="mt-4 text-[11px] leading-relaxed text-neutral-600">
-        這頁讀的是排程掃描寫進資料庫的結果，所以是即開即有，不會每換一個商品就重跑一次分析。
-        資料新舊看每一列右邊的時間；要立刻更新就按「全部重新掃描」，九個商品會同時跑。
-      </p>
+      <div className="mt-4 space-y-1.5 text-[11px] leading-relaxed text-neutral-600">
+        <p>
+          這頁與詳細分析頁讀的是<span className="text-neutral-400">同一筆</span>資料庫紀錄，
+          所以兩邊不可能講不同的話。掃描結果會寫回資料庫，不是各自算各自的。
+        </p>
+        <p>
+          自動掃描每分鐘重讀一次資料庫（便宜），每 5 分鐘只重跑
+          <span className="text-neutral-400">超過 5 分鐘沒更新</span>的商品（九條完整分析，會用掉免費 AI 額度）。
+          分頁切到背景就暫停 —— 沒人在看的畫面不該把一天的額度燒光。
+        </p>
+      </div>
     </main>
   );
 }

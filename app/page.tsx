@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { COMMODITIES, type CommodityMeta, type TradeSignal } from "@/types/signal";
 import { CommodityList } from "@/components/commodity-list";
@@ -14,6 +14,9 @@ export default function Home() {
   const [signal, setSignal] = useState<TradeSignal | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [building, setBuilding] = useState(false);
+  /** True while the first build for a never-scanned symbol is running. */
+  const [stale, setStale] = useState(false);
 
   useEffect(() => {
     setCustom(loadCustomSymbols());
@@ -29,61 +32,94 @@ export default function Home() {
     [custom],
   );
 
+  /**
+   * Stored first, build only on request.
+   *
+   * This used to run a full pipeline on every symbol change: 10–30 seconds of
+   * waiting each time, and — worse — a *second* independent build of a symbol
+   * the board had already built. Since the AI chooses the trade plan's stance,
+   * two builds could disagree, and they did: the board showed an entry while
+   * this page showed 觀望, both stamped the same minute.
+   *
+   * So both views now read the same stored row. Rebuilding is an explicit
+   * action, and it writes, so the two stay in agreement afterwards too.
+   */
+  const loadStored = useCallback(async () => {
+    const customEntry = custom.find((c) => c.symbol === selected);
+    if (customEntry) return null; // custom symbols are never stored
+    try {
+      const res = await fetch(`/api/history?symbol=${selected}&limit=1`, { cache: "no-store" });
+      if (!res.ok) return null;
+      const body = await res.json();
+      return (body.rows?.[0] as TradeSignal | undefined) ?? null;
+    } catch {
+      return null;
+    }
+  }, [selected, custom]);
+
+  const rebuild = useCallback(async () => {
+    setBuilding(true);
+    setError(null);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 70000);
+    try {
+      const customEntry = custom.find((c) => c.symbol === selected);
+      const keyHeaders = userKeyHeaders();
+      const res = customEntry
+        ? await fetch("/api/signal/custom", {
+            method: "POST",
+            headers: { "content-type": "application/json", ...keyHeaders },
+            body: JSON.stringify(customEntry),
+            signal: controller.signal,
+          })
+        : await fetch(`/api/scan?symbol=${selected}`, {
+            headers: keyHeaders,
+            signal: controller.signal,
+          });
+      const text = await res.text();
+      let data: unknown;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(`伺服器回應非 JSON (HTTP ${res.status}): ${text.slice(0, 120)}`);
+      }
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
+      // /api/scan wraps the signal; /api/signal/custom returns it bare.
+      const signalData = (data as { signal?: TradeSignal }).signal ?? (data as TradeSignal);
+      setSignal(signalData);
+      setStale(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      clearTimeout(timeout);
+      setBuilding(false);
+    }
+  }, [selected, custom]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setSignal(null);
-    // Without this the page can sit on "載入中" forever if the serverless
-    // function times out and never sends a usable response.
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 70000);
+    setStale(false);
 
-    // Keys pasted into /settings ride along with the request; the server uses
-    // them for this call only and falls back to env vars when absent.
-    const keyHeaders = userKeyHeaders();
-    const customEntry = custom.find((c) => c.symbol === selected);
-    const request = customEntry
-      ? fetch("/api/signal/custom", {
-          method: "POST",
-          headers: { "content-type": "application/json", ...keyHeaders },
-          body: JSON.stringify(customEntry),
-          signal: controller.signal,
-        })
-      : fetch(`/api/signal/${selected}`, { headers: keyHeaders, signal: controller.signal });
+    void loadStored().then((stored) => {
+      if (cancelled) return;
+      setLoading(false);
+      if (stored) {
+        setSignal(stored);
+        return;
+      }
+      // Nothing stored — a custom symbol, or one the scan has never covered.
+      // Building it here is the only way to show anything at all.
+      setStale(true);
+      void rebuild();
+    });
 
-    request
-      .then(async (res) => {
-        const text = await res.text();
-        let data: unknown;
-        try {
-          data = JSON.parse(text);
-        } catch {
-          // A gateway timeout/5xx returns HTML, not JSON — show something useful.
-          throw new Error(`伺服器回應非 JSON (HTTP ${res.status}): ${text.slice(0, 120)}`);
-        }
-        if (!res.ok) {
-          const err = (data as { error?: string }).error;
-          throw new Error(err ?? `HTTP ${res.status}`);
-        }
-        return data as TradeSignal;
-      })
-      .then((data) => {
-        if (!cancelled) setSignal(data);
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
-      })
-      .finally(() => {
-        clearTimeout(timeout);
-        if (!cancelled) setLoading(false);
-      });
     return () => {
       cancelled = true;
-      clearTimeout(timeout);
-      controller.abort();
     };
-  }, [selected, custom]);
+  }, [selected, loadStored, rebuild]);
 
   return (
     <main className="mx-auto min-h-screen max-w-2xl px-4 py-5">
@@ -115,12 +151,14 @@ export default function Home() {
         <CommodityList symbols={symbols} selected={selected} onSelect={setSelected} />
       </div>
 
-      {loading && (
+      {(loading || (building && !signal)) && (
         <p className="py-8 text-center text-sm text-neutral-500">
-          載入 {selected} 訊號中…
-          <span className="mt-1 block text-xs text-neutral-600">
-            需向多個外部來源取資料，約 10–30 秒
-          </span>
+          {building ? `分析 ${selected} 中…` : `載入 ${selected}…`}
+          {building && (
+            <span className="mt-1 block text-xs text-neutral-600">
+              這個商品還沒有掃描紀錄，需向多個外部來源取資料，約 10–30 秒
+            </span>
+          )}
         </p>
       )}
       {error && (
@@ -131,7 +169,26 @@ export default function Home() {
           </a>
         </div>
       )}
-      {!loading && !error && signal && <SignalCard signal={signal} />}
+
+      {signal && (
+        <>
+          <div className="mb-2 flex items-center gap-3 text-[11px] text-neutral-600">
+            <span>
+              資料時間 {new Date(signal.generated_at).toLocaleString("zh-TW")}
+              {!stale && "（與總覽同一筆）"}
+            </span>
+            <button
+              type="button"
+              onClick={() => void rebuild()}
+              disabled={building}
+              className="ml-auto shrink-0 rounded-lg border border-neutral-700 px-2.5 py-1 text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+            >
+              {building ? "重新分析中…" : "重新分析"}
+            </button>
+          </div>
+          <SignalCard signal={signal} />
+        </>
+      )}
     </main>
   );
 }
