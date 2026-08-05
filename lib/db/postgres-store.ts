@@ -97,6 +97,21 @@ export function postgresStore(connectionString: string): SignalStore {
       }
     },
 
+    async latestPerSymbol(): Promise<SignalRow[]> {
+      try {
+        // `distinct on` is the one-query form of "newest row per symbol"; the
+        // order by must lead with the same expression for Postgres to accept it.
+        const rows = await sql`
+          select distinct on (symbol) *
+          from signals
+          order by symbol, generated_at desc
+        `;
+        return rows as unknown as SignalRow[];
+      } catch (err) {
+        throw explain(err);
+      }
+    },
+
     async insertJournalEntry(
       entry: JournalEntryInput,
       severity: number | null,

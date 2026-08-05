@@ -30,6 +30,16 @@ export interface SignalStore {
   insertSignal(signal: TradeSignal): Promise<void>;
   listSignals(filter: HistoryFilter): Promise<SignalRow[]>;
 
+  /**
+   * The newest stored signal for each symbol, in one round trip.
+   *
+   * The board needs all nine at once. Doing that as nine `listSignals(limit:1)`
+   * calls is nine network hops on a serverless request, and building them live
+   * is nine full pipelines — which is exactly the wait this replaces. The
+   * scheduled refresh has already done the work; this just reads it.
+   */
+  latestPerSymbol(): Promise<SignalRow[]>;
+
   /** `severity` is computed server-side, so it is passed separately from the input. */
   insertJournalEntry(entry: JournalEntryInput, severity: number | null): Promise<JournalEntry>;
   /**

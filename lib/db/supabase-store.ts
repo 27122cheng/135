@@ -91,6 +91,29 @@ export function supabaseStore(): SignalStore | null {
       return (data ?? []) as SignalRow[];
     },
 
+    async latestPerSymbol(): Promise<SignalRow[]> {
+      const client = getSupabaseAnonClient() ?? getSupabaseServerClient();
+      if (!client) throw new Error("缺少 Supabase 金鑰，無法讀取 signals");
+      // PostgREST has no `distinct on`, so this takes a recent window and keeps
+      // the first row per symbol. 200 covers nine symbols refreshed 4-hourly
+      // for several days, and the order guarantees "first seen" is "newest".
+      const { data, error } = await client
+        .from("signals")
+        .select("*")
+        .order("generated_at", { ascending: false })
+        .limit(200);
+      if (error) throw new Error(error.message);
+
+      const seen = new Set<string>();
+      const latest: SignalRow[] = [];
+      for (const row of (data ?? []) as SignalRow[]) {
+        if (seen.has(row.symbol)) continue;
+        seen.add(row.symbol);
+        latest.push(row);
+      }
+      return latest;
+    },
+
     async insertJournalEntry(
       entry: JournalEntryInput,
       severity: number | null,

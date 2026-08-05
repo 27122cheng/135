@@ -17,6 +17,11 @@ export default function Home() {
 
   useEffect(() => {
     setCustom(loadCustomSymbols());
+    // Deep link from 交易總覽, so "完整分析 →" lands on the right instrument
+    // instead of whatever was selected last. Read once on mount: after that the
+    // list is in charge, and rewriting the URL on every click would fight it.
+    const wanted = new URLSearchParams(window.location.search).get("symbol");
+    if (wanted) setSelected(wanted.toUpperCase());
   }, []);
 
   const symbols: CommodityMeta[] = useMemo(
@@ -85,6 +90,9 @@ export default function Home() {
       <header className="mb-3 flex items-baseline justify-between gap-3">
         <h1 className="text-base font-bold text-neutral-100">多商品交易訊號</h1>
         <nav className="flex shrink-0 gap-3 text-sm text-neutral-500">
+          <Link href="/board" className="hover:text-neutral-200">
+            總覽
+          </Link>
           <Link href="/settings" className="hover:text-neutral-200">
             金鑰
           </Link>
