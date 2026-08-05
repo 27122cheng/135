@@ -8,6 +8,13 @@ import { TradePlanCard } from "@/components/trade-plan-card";
 import { formatPrice, formatTime } from "@/lib/format";
 import { groupDataGaps, KEY_SOURCES } from "@/lib/data-gaps";
 import { cn } from "@/lib/utils";
+import {
+  LEVEL_LABEL,
+  planConfidence,
+  takeProfitConfidence,
+  type Confidence,
+  type ConfidenceLevel,
+} from "@/lib/analysis/confidence";
 
 const IMPACT_STYLE: Record<string, { label: string; className: string }> = {
   long: { label: "偏多", className: "bg-emerald-500/15 text-emerald-400" },
@@ -222,16 +229,46 @@ function hasNoPrice(signal: TradeSignal): boolean {
   return signal.entry_zone.low === 0 && signal.entry_zone.high === 0;
 }
 
+
+const CONFIDENCE_STYLE: Record<ConfidenceLevel, string> = {
+  high: "bg-emerald-500/15 text-emerald-400",
+  medium: "bg-amber-500/15 text-amber-400",
+  low: "bg-neutral-700/60 text-neutral-400",
+};
+
+/**
+ * Shows the number and the word, never one without the other.
+ *
+ * "中" alone hides that 45 and 69 are both 中; "62" alone reads as a
+ * probability. Together they say what they are: a ranking with a threshold.
+ */
+function ConfidenceBadge({ c, compact = false }: { c: Confidence; compact?: boolean }) {
+  return (
+    <span
+      className={cn(
+        "rounded px-1.5 py-0.5 font-medium tabular-nums",
+        compact ? "text-[10px]" : "text-[11px]",
+        CONFIDENCE_STYLE[c.level],
+      )}
+    >
+      {compact ? "" : "信心 "}
+      {LEVEL_LABEL[c.level]} {c.score}
+    </span>
+  );
+}
+
 function PriceRow({
   label,
   value,
   detail,
   tone,
+  confidence,
 }: {
   label: string;
   value: string;
   detail: string;
   tone: "entry" | "sl" | "tp";
+  confidence?: Confidence;
 }) {
   return (
     <details className="group border-b border-neutral-800 last:border-0">
@@ -248,18 +285,30 @@ function PriceRow({
           {label}
           <span className="text-xs text-neutral-600 group-open:hidden">▾</span>
         </span>
-        <span
-          className={cn(
-            "text-right font-mono text-base font-semibold tabular-nums",
-            tone === "sl" && "text-red-400",
-            tone === "tp" && "text-emerald-400",
-            tone === "entry" && "text-neutral-100",
-          )}
-        >
-          {value}
+        <span className="flex items-center gap-2">
+          {confidence && <ConfidenceBadge c={confidence} compact />}
+          <span
+            className={cn(
+              "text-right font-mono text-base font-semibold tabular-nums",
+              tone === "sl" && "text-red-400",
+              tone === "tp" && "text-emerald-400",
+              tone === "entry" && "text-neutral-100",
+            )}
+          >
+            {value}
+          </span>
         </span>
       </summary>
-      <p className="whitespace-pre-line pb-3 text-xs leading-relaxed text-neutral-500">{detail}</p>
+      <div className="pb-3">
+        <p className="whitespace-pre-line text-xs leading-relaxed text-neutral-500">{detail}</p>
+        {confidence && (
+          <ul className="mt-2 space-y-0.5 border-t border-neutral-800/60 pt-2 text-[11px] leading-relaxed text-neutral-600">
+            {confidence.factors.map((f, i) => (
+              <li key={i}>· {f}</li>
+            ))}
+          </ul>
+        )}
+      </div>
     </details>
   );
 }
@@ -268,16 +317,20 @@ function Section({
   title,
   children,
   defaultOpen = false,
+  aside,
 }: {
   title: string;
   children: React.ReactNode;
   defaultOpen?: boolean;
+  /** Rendered top-right of the header, on the same line as the title. */
+  aside?: React.ReactNode;
 }) {
   return (
     <Card>
       <details open={defaultOpen}>
-        <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-neutral-300">
-          {title}
+        <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 text-sm font-medium text-neutral-300">
+          <span>{title}</span>
+          {aside && <span className="ml-auto shrink-0">{aside}</span>}
         </summary>
         <div className="px-4 pb-4">{children}</div>
       </details>
@@ -287,6 +340,9 @@ function Section({
 
 export function SignalCard({ signal }: { signal: TradeSignal }) {
   const isNoTrade = signal.grade === "no-trade";
+  // Computed once and threaded into each target, so every per-target number
+  // demonstrably starts from the same base rather than being derived twice.
+  const overallConfidence = planConfidence(signal);
   const noPrice = hasNoPrice(signal);
   const entryLabel = noPrice
     ? "無資料"
@@ -334,7 +390,10 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
 
       {signal.news_digest && <NewsDigestCard digest={signal.news_digest} />}
 
-      <Section title="完整價位與分批出場">
+      <Section
+        title="完整價位與分批出場"
+        aside={<ConfidenceBadge c={overallConfidence} />}
+      >
         {isNoTrade && (
           <p className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
             {noPrice
@@ -370,6 +429,7 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
                   value={formatPrice(tp.price)}
                   detail={`${tp.reason}\n結構：${tp.structure}`}
                   tone="tp"
+                  confidence={takeProfitConfidence(signal, i, overallConfidence)}
                 />
               ))
           )}

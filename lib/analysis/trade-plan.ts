@@ -238,7 +238,6 @@ interface AiResponse {
   entry_reason?: string;
   sl_reason?: string;
   tp_reason?: string;
-  confidence?: string;
   summary?: string;
 }
 
@@ -253,7 +252,7 @@ const PLAN_SCHEMA = jsonSchema<AiResponse>(
   `輸出嚴格的 JSON（不要 markdown code fence、不要其他文字）：\n` +
     `{"entry_index": number, "sl_index": number, "tp_index": number, ` +
     `"entry_reason": string, "sl_reason": string, "tp_reason": string, ` +
-    `"confidence": "high"|"medium"|"low", "summary": string, "wait_for": string}\n` +
+    `"summary": string}\n` +
     `三個 reason 各用一句繁體中文說明為何選這個點，wait_for 填空字串。\n` +
     `summary 一律用繁體中文 80 字內總結你的判斷邏輯與主要風險。`,
   // Validated on the indices, not on a stance field — this schema is only
@@ -318,10 +317,15 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
     return fallbackPlan(input);
   }
 
-  const confidence =
-    parsed.confidence === "high" || parsed.confidence === "medium" || parsed.confidence === "low"
-      ? parsed.confidence
-      : "medium";
+  // Not taken from the model. `lib/analysis/confidence.ts` computes the number
+  // the card actually shows, from the grade, the geometry, the gap count and
+  // the local backtest; letting the plan carry a *different*, model-authored
+  // word beside it would be two answers to one question.
+  //
+  // Approximated here from what this function can see — the full computation
+  // needs the assembled signal, which does not exist yet at this point.
+  const confidence: "high" | "medium" | "low" =
+    input.grade === "A+" || input.grade === "A" ? "high" : input.grade === "B" ? "medium" : "low";
 
   return {
     stance: "enter",
