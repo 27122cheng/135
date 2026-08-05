@@ -23,19 +23,31 @@ export async function GET() {
     return json(
       {
         error: "未設定資料庫，設定無處可存",
-        next: "先在 /review 建立資料表，或改用 Vercel 環境變數。",
+        next: "設定 DATABASE_URL（或 Supabase 金鑰）之後才能儲存設定。",
         settings: [],
       },
       { status: 501 },
     );
   }
   try {
-    return json({ settings: await settingsStatus() });
+    const snapshot = await settingsStatus();
+    return json(
+      {
+        ...snapshot,
+        // A read failure is almost always "the table isn't there yet". Saying
+        // so with a 500 stops the page rendering "nothing configured" over a
+        // database that was never asked the question successfully.
+        next: snapshot.storeError
+          ? "app_settings 資料表可能還沒建立。用下方的「建立資料表」按鈕。"
+          : undefined,
+      },
+      { status: snapshot.storeError ? 500 : 200 },
+    );
   } catch (err) {
     return json(
       {
         error: err instanceof Error ? err.message : String(err),
-        next: "app_settings 資料表可能還沒建立。到 /review 按「建立資料表」。",
+        next: "app_settings 資料表可能還沒建立。用下方的「建立資料表」按鈕。",
         settings: [],
       },
       { status: 500 },
@@ -90,12 +102,12 @@ export async function POST(request: Request) {
       return json(
         {
           error: err instanceof Error ? err.message : String(err),
-          next: "app_settings 資料表可能還沒建立。到 /review 按「建立資料表」。",
+          next: "app_settings 資料表可能還沒建立。用下方的「建立資料表」按鈕。",
         },
         { status: 500 },
       );
     }
   }
 
-  return json({ saved, settings: await settingsStatus() });
+  return json({ saved, ...(await settingsStatus()) });
 }

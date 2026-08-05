@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     return json(
       {
         error:
-          "未設定任何通知管道。請在 Vercel 環境變數加上 TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID，或 DISCORD_WEBHOOK_URL，然後 Redeploy。",
+          "未設定任何通知管道。到 /setup 貼上 Telegram token 與 Chat ID（或 Discord webhook）並儲存 —— 若儲存時出現錯誤，多半是 app_settings 資料表還沒建立。",
         channels: await notifyStatus(),
       },
       { status: 501 },

@@ -46,20 +46,35 @@ export function isSecretSetting(key: SettingKey): boolean {
  * plenty, and the process is gone long before a stale value could matter.
  */
 let cache: Map<string, string> | null = null;
+/**
+ * Why the read failed, if it did.
+ *
+ * `loadAll` has to swallow the error — a missing `app_settings` table must not
+ * take down the 4-hourly refresh that happens to read a setting. But swallowing
+ * it silently is how a save that failed because the table doesn't exist ends up
+ * looking, from the settings page, like "no channels configured": the write
+ * reports the real problem and the read quietly reports nothing. So the reason
+ * is kept and handed to anyone asking for status.
+ */
+let lastError: string | null = null;
 
 export function clearSettingsCache(): void {
   cache = null;
+  lastError = null;
 }
 
 async function loadAll(): Promise<Map<string, string>> {
   if (cache) return cache;
   const store = getSignalStore();
-  if (!store) return (cache = new Map());
+  if (!store) {
+    lastError = "未設定資料庫";
+    return (cache = new Map());
+  }
   try {
     cache = await store.listSettings();
-  } catch {
-    // A missing app_settings table must not take down the refresh that reads
-    // it — the deployment simply has no stored settings yet.
+    lastError = null;
+  } catch (err) {
+    lastError = err instanceof Error ? err.message : String(err);
     cache = new Map();
   }
   return cache;
@@ -97,10 +112,16 @@ export interface SettingStatus {
   value: string | null;
 }
 
+export interface SettingsSnapshot {
+  settings: SettingStatus[];
+  /** Non-null when the stored settings could not be read at all. */
+  storeError: string | null;
+}
+
 /** For /setup and /api/diagnostics. Never returns a token. */
-export async function settingsStatus(): Promise<SettingStatus[]> {
+export async function settingsStatus(): Promise<SettingsSnapshot> {
   const stored = await loadAll();
-  return SETTABLE_KEYS.map((key) => {
+  const settings: SettingStatus[] = SETTABLE_KEYS.map((key) => {
     const fromEnv = process.env[key]?.trim();
     const fromDb = stored.get(key)?.trim();
     const source = fromEnv ? "env" : fromDb ? "database" : null;
@@ -111,4 +132,5 @@ export async function settingsStatus(): Promise<SettingStatus[]> {
       value: isSecretSetting(key) ? null : (fromEnv ?? fromDb ?? null),
     };
   });
+  return { settings, storeError: lastError };
 }

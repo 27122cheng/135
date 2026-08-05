@@ -84,9 +84,19 @@ function Copyable({ value }: { value: string }) {
   );
 }
 
+interface TableStatus {
+  supported: boolean;
+  tables?: Record<string, boolean>;
+  ready?: boolean;
+  reason?: string;
+  error?: string;
+}
+
 export default function SetupPage() {
   const [settings, setSettings] = useState<SettingStatus[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [tables, setTables] = useState<TableStatus | null>(null);
+  const [tableResult, setTableResult] = useState<string | null>(null);
   const [token, setToken] = useState("");
   const [chatIdInput, setChatIdInput] = useState("");
   const [discord, setDiscord] = useState("");
@@ -110,6 +120,12 @@ export default function SetupPage() {
     } catch {
       setLoadError("讀取設定失敗");
     }
+    try {
+      const res = await fetch("/api/setup");
+      setTables(await res.json());
+    } catch {
+      setTables(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -117,6 +133,30 @@ export default function SetupPage() {
     void refresh();
   }, [refresh]);
 
+  async function createTables() {
+    setBusy("tables");
+    setTableResult(null);
+    try {
+      const res = await fetch("/api/setup", {
+        method: "POST",
+        headers: secret ? { authorization: `Bearer ${secret}` } : {},
+      });
+      const body = await res.json();
+      if (res.ok && body.ready) setTableResult("資料表已就緒");
+      else if (res.status === 409) setTableResult(body.error);
+      else if (res.status === 401) setTableResult("401 —— 已設定 CRON_SECRET，請在最下方貼上");
+      else setTableResult(body.error ?? `${body.failed ?? "?"} 個語句失敗`);
+      await refresh();
+    } catch {
+      setTableResult("建立失敗");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const missingTables = Object.entries(tables?.tables ?? {})
+    .filter(([, exists]) => !exists)
+    .map(([name]) => name);
   const get = (key: string) => settings?.find((s) => s.key === key);
   const tokenSet = get("TELEGRAM_BOT_TOKEN")?.configured === true;
   const chatSet = get("TELEGRAM_CHAT_ID")?.configured === true;
@@ -218,6 +258,41 @@ export default function SetupPage() {
       </div>
 
       <div className="flex flex-col gap-3">
+        <Step n={0} title="資料表" done={tables?.ready === true}>
+          {tables?.supported === false ? (
+            <p className="text-neutral-500">{tables.reason}</p>
+          ) : (
+            <>
+              <p>
+                設定要存在資料庫裡，所以這些表得先存在。
+                {missingTables.length > 0 && (
+                  <>
+                    {" "}
+                    目前缺：
+                    <code className="text-amber-400">{missingTables.join("、")}</code>
+                  </>
+                )}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void createTables()}
+                  disabled={busy === "tables"}
+                  className="rounded-lg border border-neutral-700 px-3 py-1.5 text-[11px] text-neutral-200 hover:bg-neutral-800 disabled:opacity-40"
+                >
+                  {busy === "tables" ? "建立中…" : "建立資料表"}
+                </button>
+                {tableResult && <span className="text-neutral-400">{tableResult}</span>}
+              </div>
+              {/* Every statement is `create ... if not exists`, so pressing this
+                  on an existing database adds only what's missing. */}
+              <p className="text-neutral-600">
+                重複按沒有副作用 —— 每個語句都是 create if not exists，只會補上缺的那幾張。
+              </p>
+            </>
+          )}
+        </Step>
+
         <Step n={1} title="建立 Telegram 機器人並貼上 token" done={tokenSet}>
           <p>
             在 Telegram 搜尋{" "}
@@ -410,15 +485,12 @@ export default function SetupPage() {
       </div>
 
       <p className="mt-4 text-[11px] leading-relaxed text-neutral-600">
-        這頁需要資料庫。還沒建表的話先去{" "}
-        <Link href="/review" className="underline hover:text-neutral-400">
-          復盤頁
-        </Link>{" "}
-        按「建立資料表」。AI 金鑰在{" "}
+        AI 金鑰在{" "}
         <Link href="/settings" className="underline hover:text-neutral-400">
           金鑰設定
         </Link>
-        ，那些存在瀏覽器裡，不經過伺服器。
+        ，那些存在瀏覽器裡、跟著每次請求走一趟，不經過伺服器儲存。
+        這頁的設定相反：排程要用，所以存在伺服器。
       </p>
     </main>
   );
