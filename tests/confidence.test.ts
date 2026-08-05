@@ -168,9 +168,9 @@ function obstacle(price: number, strength: 1 | 2 | 3): PathObstacle {
 
 // ── the entry bar ─────────────────────────────────────────────────
 {
-  check("the bar is 90", CONFIDENT_ENTRY_MIN === 90);
-  check("90 clears it", clearsEntryBar(90));
-  check("89 does not", !clearsEntryBar(89));
+  check("the bar is 60", CONFIDENT_ENTRY_MIN === 60);
+  check("60 clears it", clearsEntryBar(60));
+  check("59 does not", !clearsEntryBar(59));
 
   // The bar is high on purpose, and the arithmetic has to actually allow it —
   // a threshold nothing can ever reach is a disabled feature, not a strict one.
@@ -185,27 +185,39 @@ function obstacle(price: number, strength: 1 | 2 | 3): PathObstacle {
   );
   check("a clean A+ with a proven geometry can clear it", clearsEntryBar(best.score), best.score);
 
-  // And the thing that most often stops it is missing data, not the setup.
-  const sameButGappy = planConfidence(
+  // The bar is a veto, not a second grading system — the grade still decides.
+  // A+ has to survive a bad data day, or the feature is off again.
+  const gappyBest = planConfidence(
     signal({
       grade: "A+",
       trade_plan: { ...signal().trade_plan, risk_reward: 3.5 },
       data_gaps: ["a", "b", "c", "d", "e"] as string[],
-      plan_backtest: { resolved: 30, wins: 21, losses: 9, timeouts: 0, hitRate: 0.7,
-        expectancyR: 1, horizonBars: 20, lookbackBars: 200 } as TradeSignal["plan_backtest"],
     }),
   );
-  check("the identical setup with five data gaps does not", !clearsEntryBar(sameButGappy.score),
-    sameButGappy.score);
-  check("and the gap penalty is what did it",
-    best.score - sameButGappy.score === 15, [best.score, sameButGappy.score]);
+  check("A+ still trades through five data gaps", clearsEntryBar(gappyBest.score),
+    gappyBest.score);
+  check("the gaps still cost the full 15",
+    planConfidence(signal({ grade: "A+", trade_plan: { ...signal().trade_plan, risk_reward: 3.5 } }))
+      .score - gappyBest.score === 15);
 
-  // A mid-grade setup cannot reach it however good the geometry looks.
-  const bGrade = planConfidence(
-    signal({ grade: "B", trade_plan: { ...signal().trade_plan, risk_reward: 6 } }),
+  // C is below MIN_ENTRY_GRADE and must also be unable to reach the bar, so the
+  // two rules can never disagree about the same signal.
+  const cGradeBest = planConfidence(
+    signal({ grade: "C", trade_plan: { ...signal().trade_plan, risk_reward: 6 } }),
   );
-  check("a B grade cannot clear the bar on payoff alone", !clearsEntryBar(bGrade.score),
-    bGrade.score);
+  check("a C grade cannot reach the bar even on a perfect payoff",
+    !clearsEntryBar(cGradeBest.score), cGradeBest.score);
+
+  // An AI-less plan is not a confident trade, whatever the grade.
+  const noAi = planConfidence(
+    signal({
+      grade: "A",
+      trade_plan: { ...signal().trade_plan, decided_by: "fallback" },
+      data_gaps: ["a", "b", "c", "d", "e"] as string[],
+    }),
+  );
+  check("a fallback plan on a gappy run stays below the bar", !clearsEntryBar(noAi.score),
+    noAi.score);
 }
 
 // ── the bands ─────────────────────────────────────────────────────

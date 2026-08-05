@@ -42,6 +42,8 @@ export interface BoardRow {
   stopLoss: number | null;
   takeProfit: number | null;
   riskReward: number | null;
+  /** The stored 信心度 score, or null for a signal written before it existed. */
+  confidence: number | null;
   addOns: BoardAddOn[];
   summary: string | null;
   waitFor: string | null;
@@ -68,6 +70,7 @@ function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | undefin
       stopLoss: null,
       takeProfit: null,
       riskReward: null,
+      confidence: null,
       addOns: [],
       summary: null,
       waitFor: null,
@@ -88,6 +91,7 @@ function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | undefin
     stopLoss: plan?.stop_loss ?? null,
     takeProfit: plan?.take_profit ?? null,
     riskReward: plan?.risk_reward ?? null,
+    confidence: row.confidence?.score ?? null,
     addOns: (plan?.add_ons ?? []).map((a: AddOnLevel) => ({
       sequence: a.sequence,
       price: a.price,

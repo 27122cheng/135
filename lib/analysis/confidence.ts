@@ -26,18 +26,29 @@ import type { PathObstacle, TradeSignal } from "@/types/signal";
 /**
  * The score a plan must reach before it is called a trade.
  *
- * Deliberately high. Below it the levels are still computed and still shown —
- * they are the honest "this nearly qualifies" picture — but the signal stands
- * aside, and the number says how far short it fell rather than leaving the
- * reader to guess whether 觀望 meant "nothing here" or "so close".
+ * Below it the levels are still computed and still shown — the honest "this
+ * nearly qualifies" picture — but the signal stands aside, and the number says
+ * how far short it fell rather than leaving the reader to guess whether 觀望
+ * meant "nothing here" or "so close".
  *
- * A consequence worth knowing rather than discovering: with data gaps costing
- * up to 15 and only A+ starting above 80, a run with several failed sources
- * cannot clear this bar however good the setup looks. That is the intended
- * reading — the biggest lever on confidence is fixing the data, not the
- * threshold.
+ * Was 90. At that height nothing traded: A+ starts at 80 and data gaps cost up
+ * to 15, so a run with several sources down could not clear it however good the
+ * setup was — and with the free AI tiers exhausted, *every* run had the −10
+ * fallback penalty on top. A threshold that is never met is a disabled feature
+ * wearing the costume of a strict one.
+ *
+ * 60 is set so the grade still does the deciding and this stays a veto rather
+ * than a second grading system:
+ *
+ *  - A+ (80) survives a bad data day and still trades
+ *  - A (70) trades unless several sources are down
+ *  - B (55) needs the geometry to be genuinely good to get over the line
+ *  - C (40) cannot reach it at all, which matches `MIN_ENTRY_GRADE`
+ *
+ * The −10 for an AI-less plan still blocks most entries on its own. That is
+ * intended: levels picked by the default rules are not a confident trade.
  */
-export const CONFIDENT_ENTRY_MIN = 90;
+export const CONFIDENT_ENTRY_MIN = 60;
 
 export type ConfidenceLevel = "high" | "medium" | "low";
 

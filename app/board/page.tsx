@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { BoardRow } from "@/app/api/board/route";
 import { userKeyHeaders } from "@/lib/user-keys-client";
+import { CONFIDENT_ENTRY_MIN } from "@/lib/analysis/confidence";
 
 /**
  * 交易總覽 — which instruments have a trade right now, at a glance.
@@ -351,6 +352,11 @@ export default function BoardPage() {
                     >
                       {row.grade}
                     </span>
+                    {row.confidence !== null && (
+                      <span className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-400/80">
+                        信心 {row.confidence}
+                      </span>
+                    )}
                     {row.addOns.length > 0 && (
                       <span className="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
                         加倉 {row.addOns.length}
@@ -358,7 +364,14 @@ export default function BoardPage() {
                     )}
                   </>
                 ) : (
-                  <span className="text-xs text-neutral-500">觀望</span>
+                  <>
+                    <span className="text-xs text-neutral-500">觀望</span>
+                    {row.confidence !== null && (
+                      <span className="shrink-0 text-[10px] text-neutral-600">
+                        信心 {row.confidence}/{CONFIDENT_ENTRY_MIN}
+                      </span>
+                    )}
+                  </>
                 )}
 
                 <span className="ml-auto shrink-0 text-[10px] text-neutral-600">
