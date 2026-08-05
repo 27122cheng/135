@@ -515,7 +515,21 @@ export default function SetupPage() {
             )}
           </div>
           <p className="text-neutral-600">
-            設好之後可以到 GitHub 的 Actions 分頁手動按 Run workflow 立刻驗證，不用等四小時。
+            可以到 GitHub 的 Actions 分頁手動按 Run workflow 立刻驗證，不用等四小時。
+          </p>
+          <p className="text-amber-500/80">
+            實測：4 小時掃描準時，但「5 分鐘監控」GitHub 實際上只給到大約每 1～2 小時一次
+            —— 它會把高頻排程降級。真的需要 5 分鐘的話，去{" "}
+            <a
+              href="https://cron-job.org"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              cron-job.org
+            </a>{" "}
+            （免費、免信用卡）建一個排程打{" "}
+            <span className="font-mono">{appUrl}/api/monitor</span>，兩邊同時打沒有副作用。
           </p>
         </Step>
       </div>

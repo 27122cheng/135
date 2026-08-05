@@ -557,8 +557,17 @@ localStorage 裡的東西在真正需要它的那一刻讀不到。
   「app_settings 不存在」，讀取時卻回報「沒有任何管道」，兩邊講不同的故事。
   所以錯誤原因會被留下來交給 `settingsStatus`，設定頁看得到真正的原因。
 
-`/setup` 同時會產生一組 `CRON_SECRET` 並顯示要填的 `APP_URL`，
-排程那兩個 GitHub secret 也在同一頁交代完。
+`/setup` 同時會產生一組 `CRON_SECRET`，排程的設定也在同一頁交代完。
+
+### 「5 分鐘監控」實際上不是 5 分鐘
+
+實測這個 repo 前 14 小時：monitor 只跑了 8 次，間隔 1～2.7 小時。
+GitHub 對高頻排程降級降得很兇，低流量的 repo 尤其嚴重。
+（4 小時的 refresh 倒是準時 —— 21:12、02:33、06:28、10:35。）
+
+cron 保持 `*/5`，因為要多給少不花成本、限流也可能鬆綁。但真的需要 5 分鐘
+監控的話，用外部 pinger（cron-job.org、UptimeRobot 都有免費方案）打
+`/api/monitor`。那個端點是冪等的，兩邊同時打沒有副作用。
 
 Discord 更簡單：伺服器設定 → 整合 → 建立 Webhook，把網址填進 `DISCORD_WEBHOOK_URL`。
 

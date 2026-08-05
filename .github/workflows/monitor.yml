@@ -1,11 +1,21 @@
 name: Monitor open plans
 
-# Every 5 minutes. GitHub only guarantees "at least this interval" for
-# scheduled workflows — under load they are delayed, and 5-15 minutes is a
-# realistic spread. That's acceptable here because the price this reads is
+# Asks for every 5 minutes. **It does not get every 5 minutes.**
+#
+# Measured over the first 14 hours of this workflow existing: 8 runs, spaced
+# 1–2.7 hours apart. GitHub deprioritises high-frequency schedules hard, and a
+# low-traffic repo gets the worst of it — so `*/5` here buys roughly hourly, not
+# five-minutely. (The 4-hourly refresh, by contrast, lands on time.)
+#
+# The cron stays at */5 because asking for more than you receive costs nothing
+# and the throttling may ease. But anyone who actually needs 5-minute position
+# monitoring should point an external pinger (cron-job.org and UptimeRobot both
+# do it free) at /api/monitor instead of relying on this. The endpoint is
+# idempotent and safe to call from both.
+#
+# Even at its best this is not an intraday execution tool: the price it reads is
 # itself ~15 minutes delayed on the free tier, and the plans being watched are
-# H4/D1 setups whose levels sit hours apart. It is not, and cannot be, an
-# intraday execution tool.
+# H4/D1 setups whose levels sit hours apart.
 on:
   schedule:
     - cron: "*/5 * * * *"
