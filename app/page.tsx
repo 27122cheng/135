@@ -88,6 +88,9 @@ export default function Home() {
           <Link href="/settings" className="hover:text-neutral-200">
             金鑰
           </Link>
+          <Link href="/setup" className="hover:text-neutral-200">
+            通知
+          </Link>
           <Link href="/symbols" className="hover:text-neutral-200">
             自訂標的
           </Link>

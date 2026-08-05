@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
 import { notifyAll, notifyStatus } from "@/lib/notify";
 import { configuredMinGrade } from "@/lib/notify/alert";
+import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  * owner* a message saying the channel works, which is noise, not a leak.
  */
 export async function GET() {
-  return NextResponse.json({
+  return json({
     channels: notifyStatus(),
     minGrade: configuredMinGrade(),
     hint: "POST 到這個網址會發送一則測試訊息。",
@@ -24,12 +24,12 @@ export async function GET() {
 export async function POST(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   if (cronSecret && request.headers.get("authorization") !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const configured = notifyStatus().filter((c) => c.configured);
   if (configured.length === 0) {
-    return NextResponse.json(
+    return json(
       {
         error:
           "未設定任何通知管道。請在 Vercel 環境變數加上 TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID，或 DISCORD_WEBHOOK_URL，然後 Redeploy。",
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
   );
 
   const sent = results.filter((r) => r.ok);
-  return NextResponse.json(
+  return json(
     { sent: sent.map((r) => r.channel), results },
     { status: sent.length > 0 ? 200 : 502 },
   );

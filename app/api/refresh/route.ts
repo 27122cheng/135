@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server";
 import { COMMODITIES } from "@/types/signal";
 import { buildTradeSignal } from "@/lib/signal-builder";
 import { getSignalStore } from "@/lib/db";
 import { notifyAll } from "@/lib/notify";
 import { configuredMinGrade, formatAlert, shouldAlert } from "@/lib/notify/alert";
+import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
 // Vercel Hobby's ceiling. One symbol comfortably fits; all nine may not, which
@@ -26,13 +26,13 @@ export async function GET(request: Request) {
   if (cronSecret) {
     const auth = request.headers.get("authorization");
     if (auth !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return json({ error: "Unauthorized" }, { status: 401 });
     }
   }
 
   const store = getSignalStore();
   if (!store) {
-    return NextResponse.json(
+    return json(
       {
         error:
           "未設定資料庫（DATABASE_URL 或 NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY），無法寫入 signals",
@@ -46,7 +46,7 @@ export async function GET(request: Request) {
     ? COMMODITIES.filter((c) => c.symbol === requested)
     : COMMODITIES;
   if (targets.length === 0) {
-    return NextResponse.json({ error: `Unknown symbol ${requested}` }, { status: 404 });
+    return json({ error: `Unknown symbol ${requested}` }, { status: 404 });
   }
 
   const minGrade = configuredMinGrade();
@@ -95,7 +95,7 @@ export async function GET(request: Request) {
   );
   const failed = results.filter((r) => r.status === "error").length;
 
-  return NextResponse.json(
+  return json(
     { ranAt: new Date().toISOString(), store: store.kind, results },
     // A non-2xx makes the workflow step fail loudly instead of a green run
     // that quietly wrote nothing.

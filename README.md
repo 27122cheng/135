@@ -441,14 +441,19 @@ SPDR 官方持倉 XML 有兩個問題：它會擋雲端機房 IP，而且**只�
 
 ### 設定通知（Telegram，免費）
 
+網站上的 **`/setup`** 頁把這件事一步步帶完，並且每一步都能當場驗證。
+
 1. Telegram 搜尋 **@BotFather** → 傳 `/newbot` → 照著取名字 → 拿到 token
-2. **先對你的新 bot 傳一句話**（Telegram 規定：使用者沒先開口，bot 不能主動傳訊）
-3. 瀏覽器開 `https://api.telegram.org/bot<你的token>/getUpdates`，
-   找 `"chat":{"id":123456789}` 那個數字
-4. Vercel → Settings → Environment Variables 加上：
-   - `TELEGRAM_BOT_TOKEN`
-   - `TELEGRAM_CHAT_ID`
-5. Redeploy，然後對 `你的網址/api/notify/test` 送一個 POST 測試
+2. Vercel → Settings → Environment Variables 加上 `TELEGRAM_BOT_TOKEN` → Redeploy
+3. **先對你的新 bot 傳一句話**（Telegram 規定：使用者沒先開口，bot 不能主動傳訊）
+4. 回到 `/setup` 按「查出我的 Chat ID」 —— 這步以前要自己去讀
+   `getUpdates` 的原始 JSON 裡找 `"chat":{"id":…}`，是整個流程最容易卡住的地方，
+   所以改成後端代查（token 只在伺服器端，不經過瀏覽器）
+5. 把顯示的數字填進 `TELEGRAM_CHAT_ID` → Redeploy
+6. `/setup` 按「發送測試訊息」確認
+
+`/setup` 同時會產生一組 `CRON_SECRET` 並顯示要填的 `APP_URL`，
+排程那兩個 secret 也在同一頁交代完。
 
 Discord 更簡單：伺服器設定 → 整合 → 建立 Webhook，把網址填進 `DISCORD_WEBHOOK_URL`。
 
@@ -999,7 +1004,7 @@ npm test
 ```
 
 沙箱連不到任何一個金融 API，所以驗證靠的是 known-answer 測試 + stub 過的
-`fetch`，不是真的打上去。20 個套件、463 項斷言，每個套件跑在自己的行程裡
+`fetch`，不是真的打上去。20 個套件、466 項斷言，每個套件跑在自己的行程裡
 （好幾個會替換 `global.fetch` 並重設模組層快取，共用行程會讓前一個的 stub
 汙染後一個）。
 

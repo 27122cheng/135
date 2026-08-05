@@ -63,6 +63,22 @@ import { groupDataGaps } from "@/lib/data-gaps";
   check("only the GDELT failure is actionable", g.other.length === 1, g.other);
 }
 
+// An upstream mirror a year behind is neither a failed fetch nor a wrong
+// config. Verified live: every IMF series on DBnomics was 370–766 days stale,
+// so all five 央行購金 sources went dark at once. Retrying can't fix it, so it
+// must not shout under 本次取得失敗 on every four-hourly scan.
+{
+  const g = groupDataGaps([
+    "央行購金／黃金流向：5 個來源都無法計分（DBnomics 的 IMF 資料集已停更，最新只到 2025-07，此因子暫時無可用來源）",
+    "GDELT 新聞 (gold price) 取得失敗：HTTP 429，且無可用快取",
+  ]);
+  check("a dormant upstream dataset is a limitation", g.permanent.length === 1, g.permanent);
+  check("and the live failure stays actionable", g.other.length === 1, g.other);
+  // The distinction only holds while the two are worded differently; if the
+  // gold message ever regains 取得失敗 phrasing it belongs in the loud bucket.
+  check("the actionable one names its cause", g.other[0].includes("HTTP 429"), g.other[0]);
+}
+
 // Anything unrecognised must land in the loud bucket, never be silenced.
 {
   const g = groupDataGaps(["某個沒見過的新錯誤訊息"]);

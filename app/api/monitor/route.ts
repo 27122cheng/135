@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
 import { COMMODITIES } from "@/types/signal";
 import { getSignalStore } from "@/lib/db";
 import { fetchLatestPrice } from "@/lib/data-sources/yfinance";
 import { notifyAll } from "@/lib/notify";
+import { json } from "@/lib/json-response";
 import {
   advancePlan,
   formatMonitorAlert,
@@ -29,12 +29,12 @@ export const maxDuration = 60;
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   if (cronSecret && request.headers.get("authorization") !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const store = getSignalStore();
   if (!store) {
-    return NextResponse.json(
+    return json(
       { error: "未設定資料庫，無法追蹤部位狀態（監控需要記住上次回報過什麼）" },
       { status: 501 },
     );
@@ -108,5 +108,5 @@ export async function GET(request: Request) {
         },
   );
 
-  return NextResponse.json({ ranAt: new Date().toISOString(), results });
+  return json({ ranAt: new Date().toISOString(), results });
 }

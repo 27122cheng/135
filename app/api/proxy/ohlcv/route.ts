@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
 import { fetchViaProxy, OHLCV_TTL_MS } from "@/lib/data-sources/yfinance";
 import type { Timeframe } from "@/types/signal";
+import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -26,10 +26,10 @@ export async function GET(request: Request) {
   const timeframe = (params.get("timeframe") ?? "D1").trim().toUpperCase() as Timeframe;
 
   if (!TICKER_PATTERN.test(ticker)) {
-    return NextResponse.json({ error: "ticker 格式不正確" }, { status: 400 });
+    return json({ error: "ticker 格式不正確" }, { status: 400 });
   }
   if (!TIMEFRAMES.includes(timeframe)) {
-    return NextResponse.json(
+    return json(
       { error: `timeframe 必須是 ${TIMEFRAMES.join(" / ")}（本專案不做日內）` },
       { status: 400 },
     );
@@ -38,13 +38,13 @@ export async function GET(request: Request) {
   const gaps: string[] = [];
   const result = await fetchViaProxy(ticker, timeframe, gaps);
   if (!result) {
-    return NextResponse.json(
+    return json(
       { error: `無法取得 ${ticker} ${timeframe} 的 K 線`, notes: gaps },
       { status: 502 },
     );
   }
 
-  return NextResponse.json(
+  return json(
     {
       ticker: result.ticker,
       timeframe: result.timeframe,

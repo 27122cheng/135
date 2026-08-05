@@ -33,9 +33,14 @@ export const KEY_SOURCES: Record<string, string> = {
  * category, which is the safe direction to fail.
  */
 const PERMANENT_PATTERNS = [
-  // Kept for any future message that genuinely has no free source. 央行購金
-  // used to match this and no longer does — DBnomics covers it now.
+  // Kept for any future message that genuinely has no free source.
   /不在免費 API 清單內/,
+  // An upstream mirror that has stopped updating is not a failed fetch and not
+  // a wrong series code — retrying and reconfiguring are both useless. DBnomics'
+  // IMF datasets were verified sitting 370–766 days behind, which disabled all
+  // five 央行購金 sources at once; that belongs beside "DAX has no CFTC filing",
+  // not in the list of things that went wrong on this particular scan.
+  /資料集已停更/,
   /無對應的 CFTC COT 合約代碼/,
   /沒有免金鑰來源/,
   // e.g. 兩國利差 — FRED's approved series are US-only, so there is no free

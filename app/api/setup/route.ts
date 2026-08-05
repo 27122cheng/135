@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
 import { REQUIRED_TABLES, schemaStatements } from "@/lib/db/schema";
+import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -39,7 +39,7 @@ async function existingTables(url: string): Promise<string[]> {
 export async function GET() {
   const url = connection();
   if (!url) {
-    return NextResponse.json(
+    return json(
       {
         supported: false,
         reason:
@@ -50,13 +50,13 @@ export async function GET() {
   }
   try {
     const found = await existingTables(url);
-    return NextResponse.json({
+    return json({
       supported: true,
       tables: Object.fromEntries(REQUIRED_TABLES.map((t) => [t, found.includes(t)])),
       ready: REQUIRED_TABLES.every((t) => found.includes(t)),
     });
   } catch (err) {
-    return NextResponse.json(
+    return json(
       { supported: true, error: err instanceof Error ? err.message : String(err) },
       { status: 502 },
     );
@@ -66,7 +66,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const url = connection();
   if (!url) {
-    return NextResponse.json(
+    return json(
       {
         error:
           "未設定 DATABASE_URL，無法自動建表。使用 Supabase 的話請在其 SQL Editor 執行 supabase/schema.sql。",
@@ -78,14 +78,14 @@ export async function POST(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   if (cronSecret) {
     if (request.headers.get("authorization") !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return json({ error: "Unauthorized" }, { status: 401 });
     }
   } else {
     // No secret configured: allow the bootstrap exactly once, then refuse.
     try {
       const found = await existingTables(url);
       if (REQUIRED_TABLES.every((t) => found.includes(t))) {
-        return NextResponse.json(
+        return json(
           {
             error:
               "資料表已存在，不再重複執行。要重新套用結構請設定 CRON_SECRET 並帶上 Authorization 標頭。",
@@ -122,7 +122,7 @@ export async function POST(request: Request) {
   const found = await existingTables(url).catch(() => [] as string[]);
   const ready = REQUIRED_TABLES.every((t) => found.includes(t));
 
-  return NextResponse.json(
+  return json(
     {
       ready,
       ran: results.length,

@@ -205,9 +205,13 @@ function summarise(skipped: SkippedSource[], notes: string[]): string {
       .sort();
     const range =
       periods.length > 0
-        ? `序列停在 ${periods[0]}${periods.at(-1) !== periods[0] ? `～${periods.at(-1)}` : ""}`
+        ? `最新只到 ${periods.at(-1)}`
         : "序列已停止更新";
-    return `${range}，全部停用；請開 /api/proxy/dbnomics 確認序列代碼是否已改版`;
+    // Every source stale at once is not a wrong series code and not a failed
+    // fetch — it is the upstream mirror sitting a year behind, which nothing in
+    // this repo can fix. Worded to land in the 先天限制 bucket (see
+    // lib/data-gaps.ts) so it stops appearing under 本次取得失敗 every scan.
+    return `DBnomics 的 IMF 資料集已停更，${range}，此因子暫時無可用來源`;
   }
   const shown = skipped.slice(0, 3).map((s) => `${s.label}：${s.reason}`);
   return shown.join("；") + (skipped.length > 3 ? `；…等 ${skipped.length} 個` : "");

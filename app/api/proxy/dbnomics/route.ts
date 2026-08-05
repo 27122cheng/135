@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { json } from "@/lib/json-response";
 import {
   fetchDbnomicsSeries,
   inferFrequency,
@@ -41,22 +41,22 @@ export async function GET(request: Request) {
   const search = params.get("search")?.trim();
   if (search) {
     const hits = await searchDbnomics(search, gaps);
-    return NextResponse.json({ query: search, hits: hits ?? [], notes: gaps });
+    return json({ query: search, hits: hits ?? [], notes: gaps });
   }
 
   const series = params.get("series")?.trim();
   if (series) {
     if (!SERIES_PATTERN.test(series)) {
-      return NextResponse.json(
+      return json(
         { error: "series 必須是 provider/dataset/series 格式" },
         { status: 400 },
       );
     }
     const result = await fetchDbnomicsSeries(series, gaps);
     if (!result) {
-      return NextResponse.json({ error: `查無序列 ${series}`, notes: gaps }, { status: 404 });
+      return json({ error: `查無序列 ${series}`, notes: gaps }, { status: 404 });
     }
-    return NextResponse.json({
+    return json({
       seriesId: result.seriesId,
       name: result.name,
       count: result.points.length,
@@ -113,7 +113,7 @@ export async function GET(request: Request) {
   );
 
   const broken = checked.filter((c) => !c.usable);
-  return NextResponse.json({
+  return json({
     configured: checked,
     usableCount: checked.length - broken.length,
     brokenCount: broken.length,

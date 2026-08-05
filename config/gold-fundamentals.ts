@@ -91,6 +91,19 @@ export interface GoldFlowSource {
  * IRFCL (International Reserves and Foreign Currency Liquidity) is listed
  * ahead of IFS everywhere: it is the monthly template countries report reserves
  * on, so it lands weeks earlier than the IFS roll-up of the same numbers.
+ *
+ * **Verified against the live API on 2026-08-05, and the result is bad news.**
+ * Every one of these resolves, and every one of them is stale: IRFCL stops at
+ * 2025-07 (370 days), IFS at 2025-06 (401 days), IFS Russia at 2024-06 (766
+ * days). That is not five wrong series codes — it is DBnomics' entire IMF
+ * mirror sitting a year behind, so no amount of re-guessing ids inside this
+ * provider will produce a current number.
+ *
+ * The list is kept rather than deleted for two reasons: the ordering and the
+ * freshness gate are correct and will start scoring by themselves the moment
+ * the mirror catches up, and `/api/proxy/dbnomics` makes that observable. Until
+ * then 央行購金 reports as a source-level limitation, not as a failed fetch —
+ * see the 資料集已停更 pattern in lib/data-gaps.ts.
  */
 export const DBNOMICS_GOLD_SOURCES: GoldFlowSource[] = [
   {
@@ -160,11 +173,9 @@ export const DBNOMICS_GOLD_SOURCES: GoldFlowSource[] = [
     id: "world-official-reserves",
     label: "IMF 全球官方黃金儲備",
     frequency: "monthly",
-    series: [
-      "IMF/IRFCL/M.W00.RAFAGOLDV_OZT",
-      "IMF/IFS/M.W00.RAFAGOLDV_OZT",
-      "IMF/IFS/M.W00.RAFAGOLD_USD",
-    ],
+    // The IRFCL aggregate code does not exist (verified: resolved=false); the
+    // IFS ones resolve but are 401 days behind.
+    series: ["IMF/IFS/M.W00.RAFAGOLDV_OZT", "IMF/IFS/M.W00.RAFAGOLD_USD"],
     releaseLagDays: 45,
     risingMeans: "long",
     lookback: 3,

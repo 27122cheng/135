@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server";
 import { aiProviderStatus } from "@/lib/ai";
 import { quotaSnapshot } from "@/lib/data-sources/quota";
 import { storeKind } from "@/lib/db";
 import { notifyStatus } from "@/lib/notify";
 import { configuredMinGrade } from "@/lib/notify/alert";
+import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -121,7 +121,7 @@ export async function GET() {
   const ai = aiProviderStatus();
   const store = storeKind();
 
-  return NextResponse.json({
+  return json({
     checkedAt: new Date().toISOString(),
     env,
     // Which provider would answer, in order. configured=false means no key, so

@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
 import { searchCatalog } from "@/config/instrument-catalog";
 import { fetchJson } from "@/lib/data-sources/http";
+import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +42,7 @@ function toId(raw: string): string {
 
 export async function GET(request: Request) {
   const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
-  if (q.length < 1) return NextResponse.json({ suggestions: [] });
+  if (q.length < 1) return json({ suggestions: [] });
 
   const suggestions: SymbolSuggestion[] = searchCatalog(q).map((e) => ({
     symbol: e.symbol,
@@ -83,5 +83,5 @@ export async function GET(request: Request) {
     if (suggestions.length >= 10) break;
   }
 
-  return NextResponse.json({ suggestions });
+  return json({ suggestions });
 }

@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
 import { fetchYieldSeries, YIELD_TTL_MS } from "@/lib/data-sources/yields";
 import { rateSpreadFor, RATE_SPREADS } from "@/config/rate-spreads";
+import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   const config = rateSpreadFor(symbol);
 
   if (!config) {
-    return NextResponse.json(
+    return json(
       {
         error: `${symbol || "(未指定)"} 沒有對應的利差設定`,
         available: Object.keys(RATE_SPREADS),
@@ -39,13 +39,13 @@ export async function GET(request: Request) {
   ]);
 
   if (!minuend || !subtrahend) {
-    return NextResponse.json(
+    return json(
       { error: `無法取得 ${config.label} 的兩隻腳`, notes: gaps },
       { status: 502 },
     );
   }
 
-  return NextResponse.json(
+  return json(
     {
       symbol,
       label: config.label,

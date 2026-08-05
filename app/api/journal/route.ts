@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
 import { getSignalStore } from "@/lib/db";
 import { computeSeverity } from "@/lib/journal/severity";
+import { json } from "@/lib/json-response";
 import {
   STOP_REASON_TAGS,
   type JournalEntryInput,
@@ -19,7 +19,7 @@ const UUID_PATTERN = /^[0-9a-fA-F-]{36}$/;
 export async function GET(request: Request) {
   const store = getSignalStore();
   if (!store) {
-    return NextResponse.json({ error: "未設定資料庫，交易日誌無法使用", entries: [] }, { status: 501 });
+    return json({ error: "未設定資料庫，交易日誌無法使用", entries: [] }, { status: 501 });
   }
   const params = new URL(request.url).searchParams;
   try {
@@ -27,9 +27,9 @@ export async function GET(request: Request) {
       symbol: params.get("symbol"),
       limit: Math.min(Number(params.get("limit") ?? "100") || 100, 500),
     });
-    return NextResponse.json({ entries });
+    return json({ entries });
   } catch (err) {
-    return NextResponse.json(
+    return json(
       { error: err instanceof Error ? err.message : "讀取交易日誌失敗", entries: [] },
       { status: 502 },
     );
@@ -55,41 +55,41 @@ function num(value: unknown): number | null {
 export async function POST(request: Request) {
   const store = getSignalStore();
   if (!store) {
-    return NextResponse.json({ error: "未設定資料庫，無法寫入交易日誌" }, { status: 501 });
+    return json({ error: "未設定資料庫，無法寫入交易日誌" }, { status: 501 });
   }
 
   let body: Body;
   try {
     body = (await request.json()) as Body;
   } catch {
-    return NextResponse.json({ error: "請求內容不是有效的 JSON" }, { status: 400 });
+    return json({ error: "請求內容不是有效的 JSON" }, { status: 400 });
   }
 
   const symbol = typeof body.symbol === "string" ? body.symbol.trim().toUpperCase() : "";
   if (!SYMBOL_PATTERN.test(symbol)) {
-    return NextResponse.json({ error: "symbol 格式不正確" }, { status: 400 });
+    return json({ error: "symbol 格式不正確" }, { status: 400 });
   }
 
   const direction = body.direction === "long" || body.direction === "short" ? body.direction : null;
   if (!direction) {
-    return NextResponse.json({ error: "direction 必須是 long 或 short" }, { status: 400 });
+    return json({ error: "direction 必須是 long 或 short" }, { status: 400 });
   }
 
   const grade = typeof body.grade === "string" ? body.grade : "";
   if (!GRADES.includes(grade)) {
-    return NextResponse.json({ error: `grade 必須是 ${GRADES.join(" / ")}` }, { status: 400 });
+    return json({ error: `grade 必須是 ${GRADES.join(" / ")}` }, { status: 400 });
   }
 
   const result = RESULTS.includes(body.result as TradeResult) ? (body.result as TradeResult) : null;
   if (!result) {
-    return NextResponse.json({ error: `result 必須是 ${RESULTS.join(" / ")}` }, { status: 400 });
+    return json({ error: `result 必須是 ${RESULTS.join(" / ")}` }, { status: 400 });
   }
 
   const entryPrice = num(body.entry_price);
   const exitPrice = num(body.exit_price);
   const pnlPct = num(body.pnl_pct);
   if (entryPrice === null || exitPrice === null || pnlPct === null) {
-    return NextResponse.json(
+    return json(
       { error: "entry_price / exit_price / pnl_pct 必須是數字" },
       { status: 400 },
     );
@@ -98,7 +98,7 @@ export async function POST(request: Request) {
   const closedAtRaw = typeof body.closed_at === "string" ? body.closed_at : "";
   const closedAt = new Date(closedAtRaw);
   if (!closedAtRaw || Number.isNaN(closedAt.getTime())) {
-    return NextResponse.json({ error: "closed_at 不是有效的時間" }, { status: 400 });
+    return json({ error: "closed_at 不是有效的時間" }, { status: 400 });
   }
 
   const rawTag = typeof body.stop_reason_tag === "string" ? body.stop_reason_tag : null;
@@ -106,7 +106,7 @@ export async function POST(request: Request) {
     ? (rawTag as StopReasonTag)
     : null;
   if (rawTag && !tag) {
-    return NextResponse.json(
+    return json(
       { error: `stop_reason_tag 必須是 ${STOP_REASON_TAGS.join(" / ")}` },
       { status: 400 },
     );
@@ -114,7 +114,7 @@ export async function POST(request: Request) {
   // Mirrors the table's loss_needs_tag constraint, so the caller gets a useful
   // message instead of a database error.
   if (result === "loss" && !tag) {
-    return NextResponse.json({ error: "虧損的交易必須指定 stop_reason_tag（S1–S8）" }, { status: 400 });
+    return json({ error: "虧損的交易必須指定 stop_reason_tag（S1–S8）" }, { status: 400 });
   }
 
   const signalId = typeof body.signal_id === "string" && UUID_PATTERN.test(body.signal_id)
@@ -150,9 +150,9 @@ export async function POST(request: Request) {
     const saved = await store.insertJournalEntry(entry, severity);
     // The breakdown goes back so the UI can show why the number came out as it
     // did — a severity nobody can explain is a severity nobody trusts.
-    return NextResponse.json({ entry: saved, severity_breakdown: breakdown }, { status: 201 });
+    return json({ entry: saved, severity_breakdown: breakdown }, { status: 201 });
   } catch (err) {
-    return NextResponse.json(
+    return json(
       { error: err instanceof Error ? err.message : "寫入交易日誌失敗" },
       { status: 502 },
     );
