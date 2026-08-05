@@ -4,6 +4,7 @@ import { AIProviderError, type AIProvider, type CompleteOptions, type ResponseSc
 import { geminiProvider } from "./providers/gemini";
 import { openAICompatibleProvider } from "./providers/openai-compatible";
 import { anthropicProvider } from "./providers/anthropic";
+import { getCached, setCached } from "@/lib/data-sources/cache";
 
 export * from "./provider";
 
@@ -102,12 +103,51 @@ export interface AIResult<T> {
  * Null is a normal outcome, not an exception: every caller has a deterministic
  * local fallback, because the analysis must not depend on a free tier being up.
  */
+
+/**
+ * How long an AI answer stays reusable.
+ *
+ * Four hours, matching the H4 candle the whole analysis is built on. Inside one
+ * bar the inputs genuinely have not moved: same candles, same COT (weekly),
+ * same yields (daily). Asking the model the identical question again buys a
+ * differently-worded answer to the same facts, and on a free tier it buys it
+ * with tokens that are not coming back.
+ *
+ * This is the single biggest saving available. The dashboard rescans nine
+ * symbols every 30 minutes; without this, one open tab is 8 full sweeps per
+ * H4 bar — 8× the token spend for one bar's worth of new information.
+ */
+const AI_CACHE_TTL_MS = 4 * 60 * 60 * 1000;
+
+/**
+ * A stable key for "this exact question".
+ *
+ * djb2 over the schema name and the prompt. Not cryptographic — it only has to
+ * separate different prompts, and a collision would serve one symbol another's
+ * answer, which the length check makes vanishingly unlikely for prompts that
+ * always embed their own symbol.
+ */
+function promptKey(schemaName: string, prompt: string): string {
+  let hash = 5381;
+  for (let i = 0; i < prompt.length; i++) {
+    hash = ((hash << 5) + hash + prompt.charCodeAt(i)) | 0;
+  }
+  return `ai:${schemaName}:${prompt.length}:${(hash >>> 0).toString(36)}`;
+}
+
 export async function completeAI<T>(
   prompt: string,
   schema: ResponseSchema<T>,
   gaps: string[],
   options?: CompleteOptions,
 ): Promise<AIResult<T> | null> {
+  // Identical question, still inside the same H4 bar → reuse the answer.
+  // Checked before the provider list so it costs nothing even when every
+  // provider is rate-limited: a cached answer is better than a fallback.
+  const cacheKey = promptKey(schema.name, prompt);
+  const cached = getCached<AIResult<T>>(cacheKey);
+  if (cached) return cached;
+
   const providers = orderedProviders();
   const configured = providers.filter((p) => p.isConfigured());
 
@@ -128,7 +168,9 @@ export async function completeAI<T>(
     try {
       const value = await provider.complete(prompt, schema, options);
       recordSuccess(provider.name);
-      return { value, provider: provider.name };
+      const result = { value, provider: provider.name };
+      setCached(cacheKey, result, AI_CACHE_TTL_MS);
+      return result;
     } catch (err) {
       recordFailure(provider.name);
       failures.push(err instanceof AIProviderError ? err.message : String(err));

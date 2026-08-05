@@ -3,6 +3,7 @@ import { __resetQuotaForTests } from "@/lib/data-sources/quota";
 import { aiProviderStatus, completeAI, jsonSchema, textSchema } from "@/lib/ai";
 import { buildTradePlan, decideStance } from "@/lib/analysis/trade-plan";
 import { MIN_ENTRY_GRADE, gradeAllowsEntry } from "@/lib/scoring";
+import { __resetCacheForTests } from "@/lib/data-sources/cache";
 
 /**
  * The provider chain and the one guarantee that must survive swapping vendors:
@@ -29,6 +30,7 @@ async function main() {
 
   clearKeys();
   __resetQuotaForTests();
+  __resetCacheForTests();
   const g1: string[] = [];
   check("no keys returns null", (await completeAI("p", S, g1)) === null);
   check("no keys explains why", g1.some((g) => g.includes("GEMINI_API_KEY")), g1);
@@ -36,6 +38,7 @@ async function main() {
   // A provider with no key is skipped, not counted as a failure.
   clearKeys();
   __resetQuotaForTests();
+  __resetCacheForTests();
   process.env.GROQ_API_KEY = "x";
   let hit = stubFetch(() => ({ status: 200, json: groqOk }));
   const g2: string[] = [];
@@ -47,6 +50,7 @@ async function main() {
   // Default order puts Gemini first.
   clearKeys();
   __resetQuotaForTests();
+  __resetCacheForTests();
   process.env.GEMINI_API_KEY = "x";
   process.env.GROQ_API_KEY = "x";
   hit = stubFetch((u) =>
@@ -58,6 +62,7 @@ async function main() {
 
   // 429 (the free tier's usual answer) falls through.
   __resetQuotaForTests();
+  __resetCacheForTests();
   hit = stubFetch((u) =>
     u.includes("googleapis")
       ? { status: 429, json: { error: { message: "quota exceeded" } } }
@@ -69,6 +74,7 @@ async function main() {
 
   // A blank reply is a failure, not an answer.
   __resetQuotaForTests();
+  __resetCacheForTests();
   stubFetch((u) =>
     u.includes("googleapis")
       ? { status: 200, json: { candidates: [{ content: { parts: [{ text: "   " }] } }] } }
@@ -77,6 +83,7 @@ async function main() {
   check("empty reply falls through", (await completeAI("p", S, []))?.provider === "groq");
 
   __resetQuotaForTests();
+  __resetCacheForTests();
   stubFetch(() => ({ status: 500, json: { error: { message: "boom" } } }));
   const g6: string[] = [];
   check("all providers down returns null", (await completeAI("p", S, g6)) === null);
@@ -85,6 +92,7 @@ async function main() {
   // Order override.
   clearKeys();
   __resetQuotaForTests();
+  __resetCacheForTests();
   process.env.GEMINI_API_KEY = "x";
   process.env.GROQ_API_KEY = "x";
   process.env.AI_PROVIDER_ORDER = "groq,gemini";
@@ -106,6 +114,7 @@ async function main() {
   // ── The invariant ────────────────────────────────────────────────
   clearKeys();
   __resetQuotaForTests();
+  __resetCacheForTests();
   process.env.GEMINI_API_KEY = "x";
   const planInput = {
     symbol: "XAUUSD",
@@ -137,6 +146,7 @@ async function main() {
   check("risk_reward is derived, not taken from the model", p1.risk_reward === 2.5, p1.risk_reward);
 
   __resetQuotaForTests();
+  __resetCacheForTests();
   stubFetch(() => reply({ stance: "enter", entry_index: 99, sl_index: 0, tp_index: 0, summary: "s" }));
   const gp2: string[] = [];
   const p2 = await buildTradePlan(planInput, gp2);
@@ -144,6 +154,7 @@ async function main() {
   check("the refusal is recorded", gp2.some((g) => g.includes("編號無效")), gp2);
 
   __resetQuotaForTests();
+  __resetCacheForTests();
   // A model trying to smuggle in its own price: there is no field for it.
   stubFetch(() =>
     reply({ stance: "enter", entry: 1234.5, entry_index: "0", sl_index: 0, tp_index: 0, summary: "s" }),
@@ -153,6 +164,7 @@ async function main() {
   check("a string index is refused", p3.decided_by === "fallback", p3.decided_by);
 
   __resetQuotaForTests();
+  __resetCacheForTests();
   stubFetch(() => reply({ stance: "enter", entry_index: 0, sl_index: 0, tp_index: 0, summary: "s" }));
   const gp4: string[] = [];
   const p4 = await buildTradePlan(
@@ -172,6 +184,7 @@ async function main() {
   // set of levels for SPX500 while the detail page, built a minute later, said
   // 觀望. Both were real; neither was reproducible.
   __resetQuotaForTests();
+  __resetCacheForTests();
   // A reply that begs to enter. It must not be able to.
   stubFetch(() => reply({ entry_index: 0, sl_index: 0, tp_index: 0, summary: "enter now" }));
   const cGrade = await buildTradePlan(
@@ -218,6 +231,7 @@ async function main() {
   // The AI path must enforce the same R:R floor the fallback does. It didn't:
   // the model could hand back a trade risking more than it stood to make.
   __resetQuotaForTests();
+  __resetCacheForTests();
   stubFetch(() => reply({ entry_index: 0, sl_index: 0, tp_index: 1, summary: "s" }));
   const gpRr: string[] = [];
   const badRr = await buildTradePlan(
@@ -226,6 +240,29 @@ async function main() {
   );
   check("a sub-1:1 pick from the model is refused", badRr.decided_by === "fallback", badRr);
   check("and the refusal says why", gpRr.some((g) => g.includes("風險報酬比")), gpRr);
+
+  // ── the same question is not paid for twice ──────────────────────
+  //
+  // Inside one H4 bar the inputs have not moved. Asking again buys a
+  // differently-worded answer to identical facts, with tokens that do not come
+  // back — this is what exhausted a free daily budget.
+  __resetQuotaForTests();
+  __resetCacheForTests();
+  let calls = 0;
+  stubFetch(() => {
+    calls++;
+    return reply({ entry_index: 0, sl_index: 0, tp_index: 0, summary: "cached" });
+  });
+  const first = await buildTradePlan(planInput, []);
+  const second = await buildTradePlan(planInput, []);
+  check("an identical prompt hits the provider once", calls === 1, calls);
+  check("and the second answer is the same object's content",
+    first.entry === second.entry && first.summary === second.summary);
+
+  // A different symbol is a different question and must still cost a call.
+  const other = await buildTradePlan({ ...planInput, symbol: "EURUSD" }, []);
+  check("a different symbol is not served from that cache", calls === 2, calls);
+  check("and still resolves real prices", other.entry === 2000);
 
   report("ai providers");
 }

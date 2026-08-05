@@ -10,11 +10,11 @@ import { analyzeNews } from "./analysis/news";
 import { analyzeFundFlow } from "./analysis/fundflow";
 import { analyzeOpenInterest } from "./analysis/open-interest";
 import { backtestPlanGeometry } from "./analysis/backtest";
-import { generateNarrative } from "./analysis/ai-narrative";
+import { generateNarrative, ruleNarrative } from "./analysis/ai-narrative";
 import { buildTradePlan, collectCandidates } from "./analysis/trade-plan";
 import { buildAddOns } from "./analysis/add-on";
 import { CONFIDENT_ENTRY_MIN, clearsEntryBar, planConfidence } from "./analysis/confidence";
-import { scoreSignal } from "./scoring";
+import { gradeAllowsEntry, scoreSignal } from "./scoring";
 import { buildStopLoss, buildTakeProfits } from "./entry-exit";
 import { getSignalStore } from "./db";
 import { fetchEconomicCalendar } from "./data-sources/finnhub";
@@ -359,25 +359,36 @@ async function buildSignalForSymbol(
     });
   }
 
-  const narrative = await generateNarrative(
-    {
-      symbol: meta.symbol,
-      direction,
-      bias_score: score.biasScore,
-      entry_structure_score: score.entryStructureScore,
-      total_score: score.totalScore,
-      grade,
-      bias_items: biasItems,
-      entry_structures: technical.entryStructures,
-      path_obstacles: technical.pathObstacles,
-      news_summary: news.summary,
-      news_key_points: news.digest?.key_points.map((k) => ({
-        point: k.point,
-        impact: k.impact,
-      })),
-    },
-    gaps,
-  );
+  // 敘述只為可能成交的訊號生成。
+  //
+  // On a typical sweep most symbols grade below the entry floor, and for those
+  // the narrative is decoration — nobody reads a paragraph explaining why a
+  // C-grade isn't a trade, and it costs a full AI call each. Three calls per
+  // symbol × nine symbols is what exhausted a free daily token budget; this
+  // removes roughly a third of them on the runs that were never going to
+  // produce anything.
+  //
+  // The deterministic local summary still gets written, so the card is never
+  // blank — it just isn't paid for with tokens.
+  const narrativeInput = {
+    symbol: meta.symbol,
+    direction,
+    bias_score: score.biasScore,
+    entry_structure_score: score.entryStructureScore,
+    total_score: score.totalScore,
+    grade,
+    bias_items: biasItems,
+    entry_structures: technical.entryStructures,
+    path_obstacles: technical.pathObstacles,
+    news_summary: news.summary,
+    news_key_points: news.digest?.key_points.map((k) => ({
+      point: k.point,
+      impact: k.impact,
+    })),
+  };
+  const narrative = gradeAllowsEntry(grade)
+    ? await generateNarrative(narrativeInput, gaps)
+    : ruleNarrative(narrativeInput, `評等 ${grade} 不可交易，未動用 AI 額度`);
 
   // The single actionable recommendation. Candidates come from the real
   // structures computed above; the AI only picks among them.

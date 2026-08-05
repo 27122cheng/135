@@ -55,6 +55,11 @@ function riskReward(
  */
 const MIN_RISK_REWARD = 1;
 
+/** Prompt size caps — see buildPrompt for why each is where it is. */
+const MAX_CANDIDATES = 6;
+const MAX_BIAS_ITEMS = 8;
+const MAX_NARRATIVE_CHARS = 300;
+
 interface StanceVerdict {
   stance: "enter" | "wait";
   summary: string;
@@ -198,33 +203,52 @@ function fallbackPlan(input: TradePlanInput): TradePlan {
   };
 }
 
+/**
+ * Everything the model needs to pick levels, and nothing else.
+ *
+ * Rewritten after `stance` became deterministic. The old version spent a third
+ * of its length arguing the case for standing aside — instructions for a
+ * decision the model is no longer asked to make and has no field to answer in.
+ * Dead prompt is not free: it is tokens on every call, on a free tier measured
+ * in tokens per day.
+ *
+ * The trims are all "does this change which index gets picked":
+ *  - bias items capped to the 8 heaviest; a weight-0 factor cannot tip a choice
+ *  - the narrative truncated — it is prose *about* the factors already listed
+ *  - gaps reduced to a count; which source failed doesn't change level choice,
+ *    it changes confidence, and that is computed elsewhere
+ *  - candidate lists capped at 6, which is more structures than any of these
+ *    instruments produces near price anyway
+ */
 function buildPrompt(input: TradePlanInput): string {
   const list = (items: Candidate[]) =>
-    items.map((c, i) => `  [${i}] ${c.price} — ${c.label}`).join("\n");
+    items
+      .slice(0, MAX_CANDIDATES)
+      .map((c, i) => `  [${i}] ${c.price} — ${c.label}`)
+      .join("\n");
+
+  const heaviest = [...input.bias_items]
+    .filter((b) => b.weight > 0)
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, MAX_BIAS_ITEMS);
+
   return (
-    `你是交易計畫決策助手。以下是 ${input.symbol} 的分析結果，訊號方向為 ${input.direction === "long" ? "做多" : "做空"}。\n\n` +
+    `你是交易計畫決策助手。以下是 ${input.symbol} 的分析結果，訊號方向為 ${input.direction === "long" ? "做多" : "做空"}。\n` +
+    `是否進場已由計分規則決定為「進場」，你的工作只是從清單中挑出最合適的三個價位並說明理由。\n\n` +
     `評等：${input.grade}（方向分 ${input.bias_score}、結構分 ${input.entry_structure_score}、總分 ${input.total_score}）\n\n` +
-    `分析摘要：\n${input.narrative}\n\n` +
-    `六面向因子：\n` +
-    (input.bias_items.length > 0
-      ? input.bias_items
-          .map((b) => `  - [${b.dimension}/${b.direction}/權重${b.weight}] ${b.factor}｜${b.evidence}`)
+    `分析摘要：\n${input.narrative.slice(0, MAX_NARRATIVE_CHARS)}\n\n` +
+    `主要因子（依權重前 ${MAX_BIAS_ITEMS}）：\n` +
+    (heaviest.length > 0
+      ? heaviest
+          .map((b) => `  - [${b.dimension}/${b.direction}/權重${b.weight}] ${b.factor}`)
           .join("\n")
       : "  （無）") +
     (input.knownGaps.length > 0
-      ? `\n\n已知資料缺口（這些面向目前是瞎的，判斷時要把不確定性算進去）：\n` +
-        input.knownGaps.map((g) => `  - ${g}`).join("\n")
+      ? `\n\n注意：本次有 ${input.knownGaps.length} 項資料缺口，部分面向資訊不完整。`
       : "") +
     `\n\n可選的進場點：\n${list(input.entryCandidates)}\n` +
     `\n可選的停損點：\n${list(input.slCandidates)}\n` +
     `\n可選的停利點：\n${list(input.tpCandidates)}\n\n` +
-    `請綜合以上所有資料，決定現在應該「進場」還是「觀望」。\n\n` +
-    (input.gradeForcesWait
-      ? `注意：本訊號依硬性計分規則已判定為 no-trade，因此 stance 必須是 "wait"。` +
-        `請說明為什麼不值得進場，以及要等到什麼條件出現才值得重新評估。\n\n`
-      : `觀望是完全正當的結論，不要為了給答案而硬湊一筆交易。` +
-        `遇到以下情況請直接選擇觀望：六面向彼此矛盾、風險報酬比不划算、` +
-        `關鍵面向因資料缺口而無法判斷、或進場點離結構太遠。\n\n`) +
     `嚴格規則：\n` +
     `1. 你只能從上面清單中「選編號」，絕對不可以自己提出任何新的價格數字。\n` +
     `2. 只准根據以上提供的資料推論，不准補充未提供的事實。`
