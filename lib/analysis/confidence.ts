@@ -23,6 +23,22 @@ import type { PathObstacle, TradeSignal } from "@/types/signal";
  * it is listed so the number can be argued with.
  */
 
+/**
+ * The score a plan must reach before it is called a trade.
+ *
+ * Deliberately high. Below it the levels are still computed and still shown —
+ * they are the honest "this nearly qualifies" picture — but the signal stands
+ * aside, and the number says how far short it fell rather than leaving the
+ * reader to guess whether 觀望 meant "nothing here" or "so close".
+ *
+ * A consequence worth knowing rather than discovering: with data gaps costing
+ * up to 15 and only A+ starting above 80, a run with several failed sources
+ * cannot clear this bar however good the setup looks. That is the intended
+ * reading — the biggest lever on confidence is fixing the data, not the
+ * threshold.
+ */
+export const CONFIDENT_ENTRY_MIN = 90;
+
 export type ConfidenceLevel = "high" | "medium" | "low";
 
 export interface Confidence {
@@ -43,6 +59,11 @@ const GRADE_BASE: Record<string, number> = {
 
 function clamp(n: number): number {
   return Math.max(5, Math.min(95, Math.round(n)));
+}
+
+/** Whether this score clears the bar for an actual entry. */
+export function clearsEntryBar(score: number): boolean {
+  return score >= CONFIDENT_ENTRY_MIN;
 }
 
 export function levelFor(score: number): ConfidenceLevel {

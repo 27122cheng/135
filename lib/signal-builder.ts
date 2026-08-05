@@ -13,6 +13,7 @@ import { backtestPlanGeometry } from "./analysis/backtest";
 import { generateNarrative } from "./analysis/ai-narrative";
 import { buildTradePlan, collectCandidates } from "./analysis/trade-plan";
 import { buildAddOns } from "./analysis/add-on";
+import { CONFIDENT_ENTRY_MIN, clearsEntryBar, planConfidence } from "./analysis/confidence";
 import { scoreSignal } from "./scoring";
 import { buildStopLoss, buildTakeProfits } from "./entry-exit";
 import { getSignalStore } from "./db";
@@ -481,6 +482,45 @@ async function buildSignalForSymbol(
     interventions,
     data_gaps: dedupedGaps,
   };
+
+  // 信心度門檻 — the last gate, applied to the assembled signal because the
+  // score needs the whole thing: grade, geometry, gap count, backtest.
+  //
+  // Everything up to here can say "the rules permit this trade". This asks the
+  // separate question of whether enough of the system's own evidence actually
+  // arrived. A plan that passed every rule on a run where five sources failed
+  // is a plan built on a third of its inputs, and calling that a trade is the
+  // failure mode this whole codebase keeps trying to avoid.
+  //
+  // The levels are not discarded. entry_zone / stop_loss / take_profits are
+  // separate fields and stay populated, so 完整價位 still shows what the
+  // analysis found — labelled as reference, with the shortfall stated.
+  // Computed once and stored on the signal, not recomputed at render time.
+  // The gate below changes `trade_plan`, and several of the score's own inputs
+  // live there — recomputing afterwards would show the reader a different
+  // number from the one that made the decision.
+  signal.confidence = planConfidence(signal);
+
+  if (signal.trade_plan.stance === "enter" && !clearsEntryBar(signal.confidence.score)) {
+    signal.trade_plan = {
+      ...signal.trade_plan,
+      stance: "wait",
+      summary:
+        `信心度 ${signal.confidence.score}，未達可交易門檻 ${CONFIDENT_ENTRY_MIN}，暫不進場。` +
+        `下方價位仍是分析算出的真實結構，可作為參考與掛單觀察。`,
+      wait_for:
+        `等信心度升到 ${CONFIDENT_ENTRY_MIN} 以上。目前的扣分項：` +
+        (signal.confidence.factors.slice(1).join("；") || "無扣分，但評等基準本身不足"),
+      // The three prices described a recommendation that is being withdrawn.
+      // entry_zone / stop_loss / take_profits are separate fields and stay, so
+      // 完整價位 still shows what the analysis found — as reference, not advice.
+      entry: null,
+      stop_loss: null,
+      take_profit: null,
+      risk_reward: null,
+      add_ons: [],
+    };
+  }
 
   return signal;
 }

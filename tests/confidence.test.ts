@@ -1,5 +1,7 @@
 import { check, report } from "./_harness";
 import {
+  CONFIDENT_ENTRY_MIN,
+  clearsEntryBar,
   levelFor,
   obstaclesBetween,
   planConfidence,
@@ -161,6 +163,48 @@ function obstacle(price: number, strength: 1 | 2 | 3): PathObstacle {
   // Direction must not matter — a short's target is below its entry.
   check("it works downwards too", obstaclesBetween(list, 2050, 2000).length === 1);
   check("endpoints are exclusive", obstaclesBetween(list, 2020, 2100).length === 0);
+}
+
+// ── the entry bar ─────────────────────────────────────────────────
+{
+  check("the bar is 90", CONFIDENT_ENTRY_MIN === 90);
+  check("90 clears it", clearsEntryBar(90));
+  check("89 does not", !clearsEntryBar(89));
+
+  // The bar is high on purpose, and the arithmetic has to actually allow it —
+  // a threshold nothing can ever reach is a disabled feature, not a strict one.
+  const best = planConfidence(
+    signal({
+      grade: "A+",
+      trade_plan: { ...signal().trade_plan, risk_reward: 3.5 },
+      data_gaps: [] as string[],
+      plan_backtest: { resolved: 30, wins: 21, losses: 9, timeouts: 0, hitRate: 0.7,
+        expectancyR: 1, horizonBars: 20, lookbackBars: 200 } as TradeSignal["plan_backtest"],
+    }),
+  );
+  check("a clean A+ with a proven geometry can clear it", clearsEntryBar(best.score), best.score);
+
+  // And the thing that most often stops it is missing data, not the setup.
+  const sameButGappy = planConfidence(
+    signal({
+      grade: "A+",
+      trade_plan: { ...signal().trade_plan, risk_reward: 3.5 },
+      data_gaps: ["a", "b", "c", "d", "e"] as string[],
+      plan_backtest: { resolved: 30, wins: 21, losses: 9, timeouts: 0, hitRate: 0.7,
+        expectancyR: 1, horizonBars: 20, lookbackBars: 200 } as TradeSignal["plan_backtest"],
+    }),
+  );
+  check("the identical setup with five data gaps does not", !clearsEntryBar(sameButGappy.score),
+    sameButGappy.score);
+  check("and the gap penalty is what did it",
+    best.score - sameButGappy.score === 15, [best.score, sameButGappy.score]);
+
+  // A mid-grade setup cannot reach it however good the geometry looks.
+  const bGrade = planConfidence(
+    signal({ grade: "B", trade_plan: { ...signal().trade_plan, risk_reward: 6 } }),
+  );
+  check("a B grade cannot clear the bar on payoff alone", !clearsEntryBar(bGrade.score),
+    bGrade.score);
 }
 
 // ── the bands ─────────────────────────────────────────────────────

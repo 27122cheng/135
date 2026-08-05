@@ -9,7 +9,9 @@ import { formatPrice, formatTime } from "@/lib/format";
 import { groupDataGaps, KEY_SOURCES } from "@/lib/data-gaps";
 import { cn } from "@/lib/utils";
 import {
+  CONFIDENT_ENTRY_MIN,
   LEVEL_LABEL,
+  clearsEntryBar,
   planConfidence,
   takeProfitConfidence,
   type Confidence,
@@ -342,7 +344,11 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
   const isNoTrade = signal.grade === "no-trade";
   // Computed once and threaded into each target, so every per-target number
   // demonstrably starts from the same base rather than being derived twice.
-  const overallConfidence = planConfidence(signal);
+  // Prefer the stored score: it is the one the entry gate actually used.
+  // Recomputing would differ, because withdrawing a plan empties fields the
+  // score reads. Older stored signals have none, so fall back to computing.
+  const overallConfidence: Confidence = signal.confidence ?? planConfidence(signal);
+  const tradeable = clearsEntryBar(overallConfidence.score);
   const noPrice = hasNoPrice(signal);
   const entryLabel = noPrice
     ? "無資料"
@@ -391,9 +397,22 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
       {signal.news_digest && <NewsDigestCard digest={signal.news_digest} />}
 
       <Section
-        title="完整價位與分批出場"
+        title={tradeable ? "完整價位與分批出場" : "參考價位（未達可交易門檻）"}
         aside={<ConfidenceBadge c={overallConfidence} />}
       >
+        {!tradeable && !isNoTrade && (
+          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+            <p className="text-xs text-amber-400">
+              信心度 {overallConfidence.score}，未達可交易門檻 {CONFIDENT_ENTRY_MIN}。
+              以下價位是分析算出的真實結構，可以拿來掛單觀察，但這不是建議進場。
+            </p>
+            <ul className="mt-1.5 space-y-0.5 text-[11px] leading-relaxed text-amber-500/70">
+              {overallConfidence.factors.map((f, i) => (
+                <li key={i}>· {f}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         {isNoTrade && (
           <p className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
             {noPrice

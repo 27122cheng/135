@@ -222,6 +222,16 @@ export interface TradeSignal {
    * the trigger thresholds. Interventions only ever downgrade or tighten.
    */
   interventions: AppliedIntervention[];
+  /**
+   * 信心度 — computed by lib/analysis/confidence.ts and stored, so the number
+   * shown is provably the number the entry gate used. Optional because signals
+   * written before this existed are still readable.
+   */
+  confidence?: {
+    score: number;
+    level: "high" | "medium" | "low";
+    factors: string[];
+  };
   data_gaps: string[];
 }
 
