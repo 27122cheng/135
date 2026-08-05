@@ -223,6 +223,12 @@ export interface TradeSignal {
    */
   interventions: AppliedIntervention[];
   /**
+   * True when the weighted bias items netted to exactly zero, so `direction`
+   * is a placeholder rather than a finding. The UI must say 中性 — showing
+   * 做多 for a coin-flip is the single most misleading thing this card can do.
+   */
+  direction_tie?: boolean;
+  /**
    * 信心度 — computed by lib/analysis/confidence.ts and stored, so the number
    * shown is provably the number the entry gate used. Optional because signals
    * written before this existed are still readable.

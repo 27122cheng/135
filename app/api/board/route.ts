@@ -33,6 +33,8 @@ export interface BoardRow {
   /** Null when this symbol has never been scanned. */
   signalId: string | null;
   direction: "long" | "short" | null;
+  /** True when the factors cancelled out — show 中性, not a direction. */
+  directionTie: boolean;
   grade: Grade | null;
   /** "enter" is the only one that means there is a trade. */
   stance: "enter" | "wait" | null;
@@ -59,6 +61,7 @@ function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | undefin
       ...base,
       signalId: null,
       direction: null,
+      directionTie: false,
       grade: null,
       stance: null,
       entry: null,
@@ -78,6 +81,7 @@ function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | undefin
     ...base,
     signalId: row.id,
     direction: row.direction,
+    directionTie: row.direction_tie === true,
     grade: row.grade,
     stance: plan?.stance ?? null,
     entry: plan?.entry ?? null,

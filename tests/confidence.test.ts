@@ -8,6 +8,7 @@ import {
   takeProfitConfidence,
 } from "@/lib/analysis/confidence";
 import type { PathObstacle, TradeSignal } from "@/types/signal";
+import { AI_LIMITS } from "@/lib/ai";
 
 /**
  * 信心度. The rules that must not drift: it is computed rather than asked for,
@@ -213,6 +214,24 @@ function obstacle(price: number, strength: 1 | 2 | 3): PathObstacle {
   check("69 is medium", levelFor(69) === "medium");
   check("45 is medium", levelFor(45) === "medium");
   check("44 is low", levelFor(44) === "low");
+}
+
+// ── the quota lesson, pinned ──────────────────────────────────────
+//
+// Not about confidence, but it belongs beside it: a fallback plan costs 10
+// points, and the reason every plan became a fallback was an exhausted free
+// AI tier. The limits below are the measured ones, not the documented ones.
+{
+  check("gemini's daily budget is the measured one, not the docs' 1500",
+    AI_LIMITS.gemini.perDay === 200, AI_LIMITS.gemini.perDay);
+  // Groq's real ceiling is tokens/day (100k). This tracker counts requests, so
+  // the limit is the honest translation of that budget, not a request figure
+  // copied off a pricing page.
+  check("groq declares a daily ceiling at all", AI_LIMITS.groq.perDay !== undefined);
+  check("and it is small enough to survive a day", (AI_LIMITS.groq.perDay ?? 999) <= 30,
+    AI_LIMITS.groq.perDay);
+  check("per-minute limits stay under the published free tiers",
+    (AI_LIMITS.gemini.perMinute ?? 99) <= 15 && (AI_LIMITS.groq.perMinute ?? 99) <= 30);
 }
 
 report("confidence");

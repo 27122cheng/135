@@ -33,8 +33,28 @@ interface BoardResponse {
 
 /** Cheap: one query. */
 const READ_INTERVAL_MS = 60_000;
-/** Expensive: nine pipelines. Matches the 5-minute position monitor. */
-const SCAN_INTERVAL_MS = 5 * 60_000;
+/**
+ * Expensive: nine pipelines, each making AI calls.
+ *
+ * Was 5 minutes, to match the position monitor. That was wrong, and measurably
+ * so: nine symbols every five minutes burned 98,299 of Groq's 100,000 free
+ * daily tokens in an afternoon, after which every signal silently fell back to
+ * local rules while still looking like a normal analysis on screen.
+ *
+ * 30 minutes is what a free tier actually supports for a full nine-symbol
+ * sweep. The position monitor still runs on its own 5-minute clock server-side
+ * — that one only reads a cached quote and costs no AI at all, which is why it
+ * can be frequent and this cannot.
+ */
+const SCAN_INTERVAL_MS = 30 * 60_000;
+/**
+ * How many symbols to analyse at once.
+ *
+ * Nine in parallel breaches a 10-requests-per-minute provider limit on the
+ * first tick, every tick. Two at a time keeps a sweep inside the rate limit and
+ * costs only wall-clock time, which nobody is watching.
+ */
+const SCAN_CONCURRENCY = 2;
 
 const GRADE_STYLE: Record<string, string> = {
   "A+": "bg-emerald-500/20 text-emerald-300",
@@ -110,8 +130,16 @@ export default function BoardPage() {
     async (targets: BoardRow[]) => {
       if (targets.length === 0) return;
       setRescanning(new Set(targets.map((r) => r.symbol)));
-      await Promise.all(
-        targets.map(async (row) => {
+
+      // A small worker pool rather than Promise.all over all nine. Same total
+      // work, but it arrives at a rate the free AI tiers accept instead of as
+      // one burst that trips the per-minute limit and drops eight of them onto
+      // the local-rule fallback.
+      const queue = [...targets];
+      const worker = async () => {
+        for (;;) {
+          const row = queue.shift();
+          if (!row) return;
           try {
             await fetch(`/api/scan?symbol=${row.symbol}`, {
               cache: "no-store",
@@ -127,8 +155,9 @@ export default function BoardPage() {
               return next;
             });
           }
-        }),
-      );
+        }
+      };
+      await Promise.all(Array.from({ length: SCAN_CONCURRENCY }, worker));
       await load();
     },
     [load],
@@ -257,7 +286,7 @@ export default function BoardPage() {
             onChange={(e) => setAutoScan(e.target.checked)}
             className="h-3 w-3 accent-emerald-500"
           />
-          每 5 分鐘自動掃描
+          每 30 分鐘自動掃描
         </label>
         <button
           type="button"
@@ -302,10 +331,18 @@ export default function BoardPage() {
                   <>
                     <span
                       className={`shrink-0 text-xs font-medium ${
-                        row.direction === "long" ? "text-emerald-400" : "text-red-400"
+                        row.directionTie
+                          ? "text-neutral-400"
+                          : row.direction === "long"
+                            ? "text-emerald-400"
+                            : "text-red-400"
                       }`}
                     >
-                      {row.direction === "long" ? "做多 ▲" : "做空 ▼"}
+                      {row.directionTie
+                        ? "中性"
+                        : row.direction === "long"
+                          ? "做多 ▲"
+                          : "做空 ▼"}
                     </span>
                     <span
                       className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
@@ -415,11 +452,15 @@ export default function BoardPage() {
           所以兩邊不可能講不同的話。掃描結果會寫回資料庫，不是各自算各自的。
         </p>
         <p>
-          <span className="text-neutral-400">打開這頁就會立刻掃描一次</span>，
-          之後每分鐘重讀資料庫（便宜）、每 5 分鐘重跑分析（九條完整管線，會用掉免費 AI 額度）。
-          兩者都只重跑<span className="text-neutral-400">超過 5 分鐘沒更新</span>的商品 ——
-          排程四十秒前才更新過的，不會因為你重新整理一次頁面就重算。
-          分頁切到背景就暫停：沒人在看的畫面不該把一天的額度燒光。
+          <span className="text-neutral-400">打開這頁會掃描一次</span>，
+          之後每分鐘重讀資料庫（便宜）、每 30 分鐘重跑分析。
+          兩者都只動<span className="text-neutral-400">超過 30 分鐘沒更新</span>的商品，
+          一次只跑 2 個。分頁切到背景就暫停。
+        </p>
+        <p className="text-amber-500/70">
+          間隔本來是 5 分鐘，實測會把 Groq 每日 10 萬 token 在一個下午用光
+          —— 之後每筆訊號都悄悄退回本地規則，畫面上看起來卻跟正常分析一樣。
+          免費額度撐得起的全商品掃描大約就是半小時一輪。
         </p>
       </div>
     </main>

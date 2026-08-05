@@ -480,6 +480,7 @@ async function buildSignalForSymbol(
     trade_plan: tradePlan,
     plan_backtest: planBacktest,
     interventions,
+    direction_tie: tie,
     data_gaps: dedupedGaps,
   };
 

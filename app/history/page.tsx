@@ -10,9 +10,25 @@ import { cn } from "@/lib/utils";
 
 const GRADES: Grade[] = ["A+", "A", "B", "C", "no-trade"];
 
+/**
+ * The reason a grade was forced down, if one was.
+ *
+ * `gradeSignal` is pure arithmetic, so a total of 14 grading no-trade always
+ * means something after it overrode the result — no stop structure, no target,
+ * or an S2 intervention. Each writes a data_gap saying so; this finds it.
+ */
+function disqualifier(row: SignalRow): string | null {
+  const gaps = Array.isArray(row.data_gaps) ? (row.data_gaps as string[]) : [];
+  return gaps.find((g) => g.includes("強制降級") || g.includes("降為 no-trade")) ?? null;
+}
+
 export default function HistoryPage() {
   const [symbol, setSymbol] = useState("");
   const [grade, setGrade] = useState("");
+  // Defaults on: the question this page usually answers is "what did it
+  // actually recommend", and a scan that stood aside is noise against that.
+  // The scans are all still stored — this hides them, it does not skip them.
+  const [tradeableOnly, setTradeableOnly] = useState(true);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [rows, setRows] = useState<SignalRow[]>([]);
@@ -47,6 +63,11 @@ export default function HistoryPage() {
       cancelled = true;
     };
   }, [symbol, grade, from, to]);
+
+  const visible = tradeableOnly
+    ? rows.filter((r) => r.trade_plan?.stance === "enter")
+    : rows;
+  const hidden = rows.length - visible.length;
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-5">
@@ -121,13 +142,28 @@ export default function HistoryPage() {
           )}
         </p>
       )}
-      {!loading && !error && rows.length === 0 && (
-        <p className="text-sm text-neutral-500">尚無符合條件的歷史訊號。</p>
+      <label className="mb-3 flex cursor-pointer items-center gap-2 text-xs text-neutral-500">
+        <input
+          type="checkbox"
+          checked={tradeableOnly}
+          onChange={(e) => setTradeableOnly(e.target.checked)}
+          className="h-3 w-3 accent-emerald-500"
+        />
+        只看建議進場的
+        {hidden > 0 && <span className="text-neutral-600">（隱藏了 {hidden} 筆觀望）</span>}
+      </label>
+
+      {!loading && !error && visible.length === 0 && (
+        <p className="text-sm text-neutral-500">
+          {rows.length > 0
+            ? `這段期間的 ${rows.length} 次掃描全部是觀望，沒有建議進場的訊號。取消上面的勾選可以看全部。`
+            : "尚無符合條件的歷史訊號。"}
+        </p>
       )}
 
-      {!loading && !error && rows.length > 0 && (
+      {!loading && !error && visible.length > 0 && (
         <ul className="flex flex-col gap-2">
-          {rows.map((r) => (
+          {visible.map((r) => (
             <li key={r.id} className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
@@ -135,10 +171,14 @@ export default function HistoryPage() {
                   <span
                     className={cn(
                       "ml-2 text-sm",
-                      r.direction === "long" ? "text-emerald-400" : "text-red-400",
+                      r.direction_tie
+                        ? "text-neutral-400"
+                        : r.direction === "long"
+                          ? "text-emerald-400"
+                          : "text-red-400",
                     )}
                   >
-                    {r.direction === "long" ? "做多" : "做空"}
+                    {r.direction_tie ? "中性" : r.direction === "long" ? "做多" : "做空"}
                   </span>
                   <span className="ml-2 text-xs text-neutral-500">
                     {formatTime(r.generated_at)}
@@ -153,6 +193,15 @@ export default function HistoryPage() {
                 <span className="mx-1.5 text-neutral-700">=</span>
                 總分 <span className="font-mono text-neutral-300">{r.total_score}</span>
               </p>
+              {/* A 14-point signal graded no-trade looks like a bug unless the
+                  override says so. The disqualifiers write a data_gap when they
+                  fire; surfacing it here is the difference between "the scoring
+                  is broken" and "there was no structure to anchor a stop to". */}
+              {disqualifier(r) && (
+                <p className="mt-1.5 text-xs leading-relaxed text-amber-500/80">
+                  {disqualifier(r)}
+                </p>
+              )}
               <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-neutral-500">
                 {r.narrative}
               </p>

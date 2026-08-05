@@ -23,14 +23,20 @@ export * from "./provider";
  * guess and is marked as such — under-spending costs a fallback hop, while
  * over-spending costs a throttled key.
  */
-const LIMITS: Record<string, QuotaLimit> = {
-  // Documented: 1500 req/day. 15 req/min is the published free-tier rate for
-  // Flash models — with 3 AI calls per symbol × 9 symbols a refresh run will
-  // hit it, which is exactly when the chain should hop to Groq.
-  gemini: { perMinute: 15, perDay: 1500 },
-  // Documented: 30 req/min. Groq's daily request cap varies by model and was
-  // not verifiable at build time, so no perDay is declared rather than a made-up one.
-  groq: { perMinute: 30 },
+export const AI_LIMITS: Record<string, QuotaLimit> = {
+  // Measured, not documented. The published figure is 1500 req/day, but a live
+  // 429 came back reading `limit: 20` for generate_content free-tier requests
+  // on gemini-3.6-flash — the free tier is far tighter than the docs page
+  // suggests and the exact number moves. 10/min and 200/day is a budget that
+  // survives a day of use rather than one that matches a marketing page.
+  gemini: { perMinute: 10, perDay: 200 },
+  // Groq's real ceiling is **tokens** per day (100,000 on the free tier), not
+  // requests, and this quota tracker only counts requests. A trade-plan call is
+  // roughly 2–4k tokens, so ~25 requests/day is the honest translation. Getting
+  // this wrong is not theoretical: a dashboard rescanning nine symbols burned
+  // 98,299 of the 100,000 in an afternoon and every signal afterwards fell back
+  // to local rules while looking, on screen, like a normal analysis.
+  groq: { perMinute: 20, perDay: 25 },
   // Conservative guess: free `:free` models are rate-limited by account credit
   // and the exact numbers move often. Treated as a last resort anyway.
   openrouter: { perMinute: 20, perDay: 50 },
@@ -114,7 +120,7 @@ export async function completeAI<T>(
 
   const failures: string[] = [];
   for (const provider of configured) {
-    const decision = tryConsume(provider.name, LIMITS[provider.name] ?? {});
+    const decision = tryConsume(provider.name, AI_LIMITS[provider.name] ?? {});
     if (!decision.ok) {
       failures.push(decision.reason);
       continue;

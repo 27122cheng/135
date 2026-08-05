@@ -366,10 +366,23 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
               <h2 className="text-xl font-bold text-neutral-100">{signal.symbol}</h2>
               <p className="mt-0.5 text-xs text-neutral-500">
                 {formatTime(signal.generated_at)} ·{" "}
+                {/* A tie means the weighted factors cancelled out. `direction`
+                    still carries a value because the geometry needs one, but
+                    presenting it as a call would be inventing a view. */}
                 <span
-                  className={signal.direction === "long" ? "text-emerald-400" : "text-red-400"}
+                  className={
+                    signal.direction_tie
+                      ? "text-neutral-400"
+                      : signal.direction === "long"
+                        ? "text-emerald-400"
+                        : "text-red-400"
+                  }
                 >
-                  {signal.direction === "long" ? "做多" : "做空"}
+                  {signal.direction_tie
+                    ? "中性（多空因子相抵，無方向）"
+                    : signal.direction === "long"
+                      ? "做多"
+                      : "做空"}
                 </span>
               </p>
             </div>
