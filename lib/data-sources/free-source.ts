@@ -1,5 +1,6 @@
 import { DEFAULT_STALE_MS, getCached, getStale, setCached } from "./cache";
 import { recordFailure, recordSuccess, tryConsume, type QuotaLimit } from "./quota";
+import { getSignalStore } from "@/lib/db";
 
 /**
  * The one way every free-tier source is called.
@@ -46,6 +47,16 @@ export interface FreeFetchOptions<T> {
    * fixes. Returning null keeps the generic wording.
    */
   diagnose?: () => string | null;
+  /**
+   * Called after a null result: was that a *transport* failure?
+   *
+   * Returning false means the request worked and the answer was simply empty —
+   * a wrong contract code, a query that matched nothing. Those must not record
+   * a failure, because the backoff is per-source and shared: one symbol's bad
+   * config would otherwise suppress the same source for every other symbol in
+   * the sweep, and retrying could never have helped anyway.
+   */
+  wasTransportFailure?: () => boolean;
   staleMs?: number;
 }
 
@@ -56,17 +67,80 @@ function minutes(ms: number): string {
   return h < 48 ? `${h} 小時` : `${Math.round(h / 24)} 天`;
 }
 
+
+/**
+ * The cross-invocation half of the cache.
+ *
+ * Lives here rather than in cache.ts because it is the only async layer: every
+ * other caller of getCached is synchronous, and fetchFree is the one place all
+ * free sources already funnel through and already await.
+ *
+ * Failures are swallowed on purpose. A cache is an optimisation; a deployment
+ * with no database, or one whose `source_cache` table hasn't been created yet,
+ * must behave exactly as it did before this existed.
+ */
+async function readPersisted<T>(
+  key: string,
+  ttlMs: number,
+  staleMs: number,
+): Promise<{ value: T; ageMs: number; fresh: boolean } | null> {
+  const store = getSignalStore();
+  if (!store) return null;
+  try {
+    const row = await store.readCache(key);
+    if (!row) return null;
+    const ageMs = Date.now() - new Date(row.fetchedAt).getTime();
+    if (!Number.isFinite(ageMs) || ageMs < 0) return null;
+    if (ageMs > staleMs) return null;
+    return { value: row.payload as T, ageMs, fresh: ageMs <= ttlMs };
+  } catch {
+    return null;
+  }
+}
+
+async function writePersisted(key: string, value: unknown): Promise<void> {
+  const store = getSignalStore();
+  if (!store) return;
+  try {
+    await store.writeCache(key, value);
+  } catch {
+    // See above: never let a cache write cost the caller its result.
+  }
+}
+
 export async function fetchFree<T>(opts: FreeFetchOptions<T>): Promise<FreeFetchResult<T> | null> {
-  const { source, label, key, ttlMs, limit, gaps, fn, diagnose, staleMs = DEFAULT_STALE_MS } = opts;
+  const {
+    source,
+    label,
+    key,
+    ttlMs,
+    limit,
+    gaps,
+    fn,
+    diagnose,
+    wasTransportFailure,
+    staleMs = DEFAULT_STALE_MS,
+  } = opts;
 
   const fresh = getCached<T>(key);
   if (fresh !== undefined) return { value: fresh, stale: false, ageMs: 0 };
 
+  // Second look, in the database. On a serverless platform the in-memory cache
+  // above is almost always empty — the process that filled it served one
+  // request and was gone — so without this the whole caching layer was
+  // decorative and every source hiccup became "無資料".
+  const persisted = await readPersisted<T>(key, ttlMs, staleMs);
+  if (persisted?.fresh) {
+    setCached(key, persisted.value, ttlMs - persisted.ageMs, staleMs - persisted.ageMs);
+    return { value: persisted.value, stale: false, ageMs: persisted.ageMs };
+  }
+
   const serveStale = (why: string): FreeFetchResult<T> | null => {
-    const stale = getStale<T>(key);
-    if (!stale) return null;
-    gaps.push(`${label} ${why}，改用 ${minutes(stale.ageMs)} 前的快取結果（stale，非即時）`);
-    return { value: stale.value, stale: true, ageMs: stale.ageMs };
+    const memory = getStale<T>(key);
+    const best = memory ?? persisted;
+    if (!best) return null;
+    gaps.push(`${label} ${why}，改用 ${minutes(best.ageMs)} 前的快取結果（stale，非即時）`);
+    return { value: best.value, stale: true, ageMs: best.ageMs };
   };
 
   const decision = tryConsume(source, limit);
@@ -79,7 +153,7 @@ export async function fetchFree<T>(opts: FreeFetchOptions<T>): Promise<FreeFetch
 
   const value = await fn();
   if (value === null) {
-    recordFailure(source);
+    if (wasTransportFailure?.() !== false) recordFailure(source);
     const why = diagnose?.() ?? null;
     const stale = serveStale(why ? `本次取得失敗：${why}` : "本次取得失敗");
     if (stale) return stale;
@@ -91,5 +165,8 @@ export async function fetchFree<T>(opts: FreeFetchOptions<T>): Promise<FreeFetch
 
   recordSuccess(source);
   setCached(key, value, ttlMs, staleMs);
+  // Not awaited on the happy path's critical section, but awaited before
+  // returning so a serverless function isn't frozen mid-write.
+  await writePersisted(key, value);
   return { value, stale: false, ageMs: 0 };
 }

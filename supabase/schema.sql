@@ -187,3 +187,24 @@ alter table public.latest_signal enable row level security;
 drop policy if exists "Public read access" on public.latest_signal;
 create policy "Public read access" on public.latest_signal
   for select using (true);
+
+-- ─────────────────────────────────────────────────────────────────
+-- Cross-invocation cache for the free data sources.
+--
+-- The in-memory cache in lib/data-sources/cache.ts is per-process, and on
+-- Vercel a process handles one request and may never be reused. That made the
+-- third tier of fetchFree -- "serve the last good answer, labelled stale" --
+-- unreachable in practice: every miss went straight to "取得失敗，且無可用快取",
+-- so a source being briefly down became a hole in the analysis rather than a
+-- slightly old number.
+--
+-- Rows are overwritten in place, one per cache key, so this stays small.
+-- ─────────────────────────────────────────────────────────────────
+
+create table if not exists public.source_cache (
+  cache_key text primary key,
+  payload jsonb not null,
+  fetched_at timestamptz not null default now()
+);
+
+alter table public.source_cache enable row level security;

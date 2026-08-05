@@ -1,5 +1,5 @@
 import { check, report } from "./_harness";
-import { groupDataGaps } from "@/lib/data-gaps";
+import { collapseCascades, groupDataGaps } from "@/lib/data-gaps";
 
 /**
  * data_gaps are split three ways so the warning count only ever shows things
@@ -77,6 +77,40 @@ import { groupDataGaps } from "@/lib/data-gaps";
   // The distinction only holds while the two are worded differently; if the
   // gold message ever regains 取得失敗 phrasing it belongs in the loud bucket.
   check("the actionable one names its cause", g.other[0].includes("HTTP 429"), g.other[0]);
+}
+
+// One AI outage is one problem, not four. The count feeds the confidence
+// penalty, so double-counting a single cause moves the number that decides
+// whether a signal is tradeable.
+{
+  const collapsed = collapseCascades([
+    "CFTC COT (NAS100) 取得失敗，且無可用快取",
+    "所有 AI 供應商皆無法回應（gemini: HTTP 429；groq: HTTP 429）",
+    "AI 綜合敘述改用本地備援文字",
+    "交易計畫改用預設規則判斷",
+    "所有 AI 供應商皆無法回應（gemini 目前連線不穩）",
+  ]);
+  check("five gaps become two", collapsed.length === 2, collapsed);
+  check("the unrelated failure survives untouched",
+    collapsed.includes("CFTC COT (NAS100) 取得失敗，且無可用快取"), collapsed);
+  // The surviving AI line must be the one naming the provider errors — that is
+  // the only one anyone can act on.
+  check("the kept line names the provider errors",
+    collapsed.some((g) => g.includes("HTTP 429")), collapsed);
+  check("and says how many followed from it",
+    collapsed.some((g) => g.includes("另有 3 項後續影響")), collapsed);
+
+  // A lone AI gap must not be rewritten — there is no cascade to collapse.
+  const single = collapseCascades(["交易計畫改用預設規則判斷"]);
+  check("one AI gap stays exactly as written",
+    single.length === 1 && single[0] === "交易計畫改用預設規則判斷", single);
+
+  // Nothing unrelated may ever be merged away.
+  const untouched = collapseCascades(["A 取得失敗", "B 取得失敗", "C 取得失敗"]);
+  check("unrelated failures are never collapsed", untouched.length === 3, untouched);
+
+  check("duplicates are still removed",
+    collapseCascades(["同一則", "同一則"]).length === 1);
 }
 
 // Anything unrecognised must land in the loud bucket, never be silenced.

@@ -245,6 +245,32 @@ export function supabaseStore(): SignalStore | null {
       }));
     },
 
+    async readCache(key: string): Promise<{ payload: unknown; fetchedAt: string } | null> {
+      const client = getSupabaseServerClient() ?? getSupabaseAnonClient();
+      if (!client) throw new Error("缺少 Supabase 金鑰，無法讀取 source_cache");
+      const { data, error } = await client
+        .from("source_cache")
+        .select("payload, fetched_at")
+        .eq("cache_key", key)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!data) return null;
+      return {
+        payload: data.payload,
+        fetchedAt: new Date(data.fetched_at as string).toISOString(),
+      };
+    },
+
+    async writeCache(key: string, payload: unknown): Promise<void> {
+      const client = getSupabaseServerClient();
+      if (!client) throw new Error("缺少 SUPABASE_SERVICE_ROLE_KEY，無法寫入 source_cache");
+      const { error } = await client
+        .from("source_cache")
+        .upsert({ cache_key: key, payload, fetched_at: new Date().toISOString() },
+          { onConflict: "cache_key" });
+      if (error) throw new Error(error.message);
+    },
+
     async listSettings(): Promise<Map<string, string>> {
       // Service-role only: `app_settings` deliberately has no public read
       // policy, so the anon client would silently come back empty and the

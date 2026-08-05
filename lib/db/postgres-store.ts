@@ -270,6 +270,31 @@ export function postgresStore(connectionString: string): SignalStore {
       }
     },
 
+    async readCache(key: string): Promise<{ payload: unknown; fetchedAt: string } | null> {
+      try {
+        const rows = (await sql`
+          select payload, fetched_at from source_cache where cache_key = ${key}
+        `) as unknown as Array<{ payload: unknown; fetched_at: string }>;
+        const row = rows[0];
+        return row ? { payload: row.payload, fetchedAt: new Date(row.fetched_at).toISOString() } : null;
+      } catch (err) {
+        throw explain(err);
+      }
+    },
+
+    async writeCache(key: string, payload: unknown): Promise<void> {
+      try {
+        await sql`
+          insert into source_cache (cache_key, payload, fetched_at)
+          values (${key}, ${JSON.stringify(payload)}, now())
+          on conflict (cache_key) do update set
+            payload = excluded.payload, fetched_at = now()
+        `;
+      } catch (err) {
+        throw explain(err);
+      }
+    },
+
     async listSettings(): Promise<Map<string, string>> {
       try {
         const rows = (await sql`select key, value from app_settings`) as unknown as Array<{

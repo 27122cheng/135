@@ -64,6 +64,45 @@ export interface GroupedGaps {
   permanent: string[];
 }
 
+/**
+ * One root cause, one line.
+ *
+ * A single AI outage was producing four separate gaps — "所有 AI 供應商皆無法
+ * 回應", "AI 綜合敘述改用本地備援文字", "交易計畫改用預設規則判斷", and a
+ * second providers-down line from the retry. Two problems with that:
+ *
+ *  - the panel says "6 項資料缺口" when three sources are actually down
+ *  - `data_gaps.length` is what the confidence score penalises, so one outage
+ *    cost 12 points instead of 3, and did it *again* on the plan's own −10
+ *
+ * Collapsed here rather than at each call site: the messages are written in
+ * half a dozen modules that have no idea what else failed in the same run.
+ * Anything not matched is left untouched — silence is the wrong default.
+ */
+const CASCADES: Array<{ match: RegExp; keep: RegExp; label: string }> = [
+  {
+    // Everything downstream of "no AI answered".
+    match: /所有 AI 供應商皆無法回應|AI 綜合敘述改用本地備援|交易計畫改用預設規則|AI 環節改用本地規則|未設定任何 AI 金鑰/,
+    // The one that names the provider errors is the only one worth reading.
+    keep: /所有 AI 供應商皆無法回應|未設定任何 AI 金鑰/,
+    label: "AI",
+  },
+];
+
+export function collapseCascades(gaps: string[]): string[] {
+  let remaining = [...new Set(gaps)];
+  for (const cascade of CASCADES) {
+    const hit = remaining.filter((g) => cascade.match.test(g));
+    if (hit.length <= 1) continue;
+    const primary = hit.find((g) => cascade.keep.test(g)) ?? hit[0];
+    const others = hit.length - 1;
+    remaining = remaining
+      .filter((g) => !cascade.match.test(g))
+      .concat(`${primary}（另有 ${others} 項後續影響皆源自同一原因）`);
+  }
+  return remaining;
+}
+
 export function groupDataGaps(gaps: string[]): GroupedGaps {
   const missingKeys = new Set<string>();
   const keyRelated: string[] = [];

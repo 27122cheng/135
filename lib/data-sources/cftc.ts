@@ -34,6 +34,13 @@ export async function fetchCotReport(
   contractCode: string,
   gaps: string[],
 ): Promise<CotReport[] | null> {
+  // Set when the request succeeded but the contract code matched nothing. That
+  // is a *configuration* fact, not a transport failure, and the difference
+  // matters twice over: retrying can never fix it, and letting it count as a
+  // failure trips the shared `cftc` backoff — so one unverified contract code
+  // silently blocked the COT lookup for every other symbol in the same sweep.
+  let emptyMatch = false;
+
   const result = await fetchFree<CotReport[]>({
     source: "cftc",
     label: `CFTC COT (${label})`,
@@ -41,6 +48,11 @@ export async function fetchCotReport(
     ttlMs: 6 * 60 * 60 * 1000,
     limit: CFTC_LIMIT,
     gaps,
+    diagnose: () =>
+      emptyMatch
+        ? `合約代碼 ${contractCode} 查無資料，代碼可能有誤（見 config/fundamentals.ts），重試無用`
+        : null,
+    wasTransportFailure: () => !emptyMatch,
     fn: async () => {
     const where = encodeURIComponent(`cftc_contract_market_code='${contractCode}'`);
     const url =
@@ -53,7 +65,12 @@ export async function fetchCotReport(
     // was being recorded as a source failure — which then tripped the backoff
     // and suppressed the next few attempts too.
     const data = await fetchJson<CftcRow[]>(url, undefined, 20000);
-    if (!Array.isArray(data) || data.length === 0) return null;
+    if (!Array.isArray(data)) return null;
+    if (data.length === 0) {
+      // Socrata answered; the filter just matched nothing.
+      emptyMatch = true;
+      return null;
+    }
     const reports = data
       .map((r) => {
         const long = Number(r.noncomm_positions_long_all);

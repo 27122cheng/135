@@ -83,6 +83,18 @@ export interface SignalStore {
    */
   listSettings(): Promise<Map<string, string>>;
   saveSetting(key: string, value: string): Promise<void>;
+
+  /**
+   * The cross-invocation half of the source cache.
+   *
+   * The in-memory cache is per-process, and on Vercel a process serves one
+   * request and may never be reused — which made fetchFree's "serve the last
+   * good answer, labelled stale" tier unreachable in practice. Every miss went
+   * straight to 取得失敗，且無可用快取, so a source being down for one minute
+   * became a hole in the analysis instead of a slightly old number.
+   */
+  readCache(key: string): Promise<{ payload: unknown; fetchedAt: string } | null>;
+  writeCache(key: string, payload: unknown): Promise<void>;
 }
 
 /** One row of `data_release` — a single macro print. */

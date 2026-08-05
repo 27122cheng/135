@@ -15,6 +15,7 @@ import { buildTradePlan, collectCandidates } from "./analysis/trade-plan";
 import { buildAddOns } from "./analysis/add-on";
 import { CONFIDENT_ENTRY_MIN, clearsEntryBar, planConfidence } from "./analysis/confidence";
 import { gradeAllowsEntry, scoreSignal } from "./scoring";
+import { collapseCascades } from "./data-gaps";
 import { buildStopLoss, buildTakeProfits } from "./entry-exit";
 import { getSignalStore } from "./db";
 import { fetchEconomicCalendar } from "./data-sources/finnhub";
@@ -470,7 +471,10 @@ async function buildSignalForSymbol(
     gaps.push("D1 K棒不足，無法對交易計畫做歷史幾何檢驗");
   }
 
-  const dedupedGaps = [...new Set(gaps)];
+  // Deduped *and* collapsed: one AI outage is one problem, not four. The count
+  // feeds the confidence penalty, so double-counting a single cause is not just
+  // noisy — it moves the number that decides whether this is tradeable.
+  const dedupedGaps = collapseCascades(gaps);
 
   const signal: TradeSignal = {
     symbol: meta.symbol,
