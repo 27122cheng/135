@@ -48,10 +48,12 @@ export default function Home() {
     const customEntry = custom.find((c) => c.symbol === selected);
     if (customEntry) return null; // custom symbols are never stored
     try {
-      const res = await fetch(`/api/history?symbol=${selected}&limit=1`, { cache: "no-store" });
+      // The board's own endpoint, filtered — same `latest_signal` row the board
+      // draws, so the two literally cannot show different numbers.
+      const res = await fetch(`/api/board?symbol=${selected}`, { cache: "no-store" });
       if (!res.ok) return null;
       const body = await res.json();
-      return (body.rows?.[0] as TradeSignal | undefined) ?? null;
+      return (body.signal as TradeSignal | undefined) ?? null;
     } catch {
       return null;
     }

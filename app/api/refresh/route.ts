@@ -89,7 +89,13 @@ export async function GET(request: Request) {
         .catch(() => []);
 
       const signal = await withUserKeys(keys, () => buildTradeSignal(meta.symbol));
+      // Both: the append-only timeline /history and the backtest read, and the
+      // single current row every view reads.
       await store.insertSignal(signal);
+      await store.saveLatest(signal).catch(() => {
+        // A missing latest_signal table must not fail a refresh that already
+        // wrote the history row it was actually asked to write.
+      });
 
       const decision = shouldAlert(signal, previous ?? null, minGrade);
       let notified: string[] = [];

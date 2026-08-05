@@ -101,3 +101,30 @@ export function scoreSignal(
     grade: gradeSignal(biasScore, entryStructureScore, totalScore, biasThresholdBump),
   };
 }
+
+/**
+ * The weakest grade allowed to produce an actual entry.
+ *
+ * Until now nothing enforced this: the AI chose `stance`, so a C could come
+ * back with a full set of levels — which it did, on SPX500 at total score 4.
+ * That is inconsistent with two rules the system already applies:
+ *
+ *  - alerts default to A and above, so a C "trade" is one the system will not
+ *    even tell you about
+ *  - add-ons require A/A+, so a C trade can never be scaled into
+ *
+ * Presenting a recommendation the rest of the system declines to act on is
+ * worse than presenting nothing. B is the floor: the band where總分 reaches 6,
+ * which is where the spec starts treating a setup as a setup.
+ *
+ * A single named constant rather than a scattered comparison, so changing the
+ * policy is one edit and the test that pins it fails loudly.
+ */
+export const MIN_ENTRY_GRADE: Grade = "B";
+
+const ENTRY_ORDER: Grade[] = ["no-trade", "C", "B", "A", "A+"];
+
+/** Whether this grade may enter at all. Nothing above this line consults the AI. */
+export function gradeAllowsEntry(grade: Grade): boolean {
+  return ENTRY_ORDER.indexOf(grade) >= ENTRY_ORDER.indexOf(MIN_ENTRY_GRADE);
+}

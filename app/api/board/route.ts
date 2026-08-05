@@ -97,13 +97,14 @@ function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | undefin
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const wanted = new URL(request.url).searchParams.get("symbol")?.toUpperCase();
   const store = getSignalStore();
   if (!store) {
     return json(
       {
         error: "未設定資料庫",
-        next: "總覽讀的是排程掃描寫進資料庫的結果。到 /setup 建立資料表。",
+        next: "總覽讀的是掃描寫進資料庫的結果。到 /setup 建立資料表。",
         rows: [],
       },
       { status: 501 },
@@ -113,6 +114,14 @@ export async function GET() {
   try {
     const latest = await store.latestPerSymbol();
     const bySymbol = new Map(latest.map((r) => [r.symbol, r]));
+
+    // `?symbol=` returns the full stored signal, which is what the detail page
+    // renders. Same row, same endpoint — the board and the analysis page
+    // cannot show different numbers because there is only one number.
+    if (wanted) {
+      const row = bySymbol.get(wanted);
+      return json({ signal: row ?? null }, { status: row ? 200 : 404 });
+    }
     // Driven by COMMODITIES, not by what the query returned, so a symbol that
     // has never been scanned appears as an empty row instead of vanishing —
     // "no data yet" and "no trade" are different answers.
@@ -132,7 +141,7 @@ export async function GET() {
     return json(
       {
         error: err instanceof Error ? err.message : String(err),
-        next: "signals 資料表可能還沒建立。到 /setup 按「建立資料表」。",
+        next: "latest_signal 資料表可能還沒建立。到 /setup 按「建立資料表」。",
         rows: [],
       },
       { status: 500 },

@@ -1,7 +1,8 @@
 import { check, report, stubFetch } from "./_harness";
 import { __resetQuotaForTests } from "@/lib/data-sources/quota";
 import { aiProviderStatus, completeAI, jsonSchema, textSchema } from "@/lib/ai";
-import { buildTradePlan } from "@/lib/analysis/trade-plan";
+import { buildTradePlan, decideStance } from "@/lib/analysis/trade-plan";
+import { MIN_ENTRY_GRADE, gradeAllowsEntry } from "@/lib/scoring";
 
 /**
  * The provider chain and the one guarantee that must survive swapping vendors:
@@ -159,7 +160,72 @@ async function main() {
     gp4,
   );
   check("a no-trade grade can never become an entry", p4.stance === "wait", p4.stance);
-  check("the override is recorded", gp4.some((g) => g.includes("強制改為觀望")), gp4);
+  // The model isn't even asked any more, so there is no override to record —
+  // the wait is the scoring rules' own decision and says so.
+  check("the reason names the grade rule", p4.summary.includes("未達可進場門檻"), p4.summary);
+  check("and it is marked as rule-decided, not AI", p4.decided_by === "fallback", p4.decided_by);
+
+  // ── stance is deterministic ──────────────────────────────────────
+  //
+  // The bug this pins: the AI used to return `stance`, so identical inputs
+  // could produce 進場 on one run and 觀望 on the next. The board showed a full
+  // set of levels for SPX500 while the detail page, built a minute later, said
+  // 觀望. Both were real; neither was reproducible.
+  __resetQuotaForTests();
+  // A reply that begs to enter. It must not be able to.
+  stubFetch(() => reply({ entry_index: 0, sl_index: 0, tp_index: 0, summary: "enter now" }));
+  const cGrade = await buildTradePlan(
+    { ...planInput, grade: "C" as const, bias_score: 3, entry_structure_score: 1, total_score: 4 },
+    [],
+  );
+  check("a C grade waits regardless of what the model wants", cGrade.stance === "wait", cGrade);
+  check("and names the floor", cGrade.summary.includes(MIN_ENTRY_GRADE), cGrade.summary);
+  check("B is the floor", MIN_ENTRY_GRADE === "B");
+  check("C is below it", !gradeAllowsEntry("C"));
+  check("B is allowed", gradeAllowsEntry("B"));
+  check("A+ is allowed", gradeAllowsEntry("A+"));
+  check("no-trade is never allowed", !gradeAllowsEntry("no-trade"));
+
+  // Same input, ten times: the decision cannot vary.
+  const verdicts = new Set(
+    Array.from({ length: 10 }, () => decideStance({ ...planInput, grade: "A" as const }).stance),
+  );
+  check("the same input always yields the same stance", verdicts.size === 1, [...verdicts]);
+
+  check(
+    "no usable structures waits without asking",
+    decideStance({ ...planInput, slCandidates: [] }).stance === "wait",
+  );
+
+  // Every listed combination loses on geometry: risk 20, reward 5.
+  check(
+    "a menu where no combination clears 1:1 waits",
+    decideStance({
+      ...planInput,
+      tpCandidates: [{ price: 2005, label: "近前高" }],
+    }).stance === "wait",
+  );
+  // But a workable pair anywhere in the menu is enough — refusing on the first
+  // triple alone would stand aside from a trade the rules permit.
+  check(
+    "one workable combination is enough",
+    decideStance({
+      ...planInput,
+      tpCandidates: [{ price: 2005, label: "近前高" }, { price: 2050, label: "前高" }],
+    }).stance === "enter",
+  );
+
+  // The AI path must enforce the same R:R floor the fallback does. It didn't:
+  // the model could hand back a trade risking more than it stood to make.
+  __resetQuotaForTests();
+  stubFetch(() => reply({ entry_index: 0, sl_index: 0, tp_index: 1, summary: "s" }));
+  const gpRr: string[] = [];
+  const badRr = await buildTradePlan(
+    { ...planInput, tpCandidates: [{ price: 2050, label: "前高" }, { price: 2005, label: "近前高" }] },
+    gpRr,
+  );
+  check("a sub-1:1 pick from the model is refused", badRr.decided_by === "fallback", badRr);
+  check("and the refusal says why", gpRr.some((g) => g.includes("風險報酬比")), gpRr);
 
   report("ai providers");
 }

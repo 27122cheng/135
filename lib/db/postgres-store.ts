@@ -97,16 +97,33 @@ export function postgresStore(connectionString: string): SignalStore {
       }
     },
 
+    async saveLatest(signal: TradeSignal): Promise<void> {
+      try {
+        await sql`
+          insert into latest_signal (symbol, payload, generated_at, updated_at)
+          values (${signal.symbol}, ${JSON.stringify(signal)}, ${signal.generated_at}, now())
+          on conflict (symbol) do update set
+            payload = excluded.payload,
+            generated_at = excluded.generated_at,
+            updated_at = now()
+        `;
+      } catch (err) {
+        throw explain(err);
+      }
+    },
+
     async latestPerSymbol(): Promise<SignalRow[]> {
       try {
-        // `distinct on` is the one-query form of "newest row per symbol"; the
-        // order by must lead with the same expression for Postgres to accept it.
-        const rows = await sql`
-          select distinct on (symbol) *
-          from signals
-          order by symbol, generated_at desc
-        `;
-        return rows as unknown as SignalRow[];
+        const rows = (await sql`
+          select symbol, payload, generated_at from latest_signal
+        `) as unknown as Array<{ symbol: string; payload: TradeSignal; generated_at: string }>;
+        // `payload` already is the signal; the id/created_at a SignalRow
+        // carries are history-table concepts this table has no equivalent of.
+        return rows.map((r) => ({
+          ...(r.payload as TradeSignal),
+          id: r.symbol,
+          created_at: r.generated_at,
+        })) as SignalRow[];
       } catch (err) {
         throw explain(err);
       }

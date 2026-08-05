@@ -58,7 +58,10 @@ export async function GET(request: Request) {
     let stored = false;
     if (store) {
       try {
-        await store.insertSignal(signal);
+        // Upsert, not append. The dashboard rescans nine symbols every five
+        // minutes while it is open; appending would write ~2,600 full history
+        // rows a day and bury the 4-hourly timeline underneath them.
+        await store.saveLatest(signal);
         stored = true;
       } catch {
         // A failed write must not cost the caller the signal it just waited

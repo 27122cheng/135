@@ -31,6 +31,17 @@ export interface SignalStore {
   listSignals(filter: HistoryFilter): Promise<SignalRow[]>;
 
   /**
+   * Upserts the signal currently in force for a symbol.
+   *
+   * Separate from `insertSignal` on purpose. That one appends to the history
+   * timeline; this one replaces. A dashboard rescanning nine symbols every five
+   * minutes would otherwise write ~2,600 history rows a day, each carrying the
+   * full bias items and narrative — enough to fill a free-tier database in
+   * about three weeks and bury the real history under it.
+   */
+  saveLatest(signal: TradeSignal): Promise<void>;
+
+  /**
    * The newest stored signal for each symbol, in one round trip.
    *
    * The board needs all nine at once. Doing that as nine `listSignals(limit:1)`

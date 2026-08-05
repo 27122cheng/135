@@ -159,3 +159,31 @@ create table if not exists public.app_settings (
 );
 
 alter table public.app_settings enable row level security;
+
+-- ─────────────────────────────────────────────────────────────────
+-- The signal currently in force, one row per symbol.
+--
+-- Separate from `signals` because the two answer different questions and have
+-- wildly different write rates. `signals` is an append-only timeline that the
+-- 4-hourly scan writes to: nine rows every four hours, ~54 a day, which is what
+-- /history and the backtest read.
+--
+-- This table is what every *view* reads. A browser-initiated scan upserts here
+-- instead of appending, because the dashboard rescans nine symbols every five
+-- minutes while it is open — 2,600 rows a day, each carrying the full bias
+-- items, structures and narrative. That would fill a free-tier database in
+-- about three weeks and bury the real history under it.
+-- ─────────────────────────────────────────────────────────────────
+
+create table if not exists public.latest_signal (
+  symbol text primary key,
+  payload jsonb not null,
+  generated_at timestamptz not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.latest_signal enable row level security;
+
+drop policy if exists "Public read access" on public.latest_signal;
+create policy "Public read access" on public.latest_signal
+  for select using (true);

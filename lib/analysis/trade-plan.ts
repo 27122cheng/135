@@ -1,5 +1,6 @@
 import { completeAI, jsonSchema } from "@/lib/ai";
 import type { BiasItem, Grade, TradePlan, TradeSignal } from "@/types/signal";
+import { MIN_ENTRY_GRADE, gradeAllowsEntry } from "@/lib/scoring";
 
 interface Candidate {
   price: number;
@@ -45,6 +46,80 @@ function riskReward(
   const targetOk = direction === "long" ? tp > entry : tp < entry;
   if (!stopOk || !targetOk) return null;
   return Math.round((reward / risk) * 100) / 100;
+}
+
+
+/**
+ * A trade that risks more than it stands to make isn't worth taking.
+ * Named because two code paths enforce it and they must not drift.
+ */
+const MIN_RISK_REWARD = 1;
+
+interface StanceVerdict {
+  stance: "enter" | "wait";
+  summary: string;
+  waitFor: string | null;
+}
+
+/**
+ * Whether to trade at all — decided by the scoring rules, never by the model.
+ *
+ * The AI used to return `stance`, which meant the same score could produce
+ * 進場 on one run and 觀望 on the next: the board showed a full set of levels
+ * for SPX500 while the detail page, built a minute later from identical
+ * inputs, said 觀望. Both were "real"; neither was reproducible.
+ *
+ * Making the model deterministic is not on the menu. Taking the decision away
+ * from it is. What the AI still does — choose which of the listed structures to
+ * use, and write the reasons — is judgement over a fixed menu, and a different
+ * choice there changes the levels, not whether you are in the market.
+ *
+ * Pure and synchronous, so the rule is testable without a model or a network.
+ */
+export function decideStance(input: TradePlanInput): StanceVerdict {
+  if (input.gradeForcesWait || !gradeAllowsEntry(input.grade)) {
+    return {
+      stance: "wait",
+      summary:
+        `評等 ${input.grade}（方向分 ${input.bias_score}、結構分 ${input.entry_structure_score}、` +
+        `總分 ${input.total_score}）未達可進場門檻 ${MIN_ENTRY_GRADE}，依計分規則觀望。`,
+      waitFor: `等待評等升到 ${MIN_ENTRY_GRADE} 以上 —— 需要更多面向同向，或價格回測到更強的結構。`,
+    };
+  }
+
+  if (
+    input.entryCandidates.length === 0 ||
+    input.slCandidates.length === 0 ||
+    input.tpCandidates.length === 0
+  ) {
+    return {
+      stance: "wait",
+      summary: "沒有足夠的真實結構可以組成進場／停損／停利，依規則觀望。",
+      waitFor: "等待價格接近有效的支撐／壓力結構。",
+    };
+  }
+
+  // Every listed combination loses on geometry alone. Checking all of them
+  // rather than the first triple: the AI is about to pick from this menu, and
+  // refusing here on the default choice while a workable pair exists would
+  // stand aside from a trade the rules actually permit.
+  const anyWorkable = input.entryCandidates.some((entry) =>
+    input.slCandidates.some((sl) =>
+      input.tpCandidates.some((tp) => {
+        const rr = riskReward(input.direction, entry.price, sl.price, tp.price);
+        return rr !== null && rr >= MIN_RISK_REWARD;
+      }),
+    ),
+  );
+  if (!anyWorkable) {
+    return {
+      stance: "wait",
+      summary: `現有結構的任何組合風險報酬比都低於 1:${MIN_RISK_REWARD}，賠率不划算，依規則觀望。`,
+      waitFor: "等待價格回落到更好的進場位置，或等更遠的停利結構出現。",
+    };
+  }
+
+  return { stance: "enter", summary: "", waitFor: null };
 }
 
 function waitPlan(
@@ -157,7 +232,6 @@ function buildPrompt(input: TradePlanInput): string {
 }
 
 interface AiResponse {
-  stance?: string;
   entry_index?: number;
   sl_index?: number;
   tp_index?: number;
@@ -166,7 +240,6 @@ interface AiResponse {
   tp_reason?: string;
   confidence?: string;
   summary?: string;
-  wait_for?: string;
 }
 
 /**
@@ -178,13 +251,15 @@ interface AiResponse {
 const PLAN_SCHEMA = jsonSchema<AiResponse>(
   "trade-plan",
   `輸出嚴格的 JSON（不要 markdown code fence、不要其他文字）：\n` +
-    `{"stance": "enter"|"wait", "entry_index": number, "sl_index": number, "tp_index": number, ` +
+    `{"entry_index": number, "sl_index": number, "tp_index": number, ` +
     `"entry_reason": string, "sl_reason": string, "tp_reason": string, ` +
     `"confidence": "high"|"medium"|"low", "summary": string, "wait_for": string}\n` +
-    `stance="wait" 時，三個 index 可填 0（會被忽略），但 wait_for 必填：用一句繁體中文說明「要等什麼條件出現才考慮進場」。\n` +
-    `stance="enter" 時，三個 reason 各用一句繁體中文說明為何選這個點，wait_for 填空字串。\n` +
+    `三個 reason 各用一句繁體中文說明為何選這個點，wait_for 填空字串。\n` +
     `summary 一律用繁體中文 80 字內總結你的判斷邏輯與主要風險。`,
-  (v) => (typeof v.stance === "string" ? (v as AiResponse) : null),
+  // Validated on the indices, not on a stance field — this schema is only
+  // reached once the rules have already decided to enter, so "should we trade"
+  // is not a question the model is asked and not a field it can answer.
+  (v) => (typeof v.entry_index === "number" ? (v as AiResponse) : null),
 );
 
 function validIndex(value: unknown, list: Candidate[]): value is number {
@@ -203,17 +278,12 @@ function validIndex(value: unknown, list: Candidate[]): value is number {
  * anything else cannot widen what it is able to say.
  */
 export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Promise<TradePlan> {
-  const noCandidates =
-    input.entryCandidates.length === 0 ||
-    input.slCandidates.length === 0 ||
-    input.tpCandidates.length === 0;
-
-  if (noCandidates && !input.gradeForcesWait) {
-    return waitPlan(
-      "沒有足夠的真實結構可以組成進場／停損／停利，依規則觀望。",
-      "等待價格接近有效的支撐／壓力結構。",
-      "fallback",
-    );
+  // 進場與否是計分規則的決定，不是 AI 的。
+  const verdict = decideStance(input);
+  if (verdict.stance === "wait") {
+    // No AI call at all on this path. It has nothing left to decide, and a
+    // scan that stands aside shouldn't spend quota to be told so.
+    return waitPlan(verdict.summary, verdict.waitFor, "fallback");
   }
 
   const result = await completeAI(buildPrompt(input), PLAN_SCHEMA, gaps, { maxTokens: 900 });
@@ -222,19 +292,6 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
     return fallbackPlan(input);
   }
   const parsed = result.value;
-
-  const wantsWait = parsed.stance !== "enter";
-  // The hard scoring rules win: a no-trade grade can never become an entry.
-  if (wantsWait || input.gradeForcesWait || noCandidates) {
-    if (!wantsWait && input.gradeForcesWait) {
-      gaps.push("AI 建議進場但評等為 no-trade，依硬性規則強制改為觀望");
-    }
-    return waitPlan(
-      parsed.summary?.trim() || "AI 判斷目前不值得進場。",
-      parsed.wait_for?.trim() || "等待更明確的訊號出現。",
-      "ai",
-    );
-  }
 
   if (
     !validIndex(parsed.entry_index, input.entryCandidates) ||
@@ -251,6 +308,13 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
   const rr = riskReward(input.direction, entry.price, sl.price, tp.price);
   if (rr === null) {
     gaps.push("AI 選出的停損／停利方向不合理（停損未在虧損側或停利未在獲利側），已改用預設規則");
+    return fallbackPlan(input);
+  }
+  // The same floor the deterministic path applies. It was missing here, so the
+  // AI could hand back a trade risking more than it stood to make while the
+  // fallback would have refused the identical geometry.
+  if (rr < MIN_RISK_REWARD) {
+    gaps.push(`AI 選出的組合風險報酬比僅 1:${rr}，低於 1:${MIN_RISK_REWARD} 門檻，已改用預設規則`);
     return fallbackPlan(input);
   }
 

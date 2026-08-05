@@ -91,27 +91,33 @@ export function supabaseStore(): SignalStore | null {
       return (data ?? []) as SignalRow[];
     },
 
+    async saveLatest(signal: TradeSignal): Promise<void> {
+      const client = getSupabaseServerClient();
+      if (!client) throw new Error("缺少 SUPABASE_SERVICE_ROLE_KEY，無法寫入 latest_signal");
+      const { error } = await client.from("latest_signal").upsert(
+        {
+          symbol: signal.symbol,
+          payload: signal,
+          generated_at: signal.generated_at,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "symbol" },
+      );
+      if (error) throw new Error(error.message);
+    },
+
     async latestPerSymbol(): Promise<SignalRow[]> {
       const client = getSupabaseAnonClient() ?? getSupabaseServerClient();
-      if (!client) throw new Error("缺少 Supabase 金鑰，無法讀取 signals");
-      // PostgREST has no `distinct on`, so this takes a recent window and keeps
-      // the first row per symbol. 200 covers nine symbols refreshed 4-hourly
-      // for several days, and the order guarantees "first seen" is "newest".
+      if (!client) throw new Error("缺少 Supabase 金鑰，無法讀取 latest_signal");
       const { data, error } = await client
-        .from("signals")
-        .select("*")
-        .order("generated_at", { ascending: false })
-        .limit(200);
+        .from("latest_signal")
+        .select("symbol, payload, generated_at");
       if (error) throw new Error(error.message);
-
-      const seen = new Set<string>();
-      const latest: SignalRow[] = [];
-      for (const row of (data ?? []) as SignalRow[]) {
-        if (seen.has(row.symbol)) continue;
-        seen.add(row.symbol);
-        latest.push(row);
-      }
-      return latest;
+      return (data ?? []).map((r: Record<string, unknown>) => ({
+        ...(r.payload as TradeSignal),
+        id: r.symbol as string,
+        created_at: r.generated_at as string,
+      })) as SignalRow[];
     },
 
     async insertJournalEntry(
