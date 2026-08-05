@@ -138,3 +138,24 @@ alter table public.data_release enable row level security;
 drop policy if exists "Public read access" on public.data_release;
 create policy "Public read access" on public.data_release
   for select using (true);
+
+-- ─────────────────────────────────────────────────────────────────
+-- Server-side settings that a browser sets but a scheduler reads.
+--
+-- The alert channels are the case this exists for. They can't live in
+-- localStorage (the cron runs with no browser attached) and requiring a Vercel
+-- environment variable means a redeploy for every change, so they live here:
+-- written from /setup, read by the 4-hour refresh and the 5-minute monitor.
+--
+-- Note the missing read policy. Every other table in this file grants public
+-- select; this one holds a bot token, so RLS denies anonymous reads and only
+-- the service-role key (or a direct DATABASE_URL connection) can see values.
+-- ─────────────────────────────────────────────────────────────────
+
+create table if not exists public.app_settings (
+  key text primary key,
+  value text not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.app_settings enable row level security;

@@ -215,5 +215,28 @@ export function supabaseStore(): SignalStore | null {
         firstSeenAt: new Date(r.first_seen_at as string).toISOString(),
       }));
     },
+
+    async listSettings(): Promise<Map<string, string>> {
+      // Service-role only: `app_settings` deliberately has no public read
+      // policy, so the anon client would silently come back empty and the
+      // deployment would look unconfigured while holding a valid token.
+      const client = getSupabaseServerClient();
+      if (!client) throw new Error("缺少 SUPABASE_SERVICE_ROLE_KEY，無法讀取 app_settings");
+      const { data, error } = await client.from("app_settings").select("key, value");
+      if (error) throw new Error(error.message);
+      return new Map((data ?? []).map((r) => [r.key as string, r.value as string]));
+    },
+
+    async saveSetting(key: string, value: string): Promise<void> {
+      const client = getSupabaseServerClient();
+      if (!client) throw new Error("缺少 SUPABASE_SERVICE_ROLE_KEY，無法寫入 app_settings");
+      const { error } = await client
+        .from("app_settings")
+        .upsert(
+          { key, value, updated_at: new Date().toISOString() },
+          { onConflict: "key" },
+        );
+      if (error) throw new Error(error.message);
+    },
   };
 }

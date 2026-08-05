@@ -1,4 +1,5 @@
 import { check, report } from "./_harness";
+import { clearSettingsCache, isSecretSetting, isSettableKey } from "@/lib/settings";
 import { formatAlert, shouldAlert } from "@/lib/notify/alert";
 import { notifyStatus } from "@/lib/notify";
 import type { SignalRow, TradeSignal, Grade } from "@/types/signal";
@@ -145,22 +146,46 @@ function stored(s: TradeSignal): SignalRow {
 }
 
 // ── channels ──────────────────────────────────────────────────────
-{
+//
+// Env vars still win over stored settings, so this block also pins the
+// precedence: a deployment-level choice must not be silently overridden by
+// something typed into a web form.
+async function channelTests() {
   for (const k of ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "DISCORD_WEBHOOK_URL"]) {
     delete process.env[k];
   }
-  check("nothing configured by default", notifyStatus().every((c) => !c.configured), notifyStatus());
+  clearSettingsCache();
+  check("nothing configured by default", (await notifyStatus()).every((c) => !c.configured));
 
   process.env.TELEGRAM_BOT_TOKEN = "t";
+  clearSettingsCache();
   check("a token alone is not enough for telegram",
-    notifyStatus().find((c) => c.name === "telegram")?.configured === false);
+    (await notifyStatus()).find((c) => c.name === "telegram")?.configured === false);
   process.env.TELEGRAM_CHAT_ID = "c";
+  clearSettingsCache();
   check("token + chat id configures telegram",
-    notifyStatus().find((c) => c.name === "telegram")?.configured === true);
+    (await notifyStatus()).find((c) => c.name === "telegram")?.configured === true);
 
   process.env.DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/x";
+  clearSettingsCache();
   check("a webhook url configures discord",
-    notifyStatus().find((c) => c.name === "discord")?.configured === true);
+    (await notifyStatus()).find((c) => c.name === "discord")?.configured === true);
+
+  // The allowlist is the security boundary — the same rule as the API keys.
+  // A settings endpoint that accepts any name is one that accepts DATABASE_URL.
+  check("telegram token is settable", isSettableKey("TELEGRAM_BOT_TOKEN"));
+  check("alert threshold is settable", isSettableKey("ALERT_MIN_GRADE"));
+  check("DATABASE_URL is not settable from a browser", !isSettableKey("DATABASE_URL"));
+  check("CRON_SECRET is not settable from a browser", !isSettableKey("CRON_SECRET"));
+  check("the service-role key is not settable", !isSettableKey("SUPABASE_SERVICE_ROLE_KEY"));
+  check("an unknown name is rejected", !isSettableKey("ANYTHING_ELSE"));
+
+  // Secrets must never be echoed back, even to whoever stored them.
+  check("the bot token is marked secret", isSecretSetting("TELEGRAM_BOT_TOKEN"));
+  check("the discord webhook is marked secret", isSecretSetting("DISCORD_WEBHOOK_URL"));
+  // The chat id is not a credential — showing it is how you confirm the setup.
+  check("the chat id is not a secret", !isSecretSetting("TELEGRAM_CHAT_ID"));
+  check("the alert threshold is not a secret", !isSecretSetting("ALERT_MIN_GRADE"));
 }
 
-report("alerts");
+void channelTests().then(() => report("alerts"));

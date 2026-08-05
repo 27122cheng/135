@@ -512,19 +512,34 @@ SPDR 官方持倉 XML 有兩個問題：它會擋雲端機房 IP，而且**只�
 
 ### 設定通知（Telegram，免費）
 
-網站上的 **`/setup`** 頁把這件事一步步帶完，並且每一步都能當場驗證。
+**全部在網站上做完，不用碰 Vercel、不用重新部署。** 開 `/setup`：
 
-1. Telegram 搜尋 **@BotFather** → 傳 `/newbot` → 照著取名字 → 拿到 token
-2. Vercel → Settings → Environment Variables 加上 `TELEGRAM_BOT_TOKEN` → Redeploy
-3. **先對你的新 bot 傳一句話**（Telegram 規定：使用者沒先開口，bot 不能主動傳訊）
-4. 回到 `/setup` 按「查出我的 Chat ID」 —— 這步以前要自己去讀
-   `getUpdates` 的原始 JSON 裡找 `"chat":{"id":…}`，是整個流程最容易卡住的地方，
-   所以改成後端代查（token 只在伺服器端，不經過瀏覽器）
-5. 把顯示的數字填進 `TELEGRAM_CHAT_ID` → Redeploy
-6. `/setup` 按「發送測試訊息」確認
+1. Telegram 搜尋 **@BotFather** → 傳 `/newbot` → 拿到 token → 貼進第 1 步存檔
+2. 對你的新 bot 傳一句話（Telegram 規定：使用者沒先開口，bot 不能主動傳訊）
+3. 按「查出我的 Chat ID」→ 自動填好 → 存檔
+4. 按「發送測試訊息」確認
+
+### 為什麼是資料庫，不是 localStorage 也不是環境變數
+
+AI 金鑰可以放瀏覽器，因為它們只在請求進行中需要，跟著 header 走一趟就結束。
+通知設定是相反的情況：**警報是凌晨四點由 GitHub Actions 發的，附近沒有任何瀏覽器**，
+localStorage 裡的東西在真正需要它的那一刻讀不到。
+
+環境變數可以，但每改一次就要重新部署，而且得再開一個後台。所以存進 `app_settings`：
+網頁寫、排程讀，token 存進去之後**不會再送回瀏覽器**，這頁只看得到「有沒有設定」。
+
+- **同名環境變數優先。** 部署層級的決定不該被網頁表單無聲蓋掉。
+- **`app_settings` 沒有 public read policy。** 其他表都有；這張表放 token，
+  所以 RLS 擋掉匿名讀取，只有 service-role 或直連 `DATABASE_URL` 看得到值。
+- **允許清單就是安全邊界**（`lib/settings.ts`），和 API 金鑰同一套規矩。
+  能被網頁寫入的只有那四個名字，`DATABASE_URL`、`CRON_SECRET`、
+  `SUPABASE_SERVICE_ROLE_KEY` 刻意不在裡面 —— 一個「客戶端說什麼就寫什麼」的
+  端點就是一個會寫入 `DATABASE_URL` 的端點。
+- 寫入沿用 `/api/setup` 的同一道門：設了 `CRON_SECRET` 就需要它，沒設就是開放的
+  —— 這件事寫在 `/setup` 頁面上，不留給人自己發現。
 
 `/setup` 同時會產生一組 `CRON_SECRET` 並顯示要填的 `APP_URL`，
-排程那兩個 secret 也在同一頁交代完。
+排程那兩個 GitHub secret 也在同一頁交代完。
 
 Discord 更簡單：伺服器設定 → 整合 → 建立 Webhook，把網址填進 `DISCORD_WEBHOOK_URL`。
 
@@ -1075,7 +1090,7 @@ npm test
 ```
 
 沙箱連不到任何一個金融 API，所以驗證靠的是 known-answer 測試 + stub 過的
-`fetch`，不是真的打上去。21 個套件、512 項斷言，每個套件跑在自己的行程裡
+`fetch`，不是真的打上去。21 個套件、522 項斷言，每個套件跑在自己的行程裡
 （好幾個會替換 `global.fetch` 並重設模組層快取，共用行程會讓前一個的 stub
 汙染後一個）。
 
@@ -1090,7 +1105,7 @@ npm test
 | `gold-flows` | 權重依頻率設上限；序列停更就停用該因子；不同頻率不得併成一個因子 |
 | `monitor` | 加倉四條拒絕規則（方向信心、支撐/壓力、強度 ≥2、非 R 倍數）；停損只能收緊；監控狀態機不重複通知、模糊 K 棒一律報停損 |
 | `rate-spread` | 利差不得跨缺漏日內插；20 日變化決定方向與權重；資料落後 >3 交易日就拒絕計分 |
-| `alert` | 通知門檻與去重：一樣的建議不重發、價位飄動不算變化、方向翻轉一定發 |
+| `alert` | 通知門檻與去重：一樣的建議不重發、價位飄動不算變化、方向翻轉一定發；設定允許清單擋掉 DATABASE_URL / CRON_SECRET，token 不得被回讀 |
 | `news` | 新聞重點的引用只能指向真的存在的標題；越界／負數引用會被丟掉 |
 | `gdelt` | 零結果與真失敗要分得開；查詢失敗會退回單一詞再試 |
 | `data-releases` | 影響窗過期就整個丟掉；與前值比較不得被寫成超預期；方向必須與 DXY 因子對美元的解讀一致 |

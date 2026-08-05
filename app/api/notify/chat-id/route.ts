@@ -1,5 +1,6 @@
 import { json } from "@/lib/json-response";
 import { fetchJson } from "@/lib/data-sources/http";
+import { getSetting } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
@@ -14,17 +15,18 @@ export const dynamic = "force-dynamic";
  *
  * So: set the token, send the bot any message, open this. It reads the id back.
  *
- * The token is server-side only (see lib/notify) — this route never accepts one
- * as a parameter and never returns it, so the id can be looked up without the
- * secret ever travelling anywhere it isn't already.
+ * The token is server-side only (a Vercel environment variable, or the
+ * app_settings row written from /setup) — this route never accepts one as a
+ * parameter and never returns it, so the id can be looked up without the secret
+ * ever travelling anywhere it is not already.
  */
 export async function GET() {
-  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  const token = (await getSetting("TELEGRAM_BOT_TOKEN"))?.trim();
   if (!token) {
     return json(
       {
         error: "尚未設定 TELEGRAM_BOT_TOKEN",
-        next: "先在 Vercel 環境變數加上 TELEGRAM_BOT_TOKEN 並 Redeploy，再回到這頁。",
+        next: "先在 /setup 貼上機器人 token 並儲存，再回到這一步。",
       },
       { status: 501 },
     );

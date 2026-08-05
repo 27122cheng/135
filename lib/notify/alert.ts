@@ -1,4 +1,5 @@
 import type { Grade, SignalRow, TradeSignal } from "@/types/signal";
+import { getSetting } from "@/lib/settings";
 
 /**
  * Decides whether a freshly built signal is worth interrupting someone for.
@@ -23,8 +24,13 @@ function rank(grade: string): number {
 /** Default floor. Below A the signal isn't worth a push notification. */
 export const DEFAULT_MIN_GRADE: Grade = "A";
 
-export function configuredMinGrade(): Grade {
-  const raw = process.env.ALERT_MIN_GRADE?.trim();
+/**
+ * Async because the value can come from `app_settings` as well as the
+ * environment — see lib/settings.ts. An unrecognised value falls back to the
+ * default rather than throwing: a typo in a web form must not stop every alert.
+ */
+export async function configuredMinGrade(): Promise<Grade> {
+  const raw = (await getSetting("ALERT_MIN_GRADE"))?.trim();
   return raw && (GRADE_ORDER as string[]).includes(raw) ? (raw as Grade) : DEFAULT_MIN_GRADE;
 }
 

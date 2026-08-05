@@ -54,6 +54,14 @@ export interface SignalStore {
   recordRelease(row: ReleaseRow): Promise<{ isNew: boolean }>;
   /** Releases first seen within the last `hours`, newest first. */
   recentReleases(hours: number): Promise<StoredRelease[]>;
+
+  /**
+   * Every stored setting. Read as a whole rather than one key at a time
+   * because the caller needs several per invocation and this is a network hop.
+   * Callers must treat a throw as "no settings yet" — see lib/settings.ts.
+   */
+  listSettings(): Promise<Map<string, string>>;
+  saveSetting(key: string, value: string): Promise<void>;
 }
 
 /** One row of `data_release` — a single macro print. */

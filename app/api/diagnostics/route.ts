@@ -130,7 +130,7 @@ export async function GET() {
     database: store,
     // Alerts only fire from the scheduled refresh, so this reports what that
     // run would be able to do — not what the browser can reach.
-    alerts: { channels: notifyStatus(), minGrade: configuredMinGrade() },
+    alerts: { channels: await notifyStatus(), minGrade: await configuredMinGrade() },
     // Live counters per source, so "why did it stop calling X" has an answer.
     quota: quotaSnapshot(),
     probes: sanitized,

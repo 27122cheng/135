@@ -1,12 +1,15 @@
 import { postJson } from "@/lib/ai/http";
+import { getSetting } from "@/lib/settings";
 
 /**
  * Outbound alerts.
  *
- * Deliberately env-var only: the alert fires from the scheduled refresh, which
- * runs with no browser attached, so a token living in someone's localStorage
- * would never be readable at the moment it's needed. Same reason DATABASE_URL
- * isn't user-settable.
+ * These cannot ride in a request header the way the AI keys do: the alert fires
+ * from a scheduled run with no browser attached, so a token in localStorage
+ * would be unreadable at exactly the moment it is needed. They come instead
+ * from `lib/settings` — a Vercel environment variable when one is set,
+ * otherwise the `app_settings` table written from /setup. Same server-side
+ * guarantee, no redeploy to change a channel.
  *
  * Both channels are free and need nothing installed server-side — a bot token
  * or a webhook URL and one POST.
@@ -14,19 +17,16 @@ import { postJson } from "@/lib/ai/http";
 
 export interface NotifyChannel {
   readonly name: string;
-  isConfigured(): boolean;
+  configured: boolean;
   send(text: string): Promise<{ ok: boolean; detail: string }>;
 }
 
 /** Telegram — free, works on a phone, setup is a chat with @BotFather. */
-function telegramChannel(): NotifyChannel {
+function telegramChannel(token: string | null, chatId: string | null): NotifyChannel {
   return {
     name: "telegram",
-    isConfigured: () =>
-      Boolean(process.env.TELEGRAM_BOT_TOKEN?.trim() && process.env.TELEGRAM_CHAT_ID?.trim()),
+    configured: Boolean(token && chatId),
     async send(text) {
-      const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
-      const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
       if (!token || !chatId) return { ok: false, detail: "未設定 TELEGRAM_BOT_TOKEN / CHAT_ID" };
       const res = await postJson(
         `https://api.telegram.org/bot${token}/sendMessage`,
@@ -47,12 +47,11 @@ function telegramChannel(): NotifyChannel {
 }
 
 /** Discord (and anything Discord-compatible) — one webhook URL, no account plumbing. */
-function discordChannel(): NotifyChannel {
+function discordChannel(url: string | null): NotifyChannel {
   return {
     name: "discord",
-    isConfigured: () => Boolean(process.env.DISCORD_WEBHOOK_URL?.trim()),
+    configured: Boolean(url),
     async send(text) {
-      const url = process.env.DISCORD_WEBHOOK_URL?.trim();
       if (!url) return { ok: false, detail: "未設定 DISCORD_WEBHOOK_URL" };
       // Discord renders plain text; strip the Telegram tags rather than
       // shipping literal <b> markers into the message.
@@ -63,8 +62,13 @@ function discordChannel(): NotifyChannel {
   };
 }
 
-export function channels(): NotifyChannel[] {
-  return [telegramChannel(), discordChannel()];
+export async function channels(): Promise<NotifyChannel[]> {
+  const [token, chatId, webhook] = await Promise.all([
+    getSetting("TELEGRAM_BOT_TOKEN"),
+    getSetting("TELEGRAM_CHAT_ID"),
+    getSetting("DISCORD_WEBHOOK_URL"),
+  ]);
+  return [telegramChannel(token, chatId), discordChannel(webhook)];
 }
 
 export interface NotifyResult {
@@ -78,7 +82,7 @@ export interface NotifyResult {
  * throwing: a failed alert must never abort the refresh that produced it.
  */
 export async function notifyAll(text: string): Promise<NotifyResult[]> {
-  const configured = channels().filter((c) => c.isConfigured());
+  const configured = (await channels()).filter((c) => c.configured);
   if (configured.length === 0) return [];
   return Promise.all(
     configured.map(async (c) => {
@@ -96,7 +100,7 @@ export async function notifyAll(text: string): Promise<NotifyResult[]> {
   );
 }
 
-/** For /api/diagnostics — never exposes the token itself. */
-export function notifyStatus(): Array<{ name: string; configured: boolean }> {
-  return channels().map((c) => ({ name: c.name, configured: c.isConfigured() }));
+/** For /api/diagnostics and /setup. Never exposes the token itself. */
+export async function notifyStatus(): Promise<Array<{ name: string; configured: boolean }>> {
+  return (await channels()).map((c) => ({ name: c.name, configured: c.configured }));
 }

@@ -50,7 +50,7 @@ export async function GET(request: Request) {
     return json({ error: `Unknown symbol ${requested}` }, { status: 404 });
   }
 
-  const minGrade = configuredMinGrade();
+  const minGrade = await configuredMinGrade();
   // Falls back to the origin this request arrived on, so the link in an alert
   // works without anyone setting APP_URL in Vercel as well as in GitHub.
   const appUrl = process.env.APP_URL?.trim() || new URL(request.url).origin;

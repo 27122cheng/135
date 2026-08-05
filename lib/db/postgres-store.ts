@@ -237,5 +237,29 @@ export function postgresStore(connectionString: string): SignalStore {
         throw explain(err);
       }
     },
+
+    async listSettings(): Promise<Map<string, string>> {
+      try {
+        const rows = (await sql`select key, value from app_settings`) as unknown as Array<{
+          key: string;
+          value: string;
+        }>;
+        return new Map(rows.map((r) => [r.key, r.value]));
+      } catch (err) {
+        throw explain(err);
+      }
+    },
+
+    async saveSetting(key: string, value: string): Promise<void> {
+      try {
+        await sql`
+          insert into app_settings (key, value, updated_at)
+          values (${key}, ${value}, now())
+          on conflict (key) do update set value = excluded.value, updated_at = now()
+        `;
+      } catch (err) {
+        throw explain(err);
+      }
+    },
   };
 }
