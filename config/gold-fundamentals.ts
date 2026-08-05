@@ -17,14 +17,15 @@
  *    added together — see lib/analysis/gold-flows.ts.
  */
 
-export type SourceFrequency = "daily" | "weekly" | "monthly" | "quarterly";
+export type SourceFrequency = "daily" | "weekly" | "monthly" | "quarterly" | "yearly";
 
-/** 權重上限，依頻率分層. Quarterly is deliberately 0 — background, not a vote. */
+/** 權重上限，依頻率分層. Quarterly and slower are deliberately 0 — background, not a vote. */
 export const FREQUENCY_WEIGHT_CAP: Record<SourceFrequency, 0 | 1 | 2> = {
   daily: 2,
   weekly: 2,
   monthly: 1,
   quarterly: 0,
+  yearly: 0,
 };
 
 /** Nominal length of one period, used to judge whether a print is overdue. */
@@ -33,23 +34,41 @@ export const FREQUENCY_DAYS: Record<SourceFrequency, number> = {
   weekly: 7,
   monthly: 31,
   quarterly: 92,
+  yearly: 366,
 };
+
+/** Coarser of two tiers — used to take the more conservative weight ceiling. */
+const TIER_ORDER: SourceFrequency[] = ["daily", "weekly", "monthly", "quarterly", "yearly"];
+export function coarser(a: SourceFrequency, b: SourceFrequency): SourceFrequency {
+  return TIER_ORDER.indexOf(a) >= TIER_ORDER.indexOf(b) ? a : b;
+}
 
 export interface GoldFlowSource {
   id: string;
   label: string;
+  /**
+   * The frequency this source is *expected* to publish at. It caps the weight,
+   * but it does not decide the staleness limit — that comes from the periods
+   * the series actually returns. A source declared weekly whose data turns out
+   * to be monthly was being judged against a 21-day clock and disabled every
+   * single run; the data's own cadence is the only honest yardstick.
+   */
   frequency: SourceFrequency;
   /**
-   * DBnomics `provider/dataset/series`.
+   * DBnomics `provider/dataset/series` candidates, tried in order. The first
+   * one that both resolves **and** is fresh wins.
    *
-   * **These ids are unverified.** The build sandbox cannot reach
-   * api.db.nomics.world, so they are written from the providers' documented
-   * dataset naming and must be confirmed against a live response. A wrong id
-   * returns nothing and the factor is skipped with a data_gap — it never
-   * produces a wrong number. Use `/api/proxy/dbnomics?search=...` to find the
-   * real code and correct the entry.
+   * A list rather than a single id because these codes cannot be verified from
+   * the build sandbox (no network), and because a dataset that goes dormant
+   * looks exactly like a correct id — IMF/IFS resolved fine while sitting 400
+   * days behind. One dead code should cost a factor its best source, not its
+   * existence. All candidates failing is still fail-safe: the factor is skipped
+   * with a data_gap, never filled with a stale or invented number.
+   *
+   * Use `/api/proxy/dbnomics` to see which candidate each source resolved to
+   * and how fresh it is, and `?search=` to find a replacement.
    */
-  series: string;
+  series: string[];
   /** Typical days between period end and publication. */
   releaseLagDays: number;
   /**
@@ -68,6 +87,10 @@ export interface GoldFlowSource {
  * Sources DBnomics carries. Ordered by signal value: physical flow first
  * (it leads), then national central banks (they publish before the IMF
  * aggregate), then the IMF roll-up.
+ *
+ * IRFCL (International Reserves and Foreign Currency Liquidity) is listed
+ * ahead of IFS everywhere: it is the monthly template countries report reserves
+ * on, so it lands weeks earlier than the IFS roll-up of the same numbers.
  */
 export const DBNOMICS_GOLD_SOURCES: GoldFlowSource[] = [
   {
@@ -75,7 +98,11 @@ export const DBNOMICS_GOLD_SOURCES: GoldFlowSource[] = [
     label: "中國人民銀行 官方黃金儲備",
     frequency: "monthly",
     // PBoC publishes around the 7th; the market watches this one most.
-    series: "IMF/IFS/M.CN.RAFAGOLDV_OZT",
+    series: [
+      "IMF/IRFCL/M.CN.RAFAGOLDV_OZT",
+      "IMF/IFS/M.CN.RAFAGOLDV_OZT",
+      "IMF/IRFCL/M.CN.RAFAGOLD_USD",
+    ],
     releaseLagDays: 7,
     risingMeans: "long",
     lookback: 3,
@@ -85,22 +112,32 @@ export const DBNOMICS_GOLD_SOURCES: GoldFlowSource[] = [
   {
     id: "rbi-reserves",
     label: "印度 RBI 黃金儲備",
-    frequency: "weekly",
-    series: "IMF/IFS/M.IN.RAFAGOLDV_OZT",
-    releaseLagDays: 7,
+    // RBI's own weekly bulletin isn't on DBnomics; what is there is the monthly
+    // reserve template. Declared monthly so the weight ceiling matches reality.
+    frequency: "monthly",
+    series: [
+      "IMF/IRFCL/M.IN.RAFAGOLDV_OZT",
+      "IMF/IFS/M.IN.RAFAGOLDV_OZT",
+      "IMF/IRFCL/M.IN.RAFAGOLD_USD",
+    ],
+    releaseLagDays: 14,
     risingMeans: "long",
-    lookback: 4,
+    lookback: 3,
     minChangePct: 0.1,
-    note: "RBI 週度統計補充，頻率高於多數央行",
+    note: "印度央行儲備，近年主要買家之一",
   },
   {
     id: "tcmb-reserves",
     label: "土耳其 TCMB 黃金儲備",
-    frequency: "weekly",
-    series: "IMF/IFS/M.TR.RAFAGOLDV_OZT",
-    releaseLagDays: 7,
+    frequency: "monthly",
+    series: [
+      "IMF/IRFCL/M.TR.RAFAGOLDV_OZT",
+      "IMF/IFS/M.TR.RAFAGOLDV_OZT",
+      "IMF/IRFCL/M.TR.RAFAGOLD_USD",
+    ],
+    releaseLagDays: 14,
     risingMeans: "long",
-    lookback: 4,
+    lookback: 3,
     minChangePct: 0.2,
     note: "土耳其是近年主要買家之一",
   },
@@ -108,7 +145,11 @@ export const DBNOMICS_GOLD_SOURCES: GoldFlowSource[] = [
     id: "cbr-reserves",
     label: "俄羅斯央行 黃金儲備",
     frequency: "monthly",
-    series: "IMF/IFS/M.RU.RAFAGOLDV_OZT",
+    series: [
+      "IMF/IRFCL/M.RU.RAFAGOLDV_OZT",
+      "IMF/IFS/M.RU.RAFAGOLDV_OZT",
+      "IMF/IRFCL/M.RU.RAFAGOLD_USD",
+    ],
     releaseLagDays: 20,
     risingMeans: "long",
     lookback: 3,
@@ -119,7 +160,11 @@ export const DBNOMICS_GOLD_SOURCES: GoldFlowSource[] = [
     id: "world-official-reserves",
     label: "IMF 全球官方黃金儲備",
     frequency: "monthly",
-    series: "IMF/IFS/M.W00.RAFAGOLDV_OZT",
+    series: [
+      "IMF/IRFCL/M.W00.RAFAGOLDV_OZT",
+      "IMF/IFS/M.W00.RAFAGOLDV_OZT",
+      "IMF/IFS/M.W00.RAFAGOLD_USD",
+    ],
     releaseLagDays: 45,
     risingMeans: "long",
     lookback: 3,
@@ -143,9 +188,14 @@ export const SCRAPER_ONLY_SOURCES = [
 
 /**
  * Maximum age of the latest observation before a factor is dropped.
+ *
  * One period plus its publication lag, plus a few days of slack for holidays
- * and irregular release calendars.
+ * and irregular release calendars. `observed` is the cadence the series
+ * actually publishes at; when it is coarser than what the source declared, it
+ * wins — otherwise a mislabelled source is permanently disabled by a clock that
+ * never applied to it.
  */
-export function maxAgeDays(source: GoldFlowSource): number {
-  return FREQUENCY_DAYS[source.frequency] + source.releaseLagDays + 7;
+export function maxAgeDays(source: GoldFlowSource, observed?: SourceFrequency): number {
+  const frequency = observed ? coarser(source.frequency, observed) : source.frequency;
+  return FREQUENCY_DAYS[frequency] + source.releaseLagDays + 7;
 }

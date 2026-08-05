@@ -3,22 +3,59 @@
  * Callers must push a human-readable reason to `gaps` on a null result —
  * this module only guarantees the process doesn't crash and no data
  * is fabricated on failure.
+ *
+ * Every failure mode collapsing to `null` was costing more than it saved.
+ * "GDELT 取得失敗" is not a diagnosis: a 429, a 25-second timeout and a body
+ * that isn't JSON all need different fixes, and from the outside they looked
+ * identical. So a caller may now pass a sink and learn which one happened,
+ * without any existing call site changing.
  */
+
+export interface HttpFailure {
+  kind: "timeout" | "http" | "parse" | "network";
+  status?: number;
+  detail?: string;
+}
+
+/** Short Chinese description, suitable for a data_gaps line. */
+export function describeFailure(f: HttpFailure | null | undefined): string | null {
+  if (!f) return null;
+  switch (f.kind) {
+    case "timeout":
+      return `逾時${f.detail ? `（${f.detail}）` : ""}`;
+    case "http":
+      return `HTTP ${f.status ?? "?"}`;
+    case "parse":
+      return `回應不是有效 JSON${f.detail ? `（${f.detail}）` : ""}`;
+    case "network":
+      return `連線失敗${f.detail ? `（${f.detail}）` : ""}`;
+  }
+}
+
+type Sink = (failure: HttpFailure) => void;
+
+function classify(error: unknown, timeoutMs: number, aborted: boolean): HttpFailure {
+  if (aborted) return { kind: "timeout", detail: `${Math.round(timeoutMs / 1000)}s` };
+  const message = error instanceof Error ? error.message : String(error);
+  return { kind: "network", detail: message.slice(0, 120) };
+}
+
 export async function fetchJson<T>(
   url: string,
   init?: RequestInit,
   timeoutMs = 6000,
+  onFailure?: Sink,
 ): Promise<T | null> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const text = await fetchText(url, init, timeoutMs, onFailure);
+  if (text === null) return null;
   try {
-    const res = await fetch(url, { ...init, signal: controller.signal });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    onFailure?.({
+      kind: "parse",
+      detail: error instanceof Error ? error.message.slice(0, 120) : undefined,
+    });
     return null;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -26,14 +63,23 @@ export async function fetchText(
   url: string,
   init?: RequestInit,
   timeoutMs = 6000,
+  onFailure?: Sink,
 ): Promise<string | null> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let aborted = false;
+  const timeout = setTimeout(() => {
+    aborted = true;
+    controller.abort();
+  }, timeoutMs);
   try {
     const res = await fetch(url, { ...init, signal: controller.signal });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      onFailure?.({ kind: "http", status: res.status });
+      return null;
+    }
     return await res.text();
-  } catch {
+  } catch (error) {
+    onFailure?.(classify(error, timeoutMs, aborted));
     return null;
   } finally {
     clearTimeout(timeout);

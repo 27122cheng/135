@@ -120,10 +120,25 @@ rather than guessed.
 只有 DBnomics **沒有涵蓋**的才值得自寫 scraper（瑞士海關、SGE、香港統計處、
 HMRC、LBMA）。這些目前列在 `SCRAPER_ONLY_SOURCES` 裡，是刻意留白不是漏掉。
 
+### 每個來源帶多個候選代碼
+
+`series` 是一組候選，依序試，**第一個「查得到而且是即時的」勝出**。
+
+這不是為了保險而保險。第一版每個來源只寫一個 `IMF/IFS/...`，全部都查得到、
+全部都回傳資料 —— 但那個資料集停在 2025-06，落後 400 天，於是五個因子每次
+掃描都被新鮮度閘門擋掉。**「查得到」不等於「是對的」**：一個停更的資料集，
+從程式的角度看跟一個健康的來源完全一樣。所以候選要試到有一個真的新鮮為止，
+而 IRFCL（各國每月申報儲備用的範本）排在 IFS 前面，因為同一批數字它早幾週出。
+
+全部候選都失敗仍然是安全的：該因子跳過並寫進 `data_gaps`，
+不會拿舊值或假值頂替。
+
 > **序列代碼未經驗證。** 沙箱連不到 api.db.nomics.world，`config/gold-fundamentals.ts`
-> 裡的 id 是照各機構文件的命名規則寫的。代碼錯只會查無資料並停用該因子，
-> **不會產生錯的數字**。開 `/api/proxy/dbnomics` 一次檢查全部代碼能不能解析，
-> 用 `?search=關鍵字` 找出正確的再回填。
+> 裡的 id 是照各機構文件的命名規則寫的。
+> 開 `/api/proxy/dbnomics` 一次看完全部候選：`resolved=false` 是代碼錯，
+> `fresh=false` 是資料集停更（會附 `latestPeriod`、`ageDays`、`limitDays`），
+> `usingSeries` 是這個來源實際會用哪一個。
+> 用 `?search=關鍵字` 找替代代碼再回填 config。
 
 ### 權重依頻率分層
 
@@ -134,9 +149,15 @@ HMRC、LBMA）。這些目前列在 `SCRAPER_ONLY_SOURCES` 裡，是刻意留白
 | 頻率 | 來源 | 權重上限 |
 |---|---|---|
 | 日頻 | GLD 持倉、CFTC COT、未平倉量 | **2** |
-| 週頻 | 印度 RBI、土耳其 TCMB | **2** |
-| 月頻 | 中國 PBoC、俄羅斯 CBR、瑞士海關、SGE、LBMA | **1** |
+| 週頻 | 週度公布的央行儲備 | **2** |
+| 月頻 | 中國 PBoC、印度 RBI、土耳其 TCMB、俄羅斯 CBR、瑞士海關、SGE、LBMA | **1** |
 | 季／年頻 | WGC 彙總 | **0**（只做圖表背景，永不計分） |
+
+**頻率以資料實際的節奏為準，不以 config 宣告的為準。**
+印度 RBI 原本宣告成週頻，但 DBnomics 給的是月度觀測 —— 於是它被一把 21 天的
+週頻尺量，明明準時公布卻每次掃描都被判過期。現在頻率由序列自己的期間推斷
+（`inferFrequency`）：**新鮮度上限用實際頻率**，**權重上限取兩者中較粗的那個**，
+所以月頻資料不會因為 config 寫了週頻就拿到週頻的權重。
 
 ### 兩條硬性規則
 
@@ -305,7 +326,7 @@ SPDR 官方持倉 XML 有兩個問題：它會擋雲端機房 IP，而且**只�
 於是警告數字永遠歸不了零，久了就沒人看。現在分開：
 
 - **本次取得失敗** — 可以處理的，計入警告數
-- **先天限制** — 央行購金沒有免費 API、GER40 在 Eurex 交易所以 CFTC 沒資料。
+- **先天限制** — GER40 在 Eurex 交易所以 CFTC 沒資料、外國短端公債沒有免金鑰來源。
   照樣列出來，但不計入警告數，樣式也降到灰色
 
 判斷是靠訊息措辭比對（`lib/data-gaps.ts` 的 `PERMANENT_PATTERNS`）。
@@ -978,7 +999,7 @@ npm test
 ```
 
 沙箱連不到任何一個金融 API，所以驗證靠的是 known-answer 測試 + stub 過的
-`fetch`，不是真的打上去。19 個套件、438 項斷言，每個套件跑在自己的行程裡
+`fetch`，不是真的打上去。20 個套件、463 項斷言，每個套件跑在自己的行程裡
 （好幾個會替換 `global.fetch` 並重設模組層快取，共用行程會讓前一個的 stub
 汙染後一個）。
 
@@ -996,6 +1017,7 @@ npm test
 | `alert` | 通知門檻與去重：一樣的建議不重發、價位飄動不算變化、方向翻轉一定發 |
 | `news` | 新聞重點的引用只能指向真的存在的標題；越界／負數引用會被丟掉 |
 | `gdelt` | 零結果與真失敗要分得開；查詢失敗會退回單一詞再試 |
+| `http diagnostics` | 逾時／HTTP 狀態碼／回應不是 JSON 要能分辨並寫進 `data_gaps`；GDELT 標題裡的控制字元不得害整包回應被丟掉 |
 | `db` | 首次設定錯誤翻譯、schema 常數與 .sql 檔不得漂移、DATABASE_URL 不可由瀏覽器設定 |
 | `bt` `lv` `oi` `lex` `fred` `plan` | 回測幾何、結構聚類、未平倉四象限、關鍵字情緒、CSV 解析、計畫組裝 |
 
@@ -1019,7 +1041,11 @@ npm test
   the news-sentiment analyzer picks up via keywords (`ecb`, `boj`, `boe`) —
   it isn't a dedicated signal.
 - **GER40 has no 籌碼面 at all** (DAX trades on Eurex, not covered by CFTC).
-- 央行購金 (central bank gold purchases) still has no free API in scope.
+- 央行購金 (central bank gold purchases) now comes from DBnomics, but the
+  series codes are unverified and the first set turned out to point at a dataset
+  that had stopped updating in 2025-06. Each source carries several candidates
+  and the freshness gate rejects a dormant one, so this fails safe — but until
+  `/api/proxy/dbnomics` reports `brokenCount: 0`, treat the factor as absent.
 - GLD holdings is still a single snapshot; "持倉變化" can't be computed.
 - EIA and SPDR endpoints are unverified in this sandbox (see APIs table).
 

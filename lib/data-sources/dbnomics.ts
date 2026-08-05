@@ -141,6 +141,48 @@ export async function searchDbnomics(query: string, gaps: string[]): Promise<Sea
 }
 
 /**
+ * The cadence a series actually publishes at, read off its own periods.
+ *
+ * Needed because a source's declared frequency is a statement of intent and can
+ * be wrong: 印度 RBI was configured as weekly while DBnomics returns monthly
+ * observations, so it was judged against a 21-day staleness limit it could
+ * never meet and was disabled on every run. What the series does beats what the
+ * config claims.
+ *
+ * Returns null when the periods are mixed or unrecognised, in which case the
+ * caller should fall back to the declared frequency.
+ */
+export function inferFrequency(
+  points: SeriesPoint[],
+): "daily" | "weekly" | "monthly" | "quarterly" | "yearly" | null {
+  const recent = points.slice(-8).map((p) => p.period);
+  if (recent.length < 2) return null;
+
+  if (recent.every((p) => /^\d{4}-\d{2}$/.test(p))) return "monthly";
+  if (recent.every((p) => /^\d{4}-Q[1-4]$/i.test(p))) return "quarterly";
+  if (recent.every((p) => /^\d{4}$/.test(p))) return "yearly";
+  if (!recent.every((p) => /^\d{4}-\d{2}-\d{2}$/.test(p))) return null;
+
+  // Daily-stamped periods can still be weekly or monthly snapshots, so the
+  // spacing decides. Median, not mean: one gap over a holiday shouldn't
+  // reclassify a whole series.
+  const gaps: number[] = [];
+  for (let i = 1; i < recent.length; i++) {
+    const a = periodEndDate(recent[i - 1]);
+    const b = periodEndDate(recent[i]);
+    if (a && b) gaps.push((b.getTime() - a.getTime()) / 86_400_000);
+  }
+  if (gaps.length === 0) return null;
+  gaps.sort((x, y) => x - y);
+  const median = gaps[Math.floor(gaps.length / 2)];
+  if (median <= 3) return "daily";
+  if (median <= 10) return "weekly";
+  if (median <= 45) return "monthly";
+  if (median <= 120) return "quarterly";
+  return "yearly";
+}
+
+/**
  * Converts a DBnomics period to the last calendar day it covers.
  *
  * Freshness has to be judged against the end of the period, not its label: a

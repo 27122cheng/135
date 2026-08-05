@@ -40,6 +40,12 @@ export interface FreeFetchOptions<T> {
   gaps: string[];
   /** Returns null on any failure; must not throw. */
   fn: () => Promise<T | null>;
+  /**
+   * Called only after `fn` returned null, to name the cause in the gap message.
+   * "取得失敗" alone can't be acted on — a 429 and a timeout need opposite
+   * fixes. Returning null keeps the generic wording.
+   */
+  diagnose?: () => string | null;
   staleMs?: number;
 }
 
@@ -51,7 +57,7 @@ function minutes(ms: number): string {
 }
 
 export async function fetchFree<T>(opts: FreeFetchOptions<T>): Promise<FreeFetchResult<T> | null> {
-  const { source, label, key, ttlMs, limit, gaps, fn, staleMs = DEFAULT_STALE_MS } = opts;
+  const { source, label, key, ttlMs, limit, gaps, fn, diagnose, staleMs = DEFAULT_STALE_MS } = opts;
 
   const fresh = getCached<T>(key);
   if (fresh !== undefined) return { value: fresh, stale: false, ageMs: 0 };
@@ -74,11 +80,12 @@ export async function fetchFree<T>(opts: FreeFetchOptions<T>): Promise<FreeFetch
   const value = await fn();
   if (value === null) {
     recordFailure(source);
-    const stale = serveStale("本次取得失敗");
+    const why = diagnose?.() ?? null;
+    const stale = serveStale(why ? `本次取得失敗：${why}` : "本次取得失敗");
     if (stale) return stale;
     // Nothing fresh, nothing cached — the caller gets null, so the reason has
     // to be recorded here or it is lost entirely.
-    gaps.push(`${label} 取得失敗，且無可用快取`);
+    gaps.push(`${label} 取得失敗${why ? `：${why}` : ""}，且無可用快取`);
     return null;
   }
 

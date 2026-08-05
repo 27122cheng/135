@@ -1,6 +1,6 @@
 import { check, report } from "./_harness";
 import { buildGoldFlowItem } from "@/lib/analysis/gold-flows";
-import { periodEndDate } from "@/lib/data-sources/dbnomics";
+import { inferFrequency, periodEndDate } from "@/lib/data-sources/dbnomics";
 import {
   DBNOMICS_GOLD_SOURCES,
   FREQUENCY_WEIGHT_CAP,
@@ -20,7 +20,7 @@ function source(over: Partial<GoldFlowSource> = {}): GoldFlowSource {
     id: "test",
     label: "測試來源",
     frequency: "monthly",
-    series: "IMF/IFS/TEST",
+    series: ["IMF/IFS/TEST"],
     releaseLagDays: 7,
     risingMeans: "long",
     lookback: 3,
@@ -135,6 +135,44 @@ function series(periods: string[], values: number[]): DbnomicsSeries {
   check("a source with a declared long lag is not punished for it", slowOk.item !== null, slowOk.reason);
 }
 
+// ── the data's own cadence beats the declared one ──────────────────
+{
+  // This is the 印度 RBI bug: configured weekly, DBnomics returns monthly. The
+  // 21-day weekly clock disabled it on every single run even though the series
+  // was publishing exactly on schedule.
+  const declaredWeekly = source({ frequency: "weekly", releaseLagDays: 7, lookback: 3 });
+  const monthlyData = series(["2026-04", "2026-05", "2026-06", "2026-07"], [100, 101, 102, 110]);
+  const now = new Date("2026-08-10T00:00:00Z"); // 2026-07 ended 10 days ago
+
+  check("monthly data is judged on a monthly clock, not the declared weekly one",
+    buildGoldFlowItem(declaredWeekly, monthlyData, now).item !== null);
+  check("the age limit follows the observed frequency",
+    maxAgeDays(declaredWeekly, "monthly") === 45, maxAgeDays(declaredWeekly, "monthly"));
+
+  // But the weight still takes the coarser of the two: monthly data cannot be
+  // scored at the weekly ceiling just because the config asked for it.
+  check("the weight ceiling takes the coarser tier",
+    buildGoldFlowItem(declaredWeekly, monthlyData, now).item?.weight === 1);
+  check("and the factor is labelled with what the data actually is",
+    buildGoldFlowItem(declaredWeekly, monthlyData, now).item?.factor.includes("月頻") === true);
+
+  check("daily periods are recognised", inferFrequency(
+    [{ period: "2026-08-03", value: 1 }, { period: "2026-08-04", value: 1 },
+     { period: "2026-08-05", value: 1 }]) === "daily");
+  check("weekly-spaced daily periods are recognised", inferFrequency(
+    [{ period: "2026-07-20", value: 1 }, { period: "2026-07-27", value: 1 },
+     { period: "2026-08-03", value: 1 }]) === "weekly");
+  check("month labels are recognised", inferFrequency(
+    [{ period: "2026-06", value: 1 }, { period: "2026-07", value: 1 }]) === "monthly");
+  check("quarter labels are recognised", inferFrequency(
+    [{ period: "2026-Q1", value: 1 }, { period: "2026-Q2", value: 1 }]) === "quarterly");
+  check("year labels are recognised", inferFrequency(
+    [{ period: "2025", value: 1 }, { period: "2026", value: 1 }]) === "yearly");
+  check("a single point tells us nothing", inferFrequency([{ period: "2026-07", value: 1 }]) === null);
+  check("mixed formats tell us nothing", inferFrequency(
+    [{ period: "2026-07", value: 1 }, { period: "2026-Q2", value: 1 }]) === null);
+}
+
 // ── refusals ──────────────────────────────────────────────────────
 {
   const now = new Date("2026-08-10T00:00:00Z");
@@ -178,7 +216,12 @@ function series(periods: string[], values: number[]): DbnomicsSeries {
 
 // ── config sanity ─────────────────────────────────────────────────
 {
-  check("every source has a DBnomics id", DBNOMICS_GOLD_SOURCES.every((s) => s.series.split("/").length === 3));
+  check("every source has at least one DBnomics candidate",
+    DBNOMICS_GOLD_SOURCES.every((s) => s.series.length >= 1));
+  check("every candidate is a provider/dataset/series id",
+    DBNOMICS_GOLD_SOURCES.every((s) => s.series.every((id) => id.split("/").length === 3)));
+  check("candidates within a source are distinct",
+    DBNOMICS_GOLD_SOURCES.every((s) => new Set(s.series).size === s.series.length));
   check("every source declares a release lag", DBNOMICS_GOLD_SOURCES.every((s) => s.releaseLagDays > 0));
   check("every source declares a lookback", DBNOMICS_GOLD_SOURCES.every((s) => s.lookback >= 1));
   check("ids are unique", new Set(DBNOMICS_GOLD_SOURCES.map((s) => s.id)).size === DBNOMICS_GOLD_SOURCES.length);
