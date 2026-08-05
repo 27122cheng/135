@@ -100,6 +100,8 @@ export default function SetupPage() {
   const [token, setToken] = useState("");
   const [chatIdInput, setChatIdInput] = useState("");
   const [discord, setDiscord] = useState("");
+  const [gemini, setGemini] = useState("");
+  const [groq, setGroq] = useState("");
   const [minGrade, setMinGrade] = useState("");
   const [chatId, setChatId] = useState<ChatIdInfo | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
@@ -161,6 +163,8 @@ export default function SetupPage() {
   const tokenSet = get("TELEGRAM_BOT_TOKEN")?.configured === true;
   const chatSet = get("TELEGRAM_CHAT_ID")?.configured === true;
   const telegramReady = tokenSet && chatSet;
+  const aiKeySet =
+    get("GEMINI_API_KEY")?.configured === true || get("GROQ_API_KEY")?.configured === true;
 
   async function save(payload: Record<string, string>, label: string) {
     setBusy(label);
@@ -181,6 +185,8 @@ export default function SetupPage() {
         // Never keep a secret in a form field longer than the request needs it.
         if (payload.TELEGRAM_BOT_TOKEN) setToken("");
         if (payload.DISCORD_WEBHOOK_URL) setDiscord("");
+        if (payload.GEMINI_API_KEY) setGemini("");
+        if (payload.GROQ_API_KEY) setGroq("");
       } else if (res.status === 401) {
         setSaveResult("401 —— 已設定 CRON_SECRET，請在最下方貼上");
       } else {
@@ -430,21 +436,71 @@ export default function SetupPage() {
           </button>
         </Step>
 
-        <Step n={5} title="打開排程（沒有這步，網站不會自己跑）">
+        <Step n={5} title="排程用的 AI 金鑰" done={aiKeySet}>
           <p>
-            掃描與監控是 GitHub Actions 在跑，需要兩個 repository secret。
-            到 GitHub repo → Settings → Secrets and variables → Actions → New repository secret。
+            <code className="text-neutral-300">/settings</code> 的金鑰只存在這台瀏覽器裡，
+            <span className="text-neutral-200">排程讀不到</span> ——
+            所以四小時掃描一直是用本地規則產生訊號，跟你手動看到的不是同一份分析。
+            要讓排程也有 AI，金鑰得存在伺服器這邊。
+          </p>
+          <input
+            type="password"
+            value={gemini}
+            onChange={(e) => setGemini(e.target.value)}
+            placeholder={
+              get("GEMINI_API_KEY")?.configured ? "GEMINI_API_KEY 已設定（可覆蓋）" : "GEMINI_API_KEY"
+            }
+            autoComplete="off"
+            spellCheck={false}
+            className={inputClass}
+          />
+          <input
+            type="password"
+            value={groq}
+            onChange={(e) => setGroq(e.target.value)}
+            placeholder={
+              get("GROQ_API_KEY")?.configured ? "GROQ_API_KEY 已設定（可覆蓋）" : "GROQ_API_KEY（備援）"
+            }
+            autoComplete="off"
+            spellCheck={false}
+            className={inputClass}
+          />
+          <button
+            type="button"
+            disabled={(!gemini && !groq) || busy === "ai"}
+            onClick={() => {
+              const payload: Record<string, string> = {};
+              if (gemini) payload.GEMINI_API_KEY = gemini;
+              if (groq) payload.GROQ_API_KEY = groq;
+              void save(payload, "ai");
+            }}
+            className="rounded-lg border border-neutral-700 px-3 py-1.5 text-[11px] text-neutral-200 hover:bg-neutral-800 disabled:opacity-40"
+          >
+            {busy === "ai" ? "儲存中…" : "儲存 AI 金鑰"}
+          </button>
+          <p className="text-neutral-600">
+            瀏覽器裡的金鑰仍然優先 —— 存在這裡的只在沒有前者時（也就是排程）才會用到。
+          </p>
+        </Step>
+
+        <Step n={6} title="打開排程（選填）">
+          <p>
+            掃描與監控已經在 GitHub Actions 上跑了，
+            <span className="text-neutral-200">不需要再設定任何東西</span> ——
+            網址寫在 workflow 裡當預設值。下面這個只是加鎖，不加也會運作。
+          </p>
+          <p className="text-neutral-600">
+            要覆寫網址的話，設一個名為 <code className="text-neutral-400">APP_URL</code> 的
+            repository secret：<span className="font-mono">{appUrl}</span>
           </p>
           <div className="space-y-1.5">
             <p className="text-neutral-500">
-              <code className="text-neutral-300">APP_URL</code>
-            </p>
-            <Copyable value={appUrl} />
-          </div>
-          <div className="space-y-1.5">
-            <p className="text-neutral-500">
-              <code className="text-neutral-300">CRON_SECRET</code> —— 隨機字串，擋掉外人觸發你的排程。
-              <span className="text-neutral-600"> 同一個值也要填進 Vercel 環境變數。</span>
+              <code className="text-neutral-300">CRON_SECRET</code> —— 隨機字串，擋掉外人觸發你的排程、
+              也擋掉外人改這頁的設定。
+              <span className="text-neutral-600">
+                {" "}
+                同一個值要填兩個地方：GitHub repository secret 與 Vercel 環境變數。
+              </span>
             </p>
             {generated ? (
               <Copyable value={generated} />

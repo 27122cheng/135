@@ -506,15 +506,20 @@ SPDR 官方持倉 XML 有兩個問題：它會擋雲端機房 IP，而且**只�
 | 沒設 GitHub Actions secrets | **完全不會跑**。網站只在你打開頁面時現算 |
 | 設好了 | 每 4 小時自動跑完 9 個商品，寫進資料庫，達標就推播 |
 
-要接起來只需要在 GitHub repo → **Settings → Secrets and variables → Actions**
-加兩個：`APP_URL`（你的網址）與 `CRON_SECRET`（自己想一組字串，同一組也要
-填進 Vercel 環境變數）。細節見「[排程與儲存](#排程與儲存)」。
+**不需要設定任何東西就會跑。** `APP_URL` 是公開網址不是憑證，
+把它做成必填的 secret 只換來一件事：workflow 在發出任何請求之前就 `exit 1`，
+於是排程加上去之後每一次都失敗、而且失敗得很安靜。現在它在 workflow 裡有預設值，
+repository secret 或 variable 仍然可以覆寫。
+
+`CRON_SECRET` 是選填的鎖：沒設就是開放的（排程照跑，但別人也能觸發你的
+`/api/refresh` 和改 `/setup` 的設定），要設的話同一組字串要填兩個地方 ——
+GitHub repository secret 與 Vercel 環境變數。細節見「[排程與儲存](#排程與儲存)」。
 
 ### 設定通知（Telegram，免費）
 
 **全部在網站上做完，不用碰 Vercel、不用重新部署。** 開 `/setup`：
 
-0. 按「建立資料表」—— 設定要存資料庫，表不存在的話儲存會失敗
+0. 按「建立資料表」—— 設定要存資料庫，表不存在的話儲存會失敗（會顯示缺哪幾張）
 1. Telegram 搜尋 **@BotFather** → 傳 `/newbot` → 拿到 token → 貼進第 1 步存檔
 2. 對你的新 bot 傳一句話（Telegram 規定：使用者沒先開口，bot 不能主動傳訊）
 3. 按「查出我的 Chat ID」→ 自動填好 → 存檔
@@ -533,9 +538,18 @@ localStorage 裡的東西在真正需要它的那一刻讀不到。
 - **`app_settings` 沒有 public read policy。** 其他表都有；這張表放 token，
   所以 RLS 擋掉匿名讀取，只有 service-role 或直連 `DATABASE_URL` 看得到值。
 - **允許清單就是安全邊界**（`lib/settings.ts`），和 API 金鑰同一套規矩。
-  能被網頁寫入的只有那四個名字，`DATABASE_URL`、`CRON_SECRET`、
-  `SUPABASE_SERVICE_ROLE_KEY` 刻意不在裡面 —— 一個「客戶端說什麼就寫什麼」的
-  端點就是一個會寫入 `DATABASE_URL` 的端點。
+  `DATABASE_URL`、`CRON_SECRET`、`SUPABASE_SERVICE_ROLE_KEY` 刻意不在裡面 ——
+  一個「客戶端說什麼就寫什麼」的端點就是一個會寫入 `DATABASE_URL` 的端點。
+
+### AI 金鑰也可以存在這裡，而且非存不可
+
+`/settings` 的金鑰只存在瀏覽器，**排程讀不到**。後果不是「排程壞掉」，
+而是更難發現的那種：四小時掃描一路用本地規則產生訊號，跟你手動打開同一個商品
+看到的不是同一份分析，而且沒有任何地方會說這件事。
+
+所以 `/setup` 第 5 步可以把 AI 金鑰存進 `app_settings`，排程才有供應商可用。
+**瀏覽器送來的 header 仍然優先** —— 存在伺服器的那份只在沒有 header 時
+（也就是排程）才會用到，帶著自己金鑰的瀏覽器不會被部署端的設定蓋掉。
 - 寫入沿用 `/api/setup` 的同一道門：設了 `CRON_SECRET` 就需要它，沒設就是開放的
   —— 這件事寫在 `/setup` 頁面上，不留給人自己發現。
 - **讀取失敗與「沒設定」必須分得開。** `getSetting` 一定要吞掉錯誤（凌晨的排程
@@ -1095,7 +1109,7 @@ npm test
 ```
 
 沙箱連不到任何一個金融 API，所以驗證靠的是 known-answer 測試 + stub 過的
-`fetch`，不是真的打上去。21 個套件、522 項斷言，每個套件跑在自己的行程裡
+`fetch`，不是真的打上去。21 個套件、527 項斷言，每個套件跑在自己的行程裡
 （好幾個會替換 `global.fetch` 並重設模組層快取，共用行程會讓前一個的 stub
 汙染後一個）。
 

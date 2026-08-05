@@ -3,6 +3,8 @@ import { buildTradeSignal } from "@/lib/signal-builder";
 import { getSignalStore } from "@/lib/db";
 import { notifyAll } from "@/lib/notify";
 import { ingestReleases } from "@/lib/analysis/data-release";
+import { withUserKeys } from "@/lib/api-keys";
+import { storedApiKeys } from "@/lib/settings";
 import { configuredMinGrade, formatAlert, shouldAlert } from "@/lib/notify/alert";
 import { json } from "@/lib/json-response";
 
@@ -55,18 +57,27 @@ export async function GET(request: Request) {
   // works without anyone setting APP_URL in Vercel as well as in GitHub.
   const appUrl = process.env.APP_URL?.trim() || new URL(request.url).origin;
 
+  // A scheduled run has no browser, so the AI keys pasted into /settings never
+  // reach it — every 4-hourly signal was being built with the local-rule
+  // fallback while the same symbol viewed by hand got the full analysis. The
+  // stored copies close that gap; `getKey` still prefers a request header when
+  // one exists, so nothing changes for a browser.
+  const keys = await storedApiKeys().catch(() => ({}));
+
   // Ingest before building, so a print that landed since the last run is
   // already in the table when the analysis reads it — otherwise the first scan
   // after a release would record it and score it one run later.
   //
-  // Also here, not only in the 5-minute monitor: the monitor needs its own
-  // GitHub secret and a stored plan to watch, and a deployment running only the
-  // 4-hour refresh must still pick releases up.
+  // Also here, not only in the 5-minute monitor: the monitor needs a stored
+  // plan to watch, and a deployment running only the 4-hour refresh must still
+  // pick releases up.
   const releaseGaps: string[] = [];
-  const ingest = await ingestReleases(releaseGaps).catch((err: unknown) => ({
-    fresh: [],
-    gaps: [`數據公布偵測失敗：${err instanceof Error ? err.message : String(err)}`],
-  }));
+  const ingest = await withUserKeys(keys, () =>
+    ingestReleases(releaseGaps).catch((err: unknown) => ({
+      fresh: [],
+      gaps: [`數據公布偵測失敗：${err instanceof Error ? err.message : String(err)}`],
+    })),
+  );
 
   // allSettled: one symbol failing must not cost the others their refresh.
   const settled = await Promise.allSettled(
@@ -77,7 +88,7 @@ export async function GET(request: Request) {
         .listSignals({ symbol: meta.symbol, limit: 1 })
         .catch(() => []);
 
-      const signal = await buildTradeSignal(meta.symbol);
+      const signal = await withUserKeys(keys, () => buildTradeSignal(meta.symbol));
       await store.insertSignal(signal);
 
       const decision = shouldAlert(signal, previous ?? null, minGrade);

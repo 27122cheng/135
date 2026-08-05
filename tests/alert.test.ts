@@ -180,6 +180,16 @@ async function channelTests() {
   check("the service-role key is not settable", !isSettableKey("SUPABASE_SERVICE_ROLE_KEY"));
   check("an unknown name is rejected", !isSettableKey("ANYTHING_ELSE"));
 
+  // The AI keys are settable server-side so the scheduler has providers; the
+  // per-request header path is unchanged and still wins.
+  check("the AI keys are settable for the scheduler", isSettableKey("GEMINI_API_KEY"));
+  check("and so is the fallback provider", isSettableKey("GROQ_API_KEY"));
+  check("an AI key is a secret and never echoed", isSecretSetting("GEMINI_API_KEY"));
+  // Model names and provider order are configuration, not credentials —
+  // showing them back is how you confirm what is in force.
+  check("a model name is not a secret", !isSecretSetting("GEMINI_MODEL"));
+  check("the provider order is not a secret", !isSecretSetting("AI_PROVIDER_ORDER"));
+
   // Secrets must never be echoed back, even to whoever stored them.
   check("the bot token is marked secret", isSecretSetting("TELEGRAM_BOT_TOKEN"));
   check("the discord webhook is marked secret", isSecretSetting("DISCORD_WEBHOOK_URL"));

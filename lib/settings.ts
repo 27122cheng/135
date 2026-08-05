@@ -1,4 +1,5 @@
 import { getSignalStore } from "./db";
+import { USER_SETTABLE_KEYS, type UserSettableKey } from "./api-key-names";
 
 /**
  * Settings a browser writes and a scheduler reads.
@@ -20,17 +21,38 @@ import { getSignalStore } from "./db";
  * `SUPABASE_SERVICE_ROLE_KEY` — are deliberately absent and must stay that way.
  */
 
-export const SETTABLE_KEYS = [
+const ALERT_KEYS = [
   "TELEGRAM_BOT_TOKEN",
   "TELEGRAM_CHAT_ID",
   "DISCORD_WEBHOOK_URL",
   "ALERT_MIN_GRADE",
 ] as const;
 
+/**
+ * The AI keys are settable here *as well as* per-request, and the two serve
+ * different callers.
+ *
+ * A browser sends them in a header and nothing is stored — that promise still
+ * holds for anything you look at on the site. But the 4-hour scan runs with no
+ * browser, so it saw no keys at all and fell back to local rules on every
+ * scheduled signal, silently producing worse output than the same symbol viewed
+ * by hand. Storing them makes the scheduler work; the header still wins when
+ * there is one, so a browser's own keys are never overridden by the stored set.
+ */
+export const SETTABLE_KEYS = [...ALERT_KEYS, ...USER_SETTABLE_KEYS] as const;
+
 export type SettingKey = (typeof SETTABLE_KEYS)[number];
 
-/** Values that must never be echoed back to a client, even to their owner. */
-const SECRET_KEYS = new Set<SettingKey>(["TELEGRAM_BOT_TOKEN", "DISCORD_WEBHOOK_URL"]);
+/**
+ * Values that must never be echoed back to a client, even to their owner.
+ * Anything ending in _KEY or _TOKEN is a credential; the model names and the
+ * provider order are configuration and showing them is how you confirm them.
+ */
+const SECRET_KEYS = new Set<string>([
+  "TELEGRAM_BOT_TOKEN",
+  "DISCORD_WEBHOOK_URL",
+  ...USER_SETTABLE_KEYS.filter((k) => k.endsWith("_KEY")),
+]);
 
 export function isSettableKey(key: string): key is SettingKey {
   return (SETTABLE_KEYS as readonly string[]).includes(key);
@@ -133,4 +155,22 @@ export async function settingsStatus(): Promise<SettingsSnapshot> {
     };
   });
   return { settings, storeError: lastError };
+}
+
+/**
+ * The stored API keys, shaped for `withUserKeys`.
+ *
+ * Used by the scheduled routes so a cron run has the same AI providers a
+ * browser would. Environment variables are deliberately *not* merged in here —
+ * `getKey` already falls back to them, and duplicating that would invert the
+ * precedence.
+ */
+export async function storedApiKeys(): Promise<Partial<Record<UserSettableKey, string>>> {
+  const stored = await loadAll();
+  const out: Partial<Record<UserSettableKey, string>> = {};
+  for (const name of USER_SETTABLE_KEYS) {
+    const value = stored.get(name)?.trim();
+    if (value) out[name] = value;
+  }
+  return out;
 }

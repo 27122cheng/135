@@ -4,6 +4,8 @@ import { fetchLatestPrice } from "@/lib/data-sources/yfinance";
 import { notifyAll } from "@/lib/notify";
 import { formatReleaseAlert } from "@/lib/notify/alert";
 import { ingestReleases } from "@/lib/analysis/data-release";
+import { withUserKeys } from "@/lib/api-keys";
+import { storedApiKeys } from "@/lib/settings";
 import { json } from "@/lib/json-response";
 import {
   advancePlan,
@@ -123,7 +125,11 @@ export async function GET(request: Request) {
   let releases: Array<{ label: string; value: number; period: string }> = [];
   let releaseError: string | null = null;
   try {
-    const ingest = await ingestReleases(releaseGaps);
+    // Same reason as the refresh: no browser means no header keys, so the
+    // stored ones are what let the calendar lookup work at all.
+    const ingest = await withUserKeys(await storedApiKeys().catch(() => ({})), () =>
+      ingestReleases(releaseGaps),
+    );
     releases = ingest.fresh.map((f) => ({
       label: f.release.label,
       value: f.value,

@@ -1,6 +1,7 @@
 import { COMMODITIES } from "@/types/signal";
 import { buildTradeSignal } from "@/lib/signal-builder";
 import { parseUserKeyHeader, withUserKeys } from "@/lib/api-keys";
+import { storedApiKeys } from "@/lib/settings";
 import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +19,10 @@ export async function GET(request: Request, { params }: { params: { symbol: stri
   // never stored. Falls back to environment variables when absent.
   const userKeys = parseUserKeyHeader(request.headers.get("x-user-keys"));
   try {
-    const signal = await withUserKeys(userKeys, () => buildTradeSignal(meta.symbol));
+    // Header first, stored second: a browser carrying its own keys must not
+    // have them replaced by whatever the deployment happens to store.
+    const merged = { ...(await storedApiKeys().catch(() => ({}))), ...userKeys };
+    const signal = await withUserKeys(merged, () => buildTradeSignal(meta.symbol));
     return json(signal);
   } catch (err) {
     return json(

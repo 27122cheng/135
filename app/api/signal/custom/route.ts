@@ -2,6 +2,7 @@ import { buildSignalFor } from "@/lib/signal-builder";
 import { defaultFundamentals } from "@/config/fundamentals";
 import type { CommodityMeta } from "@/types/signal";
 import { parseUserKeyHeader, withUserKeys } from "@/lib/api-keys";
+import { storedApiKeys } from "@/lib/settings";
 import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
@@ -78,7 +79,9 @@ export async function POST(request: Request) {
 
   const userKeys = parseUserKeyHeader(request.headers.get("x-user-keys"));
   try {
-    const signal = await withUserKeys(userKeys, () => buildSignalFor(meta, config));
+    // Header first, stored second — see the note in /api/signal/[symbol].
+    const merged = { ...(await storedApiKeys().catch(() => ({}))), ...userKeys };
+    const signal = await withUserKeys(merged, () => buildSignalFor(meta, config));
     return json(signal);
   } catch (err) {
     return json(

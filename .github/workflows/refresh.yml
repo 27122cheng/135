@@ -20,15 +20,19 @@ jobs:
     steps:
       - name: Refresh each symbol
         env:
-          APP_URL: ${{ secrets.APP_URL }}
+          # APP_URL is a public URL, not a credential, so it falls back to the
+          # deployment this repo actually has. Requiring it as a secret meant
+          # every scheduled run since these workflows landed failed on `exit 1`
+          # before making a single request — a whole class of silent breakage
+          # bought nothing, because the value was never secret in the first
+          # place. A repository secret or variable still overrides it.
+          APP_URL: ${{ secrets.APP_URL || vars.APP_URL || 'https://135-mu.vercel.app' }}
+          # Optional. When the deployment has no CRON_SECRET the routes are
+          # open and an empty bearer is accepted, so the schedule works before
+          # anything is configured; setting it on both sides locks it down.
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -uo pipefail
-          if [ -z "${APP_URL:-}" ]; then
-            echo "APP_URL secret is not set (e.g. https://your-app.vercel.app)" >&2
-            exit 1
-          fi
-
           # One request per symbol: the whole set does not fit inside Vercel
           # Hobby's 60s function ceiling, and a per-symbol failure then costs
           # only that symbol.
