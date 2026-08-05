@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { loadUserKeys } from "@/lib/user-keys-client";
 
 /**
  * 通知設定 — Telegram configured from the browser, no Vercel dashboard.
@@ -109,6 +110,8 @@ export default function SetupPage() {
   const [secret, setSecret] = useState("");
   const [generated, setGenerated] = useState("");
   const [appUrl, setAppUrl] = useState("");
+  // Read on mount, not at render: localStorage is unavailable during SSR.
+  const [browserKeys, setBrowserKeys] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -132,6 +135,7 @@ export default function SetupPage() {
 
   useEffect(() => {
     setAppUrl(window.location.origin);
+    setBrowserKeys(loadUserKeys() as Record<string, string>);
     void refresh();
   }, [refresh]);
 
@@ -163,6 +167,9 @@ export default function SetupPage() {
   const tokenSet = get("TELEGRAM_BOT_TOKEN")?.configured === true;
   const chatSet = get("TELEGRAM_CHAT_ID")?.configured === true;
   const telegramReady = tokenSet && chatSet;
+  const browserKeyCount = Object.values(browserKeys).filter(
+    (v) => typeof v === "string" && v.trim(),
+  ).length;
   const aiKeySet =
     get("GEMINI_API_KEY")?.configured === true || get("GROQ_API_KEY")?.configured === true;
 
@@ -197,6 +204,30 @@ export default function SetupPage() {
     } finally {
       setBusy(null);
     }
+  }
+
+  /**
+   * Copies the AI keys already in this browser into the server settings.
+   *
+   * The keys the scheduler needs are, in almost every case, keys the operator
+   * has already pasted into /settings — they are sitting in localStorage on
+   * this very device. Asking them to go and find the originals again is busy
+   * work, and the alternative (pasting them into a chat or a ticket to have
+   * someone else set them) is how a credential ends up somewhere it should
+   * never be. One button, and the value never leaves the machine except to the
+   * server that was always going to hold it.
+   */
+  async function importFromBrowser() {
+    const keys = loadUserKeys();
+    const payload: Record<string, string> = {};
+    for (const [name, value] of Object.entries(keys)) {
+      if (typeof value === "string" && value.trim()) payload[name] = value.trim();
+    }
+    if (Object.keys(payload).length === 0) {
+      setSaveResult("瀏覽器裡沒有找到金鑰，請先到 /settings 貼上");
+      return;
+    }
+    await save(payload, "import");
   }
 
   async function findChatId() {
@@ -465,19 +496,40 @@ export default function SetupPage() {
             spellCheck={false}
             className={inputClass}
           />
-          <button
-            type="button"
-            disabled={(!gemini && !groq) || busy === "ai"}
-            onClick={() => {
-              const payload: Record<string, string> = {};
-              if (gemini) payload.GEMINI_API_KEY = gemini;
-              if (groq) payload.GROQ_API_KEY = groq;
-              void save(payload, "ai");
-            }}
-            className="rounded-lg border border-neutral-700 px-3 py-1.5 text-[11px] text-neutral-200 hover:bg-neutral-800 disabled:opacity-40"
-          >
-            {busy === "ai" ? "儲存中…" : "儲存 AI 金鑰"}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={(!gemini && !groq) || busy === "ai"}
+              onClick={() => {
+                const payload: Record<string, string> = {};
+                if (gemini) payload.GEMINI_API_KEY = gemini;
+                if (groq) payload.GROQ_API_KEY = groq;
+                void save(payload, "ai");
+              }}
+              className="rounded-lg border border-neutral-700 px-3 py-1.5 text-[11px] text-neutral-200 hover:bg-neutral-800 disabled:opacity-40"
+            >
+              {busy === "ai" ? "儲存中…" : "儲存 AI 金鑰"}
+            </button>
+            <button
+              type="button"
+              disabled={browserKeyCount === 0 || busy === "import"}
+              onClick={() => void importFromBrowser()}
+              className="rounded-lg bg-neutral-100 px-3 py-1.5 text-[11px] font-medium text-neutral-900 hover:bg-white disabled:opacity-40"
+            >
+              {busy === "import"
+                ? "帶入中…"
+                : browserKeyCount > 0
+                  ? `從瀏覽器帶入 ${browserKeyCount} 把`
+                  : "瀏覽器裡沒有金鑰"}
+            </button>
+          </div>
+          {browserKeyCount > 0 && (
+            <p className="text-neutral-600">
+              你已經在 <code className="text-neutral-500">/settings</code> 貼過的金鑰就在這台裝置的
+              localStorage 裡。按上面那顆會把它們送到伺服器存起來，不用再找一次
+              —— 也不用把金鑰貼給任何人。
+            </p>
+          )}
           <p className="text-neutral-600">
             瀏覽器裡的金鑰仍然優先 —— 存在這裡的只在沒有前者時（也就是排程）才會用到。
           </p>

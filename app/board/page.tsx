@@ -92,6 +92,7 @@ export default function BoardPage() {
   }, [load]);
 
 
+
   /**
    * Re-runs symbols in parallel, storing each result.
    *
@@ -132,6 +133,34 @@ export default function BoardPage() {
     },
     [load],
   );
+
+  /**
+   * Scan on open, not just on the timer.
+   *
+   * Reading the stored rows is instant, but the numbers in them are as old as
+   * the last scan — which, with GitHub's scheduler running the "5-minute"
+   * monitor about hourly, can be a long time. Opening the board is the clearest
+   * possible statement of "show me where things stand now", so it starts a real
+   * scan immediately rather than displaying an hour-old picture and waiting five
+   * minutes to improve it.
+   *
+   * Still filtered by staleness: a row the scheduler refreshed forty seconds
+   * ago is not rebuilt because someone reloaded the page. Nine pipelines per
+   * refresh would exhaust the free AI quota in an afternoon of browsing.
+   */
+  const kicked = useRef(false);
+  useEffect(() => {
+    if (kicked.current || !autoScan) return;
+    const rows = data?.rows;
+    if (!rows || rows.length === 0) return;
+    kicked.current = true;
+
+    const cutoff = Date.now() - SCAN_INTERVAL_MS;
+    const stale = rows.filter(
+      (r) => !r.generatedAt || new Date(r.generatedAt).getTime() < cutoff,
+    );
+    if (stale.length > 0) void rescan(stale);
+  }, [data, autoScan, rescan]);
 
   /**
    * Keeps the board current without anyone pressing anything.
@@ -386,9 +415,11 @@ export default function BoardPage() {
           所以兩邊不可能講不同的話。掃描結果會寫回資料庫，不是各自算各自的。
         </p>
         <p>
-          自動掃描每分鐘重讀一次資料庫（便宜），每 5 分鐘只重跑
-          <span className="text-neutral-400">超過 5 分鐘沒更新</span>的商品（九條完整分析，會用掉免費 AI 額度）。
-          分頁切到背景就暫停 —— 沒人在看的畫面不該把一天的額度燒光。
+          <span className="text-neutral-400">打開這頁就會立刻掃描一次</span>，
+          之後每分鐘重讀資料庫（便宜）、每 5 分鐘重跑分析（九條完整管線，會用掉免費 AI 額度）。
+          兩者都只重跑<span className="text-neutral-400">超過 5 分鐘沒更新</span>的商品 ——
+          排程四十秒前才更新過的，不會因為你重新整理一次頁面就重算。
+          分頁切到背景就暫停：沒人在看的畫面不該把一天的額度燒光。
         </p>
       </div>
     </main>
