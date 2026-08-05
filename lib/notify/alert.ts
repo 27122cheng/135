@@ -103,6 +103,48 @@ function fmt(n: number | null): string {
  * The message body. Telegram-flavoured HTML; the Discord channel strips tags.
  * Deliberately compact — an alert is read on a lock screen.
  */
+/**
+ * 即時數據公布 alert — sent by the 5-minute monitor the moment a tracked print
+ * appears, hours before the next scheduled scan would have noticed it.
+ *
+ * Deliberately states the number and the direction of the surprise but **not**
+ * a trade. Re-grading nine symbols is a separate, slower job, and a message
+ * that said "CPI hot → 黃金做空" would be a recommendation the scoring engine
+ * hasn't actually made yet.
+ */
+export function formatReleaseAlert(
+  fresh: Array<{
+    release: { label: string; usdImpact: "stronger" | "weaker"; impactHours: number };
+    value: number;
+    previous: number | null;
+    period: string;
+  }>,
+  appUrl?: string,
+): string {
+  const lines: Array<string | null> = [
+    `<b>數據公布</b>（${fresh.length} 項）`,
+  ];
+
+  for (const f of fresh) {
+    const hotter = f.previous !== null ? f.value > f.previous : null;
+    const move =
+      hotter === null
+        ? "無前值可比"
+        : `前值 ${fmt(f.previous)} → ${hotter ? "上升" : "下降"}`;
+    // The dollar read only follows from the *direction* of the move, so it is
+    // omitted entirely when there is nothing to compare against.
+    const usd =
+      hotter === null
+        ? ""
+        : `，美元偏${(hotter ? f.release.usdImpact : f.release.usdImpact === "stronger" ? "weaker" : "stronger") === "stronger" ? "強" : "弱"}`;
+    lines.push(`${f.release.label} ${fmt(f.value)}（${f.period}，${move}${usd}）`);
+  }
+
+  lines.push("", `<i>下次掃描會把這些納入計分，影響窗 ${Math.max(...fresh.map((f) => f.release.impactHours))} 小時內有效。</i>`);
+  if (appUrl) lines.push(appUrl);
+  return lines.filter((l) => l !== null).join("\n");
+}
+
 export function formatAlert(signal: TradeSignal, reason: string, appUrl?: string): string {
   const plan = signal.trade_plan;
   const dir = signal.direction === "long" ? "做多 ▲" : "做空 ▼";

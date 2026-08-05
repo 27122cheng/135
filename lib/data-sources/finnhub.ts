@@ -36,7 +36,12 @@ export async function fetchEconomicCalendar(gaps: string[]): Promise<EconomicEve
   // key is not reported as a gap here — the caller decides if anything is lost.
   const apiKey = getKey("FINNHUB_API_KEY");
   if (!apiKey) return null;
-  const from = new Date().toISOString().slice(0, 10);
+  // Starts in the past on purpose. The window used to begin today, which meant
+  // the response only ever carried events that hadn't happened yet — so
+  // `actual` and `estimate` came back null and the consensus needed to judge a
+  // print was never in the data. Three days back covers every tracked release's
+  // impact window; the forward half still answers "is a release due" for S4.
+  const from = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const to = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const result = await fetchFree<EconomicEvent[]>({
     source: "finnhub",

@@ -41,6 +41,34 @@ export interface SignalStore {
   /** Last reported monitor state for a symbol; null before the first run. */
   getMonitorState(symbol: string): Promise<MonitorRow | null>;
   saveMonitorState(row: MonitorRow): Promise<void>;
+
+  /**
+   * Records a macro observation the first time it is seen, and reports whether
+   * this call was that first time.
+   *
+   * The "was it new" answer has to come from the insert itself rather than a
+   * read followed by a write: the 4-hour refresh and the 5-minute monitor both
+   * call this, and a check-then-insert would let both decide the same CPI print
+   * was new and announce it twice.
+   */
+  recordRelease(row: ReleaseRow): Promise<{ isNew: boolean }>;
+  /** Releases first seen within the last `hours`, newest first. */
+  recentReleases(hours: number): Promise<StoredRelease[]>;
+}
+
+/** One row of `data_release` — a single macro print. */
+export interface ReleaseRow {
+  seriesId: string;
+  /** The observation's own period label, e.g. "2026-07-01". */
+  period: string;
+  value: number;
+  previousValue: number | null;
+  /** Market consensus if a calendar supplied one; null means compare to previous. */
+  estimate: number | null;
+}
+
+export interface StoredRelease extends ReleaseRow {
+  firstSeenAt: string;
 }
 
 /** One row of `plan_monitor` — what was last reported, so it isn't repeated. */

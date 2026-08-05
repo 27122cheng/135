@@ -110,6 +110,37 @@ export async function fetchFredSeries(
   return result?.value ?? null;
 }
 
+/**
+ * Same fetch for a series that isn't one of the six labelled macro inputs.
+ *
+ * 即時數據公布 tracks CPI, payrolls, claims and the rest by their raw FRED ids,
+ * and adding each to `FredLabel` would put a release calendar's worth of names
+ * into a type that exists to keep the six dimensions honest about which series
+ * they mean. The quota bucket and cache TTL are shared, so a hundred series ids
+ * still spend one budget.
+ */
+export async function fetchFredSeriesById(
+  seriesId: string,
+  gaps: string[],
+): Promise<{ seriesId: string; points: FredPoint[] } | null> {
+  const result = await fetchFree<{ seriesId: string; points: FredPoint[] }>({
+    source: "fred",
+    label: `FRED ${seriesId}`,
+    key: `fred:${seriesId}`,
+    ttlMs: 30 * 60 * 1000,
+    limit: FRED_LIMIT,
+    gaps,
+    fn: async () => {
+      const apiKey = getKey("FRED_API_KEY");
+      const points =
+        (apiKey ? await fetchFredApi(seriesId, apiKey) : null) ?? (await fetchFredCsv(seriesId));
+      if (!points || points.length === 0) return null;
+      return { seriesId, points };
+    },
+  });
+  return result?.value ?? null;
+}
+
 export interface RealRateResult {
   value: number;
   asOf: string;

@@ -2,6 +2,8 @@ import { COMMODITIES } from "@/types/signal";
 import { getSignalStore } from "@/lib/db";
 import { fetchLatestPrice } from "@/lib/data-sources/yfinance";
 import { notifyAll } from "@/lib/notify";
+import { formatReleaseAlert } from "@/lib/notify/alert";
+import { ingestReleases } from "@/lib/analysis/data-release";
 import { json } from "@/lib/json-response";
 import {
   advancePlan,
@@ -108,5 +110,37 @@ export async function GET(request: Request) {
         },
   );
 
-  return json({ ranAt: new Date().toISOString(), results });
+  // 即時數據公布. Checked here rather than only in the 4-hourly refresh because
+  // "即時" is the whole point: a CPI print that lands at 20:30 would otherwise
+  // sit unnoticed until the next scheduled scan, which can be four hours of the
+  // move already gone. This pass is cheap — seven cached FRED series, no
+  // pipelines — so it fits inside the same 60s budget as the price checks.
+  //
+  // It announces the print; it does not re-grade nine symbols here. The factor
+  // enters scoring on the next signal built for each symbol, which is what the
+  // impact window in config/data-releases.ts is sized for.
+  const releaseGaps: string[] = [];
+  let releases: Array<{ label: string; value: number; period: string }> = [];
+  let releaseError: string | null = null;
+  try {
+    const ingest = await ingestReleases(releaseGaps);
+    releases = ingest.fresh.map((f) => ({
+      label: f.release.label,
+      value: f.value,
+      period: f.period,
+    }));
+    if (ingest.fresh.length > 0) {
+      await notifyAll(formatReleaseAlert(ingest.fresh, appUrl));
+    }
+  } catch (err) {
+    releaseError = err instanceof Error ? err.message : String(err);
+  }
+
+  return json({
+    ranAt: new Date().toISOString(),
+    results,
+    releases,
+    releaseNotes: releaseGaps,
+    releaseError,
+  });
 }

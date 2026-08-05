@@ -6,6 +6,7 @@ import { fetchEarningsCalendar } from "../data-sources/finnhub";
 import { rateSpreadFor } from "@/config/rate-spreads";
 import { analyzeRateSpread } from "./rate-spread";
 import { analyzeGoldFlows } from "./gold-flows";
+import { analyzeDataReleases } from "./data-release";
 
 interface Trend {
   direction: "up" | "down" | "flat";
@@ -139,6 +140,11 @@ export async function analyzeFundamental(
     const flows = await analyzeGoldFlows(gaps);
     items.push(...flows.items);
   }
+  // 即時數據公布 — a print inside its impact window is an event, not a state,
+  // so it is scored separately from the DXY/VIX trend factors above rather than
+  // being folded into them. See lib/analysis/data-release.ts.
+  items.push(...(await analyzeDataReleases(meta, config, gaps)));
+
   // 兩國利差 — FRED only covers US Treasuries, so the foreign legs come from
   // Stooq's daily CSV / the ECB portal. See lib/analysis/rate-spread.ts.
   const spreadConfig = rateSpreadFor(meta.symbol);

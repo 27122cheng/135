@@ -1,7 +1,13 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { SignalRow, TradeSignal } from "@/types/signal";
 import type { JournalEntry, JournalEntryInput } from "@/types/journal";
-import type { HistoryFilter, MonitorRow, SignalStore } from "./index";
+import type {
+  HistoryFilter,
+  MonitorRow,
+  ReleaseRow,
+  SignalStore,
+  StoredRelease,
+} from "./index";
 import type { PlanState } from "@/lib/monitor/plan-state";
 
 /**
@@ -154,6 +160,60 @@ export function supabaseStore(): SignalStore | null {
         { onConflict: "symbol" },
       );
       if (error) throw new Error(error.message);
+    },
+
+    async recordRelease(row: ReleaseRow): Promise<{ isNew: boolean }> {
+      const client = getSupabaseServerClient();
+      if (!client) throw new Error("缺少 SUPABASE_SERVICE_ROLE_KEY，無法寫入 data_release");
+      // PostgREST returns the inserted rows only when the insert actually
+      // happened, so `ignoreDuplicates` gives the same atomic "was it new"
+      // answer as the Postgres path — no read-then-write race between the
+      // 4-hour refresh and the 5-minute monitor.
+      const { data, error } = await client
+        .from("data_release")
+        .upsert(
+          {
+            series_id: row.seriesId,
+            period: row.period,
+            value: row.value,
+            previous_value: row.previousValue,
+            estimate: row.estimate,
+          },
+          { onConflict: "series_id,period", ignoreDuplicates: true },
+        )
+        .select("series_id");
+      if (error) throw new Error(error.message);
+
+      const isNew = (data?.length ?? 0) > 0;
+      if (!isNew && row.estimate !== null) {
+        await client
+          .from("data_release")
+          .update({ estimate: row.estimate })
+          .eq("series_id", row.seriesId)
+          .eq("period", row.period)
+          .is("estimate", null);
+      }
+      return { isNew };
+    },
+
+    async recentReleases(hours: number): Promise<StoredRelease[]> {
+      const client = getSupabaseAnonClient() ?? getSupabaseServerClient();
+      if (!client) throw new Error("缺少 Supabase 金鑰，無法讀取 data_release");
+      const cutoff = new Date(Date.now() - hours * 3600_000).toISOString();
+      const { data, error } = await client
+        .from("data_release")
+        .select("series_id, period, value, previous_value, estimate, first_seen_at")
+        .gte("first_seen_at", cutoff)
+        .order("first_seen_at", { ascending: false });
+      if (error) throw new Error(error.message);
+      return (data ?? []).map((r: Record<string, unknown>) => ({
+        seriesId: r.series_id as string,
+        period: r.period as string,
+        value: r.value as number,
+        previousValue: r.previous_value as number | null,
+        estimate: r.estimate as number | null,
+        firstSeenAt: new Date(r.first_seen_at as string).toISOString(),
+      }));
     },
   };
 }

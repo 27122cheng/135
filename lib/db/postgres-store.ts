@@ -1,7 +1,13 @@
 import { neon } from "@neondatabase/serverless";
 import type { SignalRow, TradeSignal } from "@/types/signal";
 import type { JournalEntry, JournalEntryInput } from "@/types/journal";
-import type { HistoryFilter, MonitorRow, SignalStore } from "./index";
+import type {
+  HistoryFilter,
+  MonitorRow,
+  ReleaseRow,
+  SignalStore,
+  StoredRelease,
+} from "./index";
 import type { PlanState } from "@/lib/monitor/plan-state";
 
 /**
@@ -172,6 +178,61 @@ export function postgresStore(connectionString: string): SignalStore {
             last_price = excluded.last_price,
             updated_at = now()
         `;
+      } catch (err) {
+        throw explain(err);
+      }
+    },
+
+    async recordRelease(row: ReleaseRow): Promise<{ isNew: boolean }> {
+      try {
+        // `on conflict do nothing` + `returning` is what makes this atomic:
+        // the row comes back only when this statement was the one that
+        // inserted it, so two concurrent callers can't both see a new print.
+        // An estimate arriving later (calendar lagging FRED) is allowed to
+        // fill in, but never to overwrite one already stored.
+        const rows = (await sql`
+          insert into data_release (series_id, period, value, previous_value, estimate)
+          values (${row.seriesId}, ${row.period}, ${row.value}, ${row.previousValue}, ${row.estimate})
+          on conflict (series_id, period) do nothing
+          returning series_id
+        `) as unknown as Array<{ series_id: string }>;
+
+        if (rows.length === 0 && row.estimate !== null) {
+          await sql`
+            update data_release set estimate = ${row.estimate}
+            where series_id = ${row.seriesId} and period = ${row.period} and estimate is null
+          `;
+        }
+        return { isNew: rows.length > 0 };
+      } catch (err) {
+        throw explain(err);
+      }
+    },
+
+    async recentReleases(hours: number): Promise<StoredRelease[]> {
+      try {
+        const cutoff = new Date(Date.now() - hours * 3600_000).toISOString();
+        const rows = (await sql`
+          select series_id, period, value, previous_value, estimate, first_seen_at
+          from data_release
+          where first_seen_at >= ${cutoff}
+          order by first_seen_at desc
+        `) as unknown as Array<{
+          series_id: string;
+          period: string;
+          value: number;
+          previous_value: number | null;
+          estimate: number | null;
+          first_seen_at: string;
+        }>;
+        return rows.map((r) => ({
+          seriesId: r.series_id,
+          period: r.period,
+          value: r.value,
+          previousValue: r.previous_value,
+          estimate: r.estimate,
+          firstSeenAt: new Date(r.first_seen_at).toISOString(),
+        }));
       } catch (err) {
         throw explain(err);
       }

@@ -119,6 +119,37 @@ alter table public.plan_monitor enable row level security;
 drop policy if exists "Public read access" on public.plan_monitor;
 create policy "Public read access" on public.plan_monitor
   for select using (true);
+
+-- ─────────────────────────────────────────────────────────────────
+-- 即時數據公布: the first time each macro observation was seen.
+--
+-- FRED serves observations, not publication timestamps: a CPI reading labelled
+-- 2026-07-01 appears without ceremony in mid-August. "When did this become
+-- public" is therefore not in the data, and the only honest answer available is
+-- "the first scan that saw it" -- which this table records, once, per release.
+-- ─────────────────────────────────────────────────────────────────
+
+create table if not exists public.data_release (
+  series_id text not null,
+  -- The observation's own period label, e.g. 2026-07-01. One row per print.
+  period text not null,
+  value double precision not null,
+  -- The observation before it, so the comparison survives a later revision of
+  -- the series without needing to re-fetch history.
+  previous_value double precision,
+  -- Market consensus when a calendar source supplied one; null otherwise.
+  -- Its absence is meaningful: the analysis then compares against the previous
+  -- print and says so, rather than implying a beat or a miss.
+  estimate double precision,
+  first_seen_at timestamptz not null default now(),
+  primary key (series_id, period)
+);
+
+alter table public.data_release enable row level security;
+
+drop policy if exists "Public read access" on public.data_release;
+create policy "Public read access" on public.data_release
+  for select using (true);
 `;
 
 /**
@@ -143,5 +174,17 @@ export function schemaStatements(sql: string = SCHEMA_SQL): string[] {
     .filter((s) => s.length > 0);
 }
 
-/** Tables the app needs; used by /api/setup to report what already exists. */
-export const REQUIRED_TABLES = ["signals", "trade_journal"] as const;
+/**
+ * Tables the app needs; used by /api/setup to report what already exists.
+ *
+ * Every table added after the first deploy has to be listed here or the setup
+ * check keeps reporting "ready" against a database that is missing one — which
+ * is exactly how `plan_monitor` and `data_release` could sit uncreated while
+ * the monitor and the release tracker silently did nothing.
+ */
+export const REQUIRED_TABLES = [
+  "signals",
+  "trade_journal",
+  "plan_monitor",
+  "data_release",
+] as const;

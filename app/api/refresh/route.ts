@@ -2,6 +2,7 @@ import { COMMODITIES } from "@/types/signal";
 import { buildTradeSignal } from "@/lib/signal-builder";
 import { getSignalStore } from "@/lib/db";
 import { notifyAll } from "@/lib/notify";
+import { ingestReleases } from "@/lib/analysis/data-release";
 import { configuredMinGrade, formatAlert, shouldAlert } from "@/lib/notify/alert";
 import { json } from "@/lib/json-response";
 
@@ -54,6 +55,19 @@ export async function GET(request: Request) {
   // works without anyone setting APP_URL in Vercel as well as in GitHub.
   const appUrl = process.env.APP_URL?.trim() || new URL(request.url).origin;
 
+  // Ingest before building, so a print that landed since the last run is
+  // already in the table when the analysis reads it — otherwise the first scan
+  // after a release would record it and score it one run later.
+  //
+  // Also here, not only in the 5-minute monitor: the monitor needs its own
+  // GitHub secret and a stored plan to watch, and a deployment running only the
+  // 4-hour refresh must still pick releases up.
+  const releaseGaps: string[] = [];
+  const ingest = await ingestReleases(releaseGaps).catch((err: unknown) => ({
+    fresh: [],
+    gaps: [`數據公布偵測失敗：${err instanceof Error ? err.message : String(err)}`],
+  }));
+
   // allSettled: one symbol failing must not cost the others their refresh.
   const settled = await Promise.allSettled(
     targets.map(async (meta) => {
@@ -96,7 +110,13 @@ export async function GET(request: Request) {
   const failed = results.filter((r) => r.status === "error").length;
 
   return json(
-    { ranAt: new Date().toISOString(), store: store.kind, results },
+    {
+      ranAt: new Date().toISOString(),
+      store: store.kind,
+      results,
+      newReleases: ingest.fresh.map((f) => `${f.release.label} ${f.period}`),
+      releaseNotes: [...releaseGaps, ...ingest.gaps],
+    },
     // A non-2xx makes the workflow step fail loudly instead of a green run
     // that quietly wrote nothing.
     { status: failed === targets.length ? 502 : 200 },
