@@ -1,7 +1,8 @@
 import { check, report } from "./_harness";
 import { readLatest } from "@/lib/latest-signals";
 import type { SignalStore } from "@/lib/db";
-import type { SignalRow, TradeSignal } from "@/types/signal";
+import { COMMODITIES, type SignalRow, type TradeSignal } from "@/types/signal";
+import { toBoardRow } from "@/lib/board-row";
 
 /**
  * The board's read path.
@@ -103,6 +104,67 @@ async function suite() {
     // telling the owner to go fix a table would be inventing a fault.
     check("and produces no misleading note", read.note === null, read.note);
   }
+}
+
+// ── the row the board actually renders ────────────────────────────
+//
+// 參考價位 kept coming back missing on the live board, and the reason it was
+// hard to pin down is that nothing in the pipeline asserts the mapping. These
+// build a row shaped the way each of the two source tables produces it and
+// check the reference levels survive the trip.
+{
+  const levels = {
+    entry_zone: { low: 3300, high: 3312, reason: "現價區間" },
+    stop_loss: { price: 3270, structure: "H4 前低", reason: "跌破失效", invalidation: "收破" },
+    take_profits: [
+      { price: 3360, structure: "H4 前高", reason: "前高", allocation_pct: 50 },
+      { price: 3400, structure: "D1 前高", reason: "日線前高", allocation_pct: 50 },
+    ],
+  };
+  const meta = COMMODITIES.find((c) => c.symbol === "XAUUSD")!;
+
+  // As `select * from signals` returns it: no confidence column, no
+  // direction_tie column — both were added after this table, and a row that
+  // predates them must still produce reference levels.
+  const historyRow = {
+    id: "abc",
+    created_at: "2026-08-06T06:32:28Z",
+    symbol: "XAUUSD",
+    direction: "long",
+    grade: "B",
+    generated_at: "2026-08-06T06:32:28Z",
+    data_gaps: ["a", "b", "c"],
+    trade_plan: {
+      stance: "wait",
+      entry: null,
+      stop_loss: null,
+      take_profit: null,
+      wait_for: "等待評等升到 B 以上",
+      summary: "依計分規則觀望。",
+      add_ons: [],
+    },
+    ...levels,
+  } as unknown as SignalRow;
+
+  const built = toBoardRow(meta, historyRow);
+  check("a history row still yields reference levels", built.reference !== null);
+  check("the entry zone survives", built.reference?.entryLow === 3300);
+  check("the stop survives", built.reference?.stopLoss === 3270);
+  check("both targets survive", built.reference?.takeProfits.length === 2);
+  check("allocation comes through", built.reference?.takeProfits[0].allocationPct === 50);
+  // The whole point: a row with no trade is exactly the row that needs these.
+  check("and it is a no-trade row", built.stance === "wait");
+  check("a missing confidence column is not fatal", built.confidence === null);
+  check("a missing direction_tie column reads false", built.directionTie === false);
+
+  // A symbol never scanned has nothing to show and must say so with null
+  // rather than an empty-looking box of zeroes.
+  check("an unscanned symbol has no reference", toBoardRow(meta, undefined).reference === null);
+
+  // A stored signal from a run where the price feed failed carries a null
+  // price. Rendering "止損 null" would be worse than rendering nothing.
+  const priceless = { ...historyRow, stop_loss: { ...levels.stop_loss, price: null } } as unknown as SignalRow;
+  check("a null stop price yields no reference", toBoardRow(meta, priceless).reference === null);
 }
 
 // Wrapped: the test runner transforms to CJS, which has no top-level await.

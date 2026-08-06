@@ -32,6 +32,8 @@ interface BoardResponse {
   source?: "latest_signal" | "signals";
   /** Set when the board is running off a fallback the owner should fix. */
   note?: string | null;
+  /** Short commit sha of the deployed build, so "did it deploy" is answerable. */
+  build?: string | null;
   error?: string;
   next?: string;
 }
@@ -134,7 +136,17 @@ function ago(iso: string | null): string {
  */
 function ReferenceLevels({ row }: { row: BoardRow }) {
   const ref = row.reference;
-  if (!ref) return null;
+  if (!ref) {
+    // Returning null here is what made this impossible to diagnose from a
+    // screenshot: a build without the feature and a row whose stored signal
+    // has no usable stop price look identical — both show nothing at all.
+    if (row.generatedAt === null) return null;
+    return (
+      <p className="mt-2.5 text-[11px] text-neutral-600">
+        這筆訊號沒有可用的進場區或停損結構（掃描當下取不到價格資料），所以沒有參考價位。
+      </p>
+    );
+  }
 
   const zone =
     ref.entryLow === ref.entryHigh
@@ -692,6 +704,12 @@ export default function BoardPage() {
           間隔本來是 5 分鐘，實測會把 Groq 每日 10 萬 token 在一個下午用光
           —— 之後每筆訊號都悄悄退回本地規則，畫面上看起來卻跟正常分析一樣。
           免費額度撐得起的全商品掃描大約就是半小時一輪。
+        </p>
+        {/* So "the fix didn't work" and "the fix isn't deployed yet" stop
+            looking the same from a phone screenshot. */}
+        <p className="text-neutral-700">
+          版本 {data?.build ?? "本機"}
+          {data?.source ? `．資料來源 ${data.source}` : ""}
         </p>
       </div>
     </main>
