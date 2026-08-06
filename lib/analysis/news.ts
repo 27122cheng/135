@@ -111,15 +111,46 @@ function toSources(articles: Article[]): NewsSource[] {
  * at 1 (the AI path can reach 2) because keyword counting can't read context.
  */
 function lexiconResult(articles: Article[], gaps: string[]): NewsAnalysisResult {
-  const { score, bullishHits, bearishHits, matched } = scoreHeadlines(
+  const { score, bullishHits, bearishHits, matched, neutralMatched } = scoreHeadlines(
     articles.map((a) => a.headline),
   );
   const sources = articles.slice(0, 10).map((a) => a.url);
   const digestSources = toSources(articles.slice(0, PROMPT_LIMIT));
 
   if (matched === 0) {
+    // A quiet news day and an unreadable one are different answers, and they
+    // used to produce the identical data gap. When the headlines *did* say
+    // something — steady, flat, awaiting the Fed — that is a finding about the
+    // market, not a failure of the reader, and it belongs in the factors at
+    // weight 0 rather than in the warning list.
+    const quiet = neutralMatched > 0;
+    if (quiet) {
+      return {
+        biasItems: [
+          {
+            dimension: "新聞面",
+            key: "news-sentiment",
+            factor: `近 48 小時 ${articles.length} 則標題語氣持平（${neutralMatched} 則明確為觀望／持平用語），新聞面無方向`,
+            direction: "neutral",
+            weight: 0,
+            evidence: `多空關鍵字 0 次，中性用語 ${neutralMatched} 次`,
+            source: `GDELT ${articles.length} 則標題（本地關鍵字表）`,
+          },
+        ],
+        summary: null,
+        sources,
+        digest: {
+          score: 0,
+          summary: `近 48 小時 ${articles.length} 則標題以持平／觀望用語為主，沒有明顯的多空方向。`,
+          key_points: [],
+          headline_count: articles.length,
+          sources: digestSources,
+          analyzed_by: "本地關鍵字表（非 AI）",
+        },
+      };
+    }
     gaps.push(
-      `新聞面改用本地關鍵字評分，但 ${articles.length} 則標題中無可辨識的多空關鍵字`,
+      `新聞面改用本地關鍵字評分，但 ${articles.length} 則標題中既無多空關鍵字也無中性用語，關鍵字表可能不涵蓋這批標題的用語`,
     );
     // Still return the digest: the headlines are worth reading even when the
     // keyword table found nothing to score.

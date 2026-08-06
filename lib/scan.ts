@@ -102,6 +102,23 @@ export async function runScan(
   const stored = await storedApiKeys().catch(() => ({}) as Record<string, string>);
   const keys = { ...stored, ...(options.extraKeys ?? {}) };
 
+  // Named before the build, because "未設定任何 AI 金鑰" on its own sends the
+  // reader to a settings page where they can already see the key sitting there.
+  // The keys live in two places and only one of them is visible from a phone:
+  // the browser's localStorage, which rides along on a request, and
+  // `app_settings`, which is the only thing a GitHub Actions run can read. A
+  // signal built by the schedule with an empty `app_settings` says "no keys"
+  // while the browser holding them says "quota exhausted", and both are right.
+  const aiNames = ["GEMINI_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"];
+  const hasServerAi = aiNames.some((n) => (stored as Record<string, string>)[n]);
+  const hasRequestAi = aiNames.some((n) => options.extraKeys?.[n]);
+  const hasEnvAi = aiNames.some((n) => process.env[n]?.trim());
+  const keyNote =
+    hasServerAi || hasRequestAi || hasEnvAi
+      ? null
+      : "AI 金鑰在瀏覽器與伺服器兩邊都沒有：排程掃描只讀伺服器端設定，" +
+        "到設定頁把金鑰按一次「儲存」就會同時寫入兩邊（每個金鑰旁會出現「排程也有」）";
+
   const releaseGaps: string[] = [];
   const build = async () => {
     // Before the build, so a print that landed since the last run is already in
@@ -118,7 +135,7 @@ export async function runScan(
     options.fresh ? withFreshData(build) : build(),
   );
 
-  const notes = [...releaseGaps, ...result.ingest.gaps];
+  const notes = [...releaseGaps, ...result.ingest.gaps, ...(keyNote ? [keyNote] : [])];
   // Folded in rather than returned separately: whatever went wrong fetching a
   // release is part of why this signal looks the way it does, and the card's
   // gap list is where the reader already looks for that.
