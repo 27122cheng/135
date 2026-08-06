@@ -2,6 +2,12 @@ import type { BiasItem, EntryStructure, PathObstacle, Timeframe } from "@/types/
 import type { Candle } from "../data-sources/ohlcv";
 import { ema, findSwingPoints, macd, rsi, strengthFromTouches, countTouches } from "./indicators";
 import { clusterSwings, collectSwings, describeLevel, levelTolerance, type PriceLevel } from "./levels";
+import {
+  fibRetracementLevels,
+  mergeDerived,
+  priorPeriodLevels,
+  roundNumberLevels,
+} from "./derived-levels";
 
 export interface TechnicalResult {
   biasItems: BiasItem[];
@@ -185,9 +191,29 @@ export function analyzeTechnical(
   // them makes both the price and the strength reflect that. Tolerance scales
   // with ATR so it fits the instrument instead of a fixed percentage.
   const tolerance = levelTolerance(currentPrice, atrForLevels);
-  const levels = clusterSwings(collectSwings(candlesByTf, 3), tolerance);
+  const clusters = clusterSwings(collectSwings(candlesByTf, 3), tolerance);
+
+  // Swing clusters alone were the binding constraint on whether a signal could
+  // trade at all: no cluster within 1.5% of price means no anchorable stop,
+  // which force-grades the signal no-trade regardless of how well it scored.
+  // These three fill the gaps between swings, cost nothing (pure functions over
+  // candles already fetched), and carry strength 1 so they can anchor a stop
+  // without ever outweighing a level price actually turned at.
+  const levels = mergeDerived(
+    clusters,
+    [
+      ...roundNumberLevels(currentPrice),
+      ...priorPeriodLevels(candlesByTf),
+      ...fibRetracementLevels(candlesByTf.D1),
+    ],
+    tolerance,
+  );
+
+  if (clusters.length === 0) {
+    gaps.push("K棒不足以聚合出有效的價格結構區，僅以整數關卡／前期高低／斐波那契補位");
+  }
   if (levels.length === 0) {
-    gaps.push("K棒不足以聚合出有效的價格結構區");
+    gaps.push("完全找不到可用的價格結構");
   }
 
   const dominantTf = (level: PriceLevel): Timeframe =>

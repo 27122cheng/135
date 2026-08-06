@@ -88,6 +88,8 @@ export default function BoardPage() {
   const [open, setOpen] = useState<string | null>(null);
   const [rescanning, setRescanning] = useState<Set<string>>(new Set());
   const [autoScan, setAutoScan] = useState(true);
+  /** Why a completed scan did not appear — almost always a missing table. */
+  const [scanError, setScanError] = useState<string | null>(null);
   // The scan timer must see the newest rows without being torn down and
   // rebuilt every time they change — that would reset the 5-minute clock on
   // every poll and the rescan would never fire.
@@ -130,6 +132,7 @@ export default function BoardPage() {
   const rescan = useCallback(
     async (targets: BoardRow[]) => {
       if (targets.length === 0) return;
+      setScanError(null);
       setRescanning(new Set(targets.map((r) => r.symbol)));
 
       // A small worker pool rather than Promise.all over all nine. Same total
@@ -142,10 +145,16 @@ export default function BoardPage() {
           const row = queue.shift();
           if (!row) return;
           try {
-            await fetch(`/api/scan?symbol=${row.symbol}`, {
+            const res = await fetch(`/api/scan?symbol=${row.symbol}`, {
               cache: "no-store",
               headers: userKeyHeaders(),
             });
+            const body = await res.json().catch(() => null);
+            // A scan that ran but could not be stored leaves the board showing
+            // 尚未掃描 forever. Surfacing the first such error is the whole
+            // difference between "it's still working" and "it silently isn't".
+            if (body?.storeError) setScanError(String(body.storeError));
+            else if (body?.error) setScanError(String(body.error));
           } catch {
             // Ignored: a symbol that failed keeps its stored row, which is
             // older but real. The reload below is the source of truth.
@@ -302,6 +311,18 @@ export default function BoardPage() {
       {error && (
         <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-400">
           {error}
+        </div>
+      )}
+      {scanError && (
+        <div className="mb-3 rounded-xl border border-red-500/40 bg-red-500/5 p-3 text-xs text-red-300">
+          <p>掃描跑完了，但結果沒能存進資料庫：{scanError}</p>
+          <p className="mt-1 text-red-400/70">
+            多半是 <code>latest_signal</code> 資料表還沒建立。到{" "}
+            <Link href="/setup" className="underline">
+              設定頁
+            </Link>{" "}
+            按「建立資料表」。
+          </p>
         </div>
       )}
 

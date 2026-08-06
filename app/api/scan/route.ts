@@ -56,20 +56,26 @@ export async function GET(request: Request) {
 
     const store = getSignalStore();
     let stored = false;
+    let storeError: string | null = null;
     if (store) {
       try {
-        // Upsert, not append. The dashboard rescans nine symbols every five
-        // minutes while it is open; appending would write ~2,600 full history
-        // rows a day and bury the 4-hourly timeline underneath them.
+        // Upsert, not append. The dashboard rescans every symbol on a timer;
+        // appending would write thousands of full history rows a day and bury
+        // the 4-hourly timeline underneath them.
         await store.saveLatest(signal);
         stored = true;
-      } catch {
-        // A failed write must not cost the caller the signal it just waited
-        // 20 seconds for. It comes back unstored, and `stored: false` says so
-        // rather than letting the board silently show an older row.
+      } catch (err) {
+        // A failed write must not cost the caller the signal it just waited 20
+        // seconds for — but it must not be silent either. Swallowing it is how
+        // nine successful scans produced a board reading 已掃描 0/9 with no
+        // explanation anywhere: the analysis ran, the write failed, and nothing
+        // said so.
+        storeError = err instanceof Error ? err.message : String(err);
       }
+    } else {
+      storeError = "未設定資料庫，掃描結果無處可存";
     }
-    return json({ signal, stored });
+    return json({ signal, stored, storeError });
   } catch (err) {
     return json(
       { error: err instanceof Error ? err.message : String(err) },
