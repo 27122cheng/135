@@ -5,6 +5,7 @@ import { fetchOHLCV } from "./data-sources/ohlcv";
 import { atr as computeAtr } from "./analysis/indicators";
 import { analyzeTechnical } from "./analysis/technical";
 import { detectAllPatterns, patternContributions } from "./analysis/patterns";
+import { dedupeBiasItems } from "./analysis/evidence";
 import { analyzeFundamental } from "./analysis/fundamental";
 import { analyzePositioning } from "./analysis/positioning";
 import { analyzeNews } from "./analysis/news";
@@ -251,7 +252,7 @@ async function buildSignalForSymbol(
   // it runs here rather than inside fundFlow — pure computation, no fetching.
   const openInterestItems = analyzeOpenInterest(meta, positioning.reports, d1?.candles ?? null, gaps);
 
-  const biasItems: BiasItem[] = [
+  const rawBiasItems: BiasItem[] = [
     ...technical.biasItems,
     ...patternParts.biasItems,
     ...fundamentalItems,
@@ -260,6 +261,12 @@ async function buildSignalForSymbol(
     ...fundFlowItems,
     ...openInterestItems,
   ];
+
+  // 一個事實，一票。基本面與資金流都在讀同一個 VIX/DXY，兩邊各記一票，
+  // bias_score 就憑空多出最多 2 分——A 的門檻才 6 分。
+  const deduped = dedupeBiasItems(rawBiasItems);
+  gaps.push(...deduped.notes);
+  const biasItems = deduped.items;
 
   const { direction, tie } = pickDirection(biasItems);
   if (tie) {

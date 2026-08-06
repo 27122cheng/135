@@ -167,14 +167,16 @@ export function TradePlanCard({
             <span className="ml-2 text-neutral-600">n={backtest.resolved}</span>
           </summary>
           <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
-            在近 {backtest.lookbackBars} 根 D1 中，以相同的停損／停利「相對距離」
-            逐根回測（最多持有 {backtest.horizonBars} 根）：
+            以相同的停損／停利「相對距離」逐根回測（最多持有 {backtest.horizonBars} 根）：
             {backtest.wins} 勝 / {backtest.losses} 敗 / {backtest.timeouts} 次未觸及。
+            {backtest.basis ? `樣本取法：${backtest.basis}。` : null}
           </p>
           <p className="mt-1.5 text-[11px] leading-relaxed text-amber-500/70">
-            這檢驗的是「這組距離配置」在本商品波動下的可行性，
+            這檢驗的是「這組距離配置」在
+            {backtest.conditioned ? "與訊號同向的格局下" : "本商品全部歷史波動下"}
+            的可行性，
             <span className="font-semibold text-amber-400">不是</span>這個訊號的勝率 ——
-            回測不分六面向狀態，逐根取樣。
+            它只受格局過濾，不受六面向狀態過濾。
             {backtest.hadAmbiguousBars &&
               " 部分樣本同一根 K 棒同時觸及兩邊，日線無法判斷先後，一律計為敗（偏保守）。"}
           </p>

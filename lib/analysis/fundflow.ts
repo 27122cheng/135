@@ -61,6 +61,7 @@ export async function analyzeFundFlow(
     if (gld) {
       items.push({
         dimension: "資金流",
+        key: "gld-holdings",
         factor: `SPDR GLD 持倉 ${gld.tonnesInTrust.toLocaleString()} 噸 (${gld.asOf})`,
         direction: "neutral",
         weight: 0,
@@ -82,6 +83,7 @@ export async function analyzeFundFlow(
         const direction = dxyDown !== config.dxyInverted ? "long" : "short";
         items.push({
           dimension: "資金流",
+          key: "usd-dxy-trend",
           factor: `DXY 近5個交易日${dxyDown ? "走弱" : "走強"} (${t.from.toFixed(2)}→${t.to.toFixed(2)})`,
           direction,
           weight: 1,
@@ -105,6 +107,7 @@ export async function analyzeFundFlow(
             : "long";
         items.push({
           dimension: "資金流",
+          key: "risk-vix-level",
           factor: `VIX=${v.toFixed(1)} ${riskOff ? "風險趨避提升避險/拋售壓力" : "風險偏好高避險買盤弱"}`,
           direction,
           weight: 1,

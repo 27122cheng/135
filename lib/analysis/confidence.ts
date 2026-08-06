@@ -1,4 +1,5 @@
 import type { PathObstacle, TradeSignal } from "@/types/signal";
+import { breadthOf } from "./evidence";
 
 /**
  * 信心度 — computed, never asked for.
@@ -111,6 +112,35 @@ export function planConfidence(signal: TradeSignal): Confidence {
     if (bonus !== 0) {
       score += bonus;
       factors.push(`風報比 1:${rr}（${bonus > 0 ? "+" : ""}${bonus}）`);
+    }
+  }
+
+  // Breadth. The grade already knows *how much* evidence there is; it does not
+  // know how many independent places it came from, and those are different
+  // questions. Six points from 技術面 alone and six spread over three dimensions
+  // grade identically — the second is a case, the first is one indicator read
+  // four ways. Priced here rather than in the grade so a concentrated setup
+  // still trades, it just doesn't claim the conviction of a broad one.
+  const breadth = breadthOf(signal.direction, signal.bias_items ?? []);
+  if (breadth.agreeing.length > 0 || breadth.opposing.length > 0) {
+    // The first agreeing dimension is what the grade already paid for; only the
+    // corroboration beyond it is new information.
+    const corroboration = Math.min(6, Math.max(0, breadth.agreeing.length - 1) * 3);
+    const dissent = Math.min(9, breadth.opposing.length * 3);
+    const delta = corroboration - dissent;
+    // Listed whenever anything disagrees, even when the arithmetic nets to
+    // zero. "+3 for two dimensions agreeing, −3 for one arguing the other way"
+    // is not the same fact as "nothing to report", and silently cancelling them
+    // would hide the dissent behind its own offset.
+    if (delta !== 0 || breadth.opposing.length > 0) {
+      score += delta;
+      factors.push(
+        `${breadth.agreeing.length} 個面向同向` +
+          (breadth.opposing.length > 0 ? `、${breadth.opposing.length} 個反向` : "") +
+          `（${delta > 0 ? "+" : delta === 0 ? "±" : ""}${delta}）：` +
+          `同向 ${breadth.agreeing.join("、") || "無"}` +
+          (breadth.opposing.length > 0 ? `；反向 ${breadth.opposing.join("、")}` : ""),
+      );
     }
   }
 

@@ -58,6 +58,7 @@ export async function analyzeFundamental(
         const direction = realTo < realFrom ? "long" : realTo > realFrom ? "short" : "neutral";
         items.push({
           dimension: "基本面",
+          key: "real-rate",
           factor: `實質利率(DGS10-T10YIE) 現值 ${realRateNow.toFixed(2)}%，近期${direction === "long" ? "下滑" : direction === "short" ? "走高" : "持平"}（實質利率與金價反向）`,
           direction,
           weight: direction === "neutral" ? 0 : 2,
@@ -79,6 +80,7 @@ export async function analyzeFundamental(
       const direction = dxyDown !== config.dxyInverted ? "long" : "short";
       items.push({
         dimension: "基本面",
+        key: "usd-dxy-trend",
         factor: `DXY(廣義美元指數) 近期${dxyDown ? "走弱" : "走強"} (${dxyTrend.from.toFixed(2)}→${dxyTrend.to.toFixed(2)})`,
         direction,
         weight: 1,
@@ -99,6 +101,7 @@ export async function analyzeFundamental(
           : "long";
       items.push({
         dimension: "基本面",
+        key: "risk-vix-level",
         factor: `VIX=${v.toFixed(1)} ${riskOff ? "風險趨避情緒偏高" : "風險偏好情緒偏高，避險需求弱"}`,
         direction,
         weight: 1,
@@ -113,6 +116,7 @@ export async function analyzeFundamental(
       const change = eia.latest.value - (eia.previous?.value ?? eia.latest.value);
       items.push({
         dimension: "基本面",
+        key: "eia-inventory",
         factor: `EIA 原油庫存週變化 ${change >= 0 ? "+" : ""}${change.toLocaleString()} 千桶`,
         direction: change < 0 ? "long" : change > 0 ? "short" : "neutral",
         weight: change === 0 ? 0 : 1,
@@ -125,6 +129,7 @@ export async function analyzeFundamental(
   if (config.useEarningsSeason && earnings && earnings.length > 0) {
     items.push({
       dimension: "基本面",
+      key: "earnings-season",
       factor: `未來7天內有 ${earnings.length} 筆財報事件，波動風險上升`,
       direction: "neutral",
       weight: 0,

@@ -31,6 +31,18 @@ export interface BiasItem {
   evidence: string;
   /** 哪個 API / 哪根 K棒 */
   source: string;
+  /**
+   * What is being *measured*, not where it was measured from.
+   *
+   * Two items sharing a key are one fact and collapse to one vote — see
+   * lib/analysis/evidence.ts. This exists because 基本面 and 資金流 were both
+   * reading the same VIX print, with the same thresholds and the same direction
+   * rule, and `bias_score` counted it twice.
+   *
+   * Optional so signals written before it are still readable; an item without
+   * one falls back to dimension+factor, which can only ever merge with itself.
+   */
+  key?: string;
 }
 
 export type EntryStructureType =
@@ -255,6 +267,10 @@ export interface PlanBacktest {
   horizonBars: number;
   lookbackBars: number;
   hadAmbiguousBars: boolean;
+  /** True when the sample was restricted to bars trending the signal's way. */
+  conditioned?: boolean;
+  /** How the sample was drawn, in words — shown wherever the numbers are. */
+  basis?: string;
 }
 
 export interface TradeSignal {
