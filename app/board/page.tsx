@@ -72,7 +72,12 @@ function fmt(n: number | null): string {
 }
 
 function ago(iso: string | null): string {
-  if (!iso) return "尚未掃描";
+  // "尚未掃描" used to live here as well as on the stance chip, so a row with no
+  // record said it twice and a row that *had* been scanned but produced no plan
+  // still said it once — which read as "the scan never ran" when the truth was
+  // "the scan ran and found nothing to do". The two states are now spelled
+  // differently everywhere: this column is only ever about time.
+  if (!iso) return "無紀錄";
   const ms = Date.now() - new Date(iso).getTime();
   if (!Number.isFinite(ms)) return "—";
   const m = Math.round(ms / 60000);
@@ -81,6 +86,78 @@ function ago(iso: string | null): string {
   return h < 48 ? `${h} 小時前` : `${Math.round(h / 24)} 天前`;
 }
 
+
+/**
+ * The levels behind a row that has no trade.
+ *
+ * 觀望 as the entire contents of an opened row throws away work that was
+ * actually done: the entry zone, the stop structure and the targets were all
+ * derived from real support/resistance before the rules decided to stand aside.
+ * They are the same numbers the detail page shows under
+ * 參考價位（未達可交易門檻）, and they are useful — a level to watch is not a
+ * trade, but it is not nothing either.
+ *
+ * Styled deliberately quieter than the trade block above it, and labelled
+ * 參考價位 rather than 進場/止損/止盈, so it cannot be mistaken for a plan the
+ * system is recommending. That distinction is the whole reason the trade plan
+ * empties itself in the first place; reproducing it here in the same green
+ * would undo it.
+ */
+function ReferenceLevels({ row }: { row: BoardRow }) {
+  const ref = row.reference;
+  if (!ref) return null;
+
+  const zone =
+    ref.entryLow === ref.entryHigh
+      ? fmt(ref.entryLow)
+      : `${fmt(ref.entryLow)} – ${fmt(ref.entryHigh)}`;
+  const dir = row.directionTie ? "中性" : row.direction === "long" ? "做多" : "做空";
+  const dirTone = row.directionTie
+    ? "text-neutral-400"
+    : row.direction === "long"
+      ? "text-emerald-400/70"
+      : "text-red-400/70";
+
+  return (
+    <div className="mt-2.5 rounded-lg border border-neutral-800 bg-neutral-950/60 px-2.5 py-2">
+      <p className="mb-1.5 flex items-baseline gap-2 text-[10px] text-neutral-500">
+        <span>參考價位</span>
+        <span className={dirTone}>{dir}</span>
+        <span className="text-neutral-600">分析算出的結構，不是建議進場</span>
+      </p>
+      <dl className="grid grid-cols-3 gap-2">
+        <div>
+          <dt className="text-[10px] text-neutral-600">進場區</dt>
+          <dd className="font-mono text-[13px] text-neutral-300">{zone}</dd>
+        </div>
+        <div>
+          <dt className="text-[10px] text-neutral-600">止損</dt>
+          <dd className="font-mono text-[13px] text-red-400/80">{fmt(ref.stopLoss)}</dd>
+        </div>
+        <div>
+          <dt className="text-[10px] text-neutral-600">止盈</dt>
+          <dd className="font-mono text-[13px] text-emerald-400/80">
+            {ref.takeProfits.length === 0 ? "無" : fmt(ref.takeProfits[0].price)}
+          </dd>
+        </div>
+      </dl>
+      {ref.takeProfits.length > 1 && (
+        <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-neutral-500">
+          {ref.takeProfits.slice(1).map((tp, i) => (
+            <li key={i}>
+              <span className="text-neutral-600">TP{i + 2} · {tp.allocationPct}%</span>{" "}
+              <span className="font-mono text-neutral-400">{fmt(tp.price)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-600">
+        {ref.entryReason}
+        {ref.stopReason ? `｜止損結構：${ref.stopReason}` : ""}
+      </p>
+    </div>
+  );
+}
 
 export default function BoardPage() {
   const [data, setData] = useState<BoardResponse | null>(null);
@@ -358,7 +435,11 @@ export default function BoardPage() {
                 </span>
 
                 {row.stance === null ? (
-                  <span className="text-xs text-neutral-600">尚未掃描</span>
+                  // "目前無交易", not "尚未掃描". A stored row with no plan is a
+                  // finished scan that decided there is nothing to take; only
+                  // the timestamp column is qualified to say whether a scan
+                  // ever ran, and it does.
+                  <span className="text-xs text-neutral-500">目前無交易</span>
                 ) : hasTrade ? (
                   <>
                     <span
@@ -462,14 +543,20 @@ export default function BoardPage() {
                         </p>
                       )}
                     </>
-                  ) : row.stance === "wait" ? (
-                    <p className="text-neutral-500">
-                      觀望{row.waitFor ? `：${row.waitFor}` : ""}
-                    </p>
                   ) : (
-                    <p className="text-neutral-600">
-                      這個商品還沒有掃描紀錄。等下一次排程，或按上面的「全部重新掃描」。
-                    </p>
+                    <>
+                      {row.generatedAt === null ? (
+                        <p className="text-neutral-600">
+                          這個商品還沒有掃描紀錄。等下一次排程，或按上面的「立即全部掃描」。
+                        </p>
+                      ) : (
+                        <p className="text-neutral-500">
+                          {row.stance === "wait" ? "觀望" : "目前無交易"}
+                          {row.waitFor ? `：${row.waitFor}` : ""}
+                        </p>
+                      )}
+                      <ReferenceLevels row={row} />
+                    </>
                   )}
 
                   <div className="mt-2.5 flex items-center gap-3 border-t border-neutral-800/60 pt-2 text-[11px]">
