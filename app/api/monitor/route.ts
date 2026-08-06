@@ -13,6 +13,48 @@ import {
   INITIAL_MEMORY,
   type MonitorMemory,
 } from "@/lib/monitor/plan-state";
+import { recordResolvedPlan } from "@/lib/journal/auto-log";
+import type { SignalRow, TradePlan } from "@/types/signal";
+
+/**
+ * The 參考價位 of a 觀望 signal, expressed as a plan the monitor can follow.
+ *
+ * Not a recommendation and never alerted on — it is how the reference levels
+ * get a measured win rate instead of an opinion. The entry is the middle of the
+ * entry zone, which is the analysis price the levels were derived from, so the
+ * paper position opens where the analysis was standing.
+ */
+function shadowPlan(signal: SignalRow): TradePlan | null {
+  const zone = signal.entry_zone;
+  const stop = signal.stop_loss?.price;
+  const target = signal.take_profits?.[0]?.price;
+  if (!zone || !Number.isFinite(stop) || !Number.isFinite(target)) return null;
+  const entry = (zone.low + zone.high) / 2;
+  if (!(entry > 0)) return null;
+  // The same geometry check the real plans get: a stop on the winning side or
+  // a target on the losing side is a broken row, not a trade to track.
+  const ok =
+    signal.direction === "long"
+      ? stop! < entry && target! > entry
+      : stop! > entry && target! < entry;
+  if (!ok) return null;
+
+  return {
+    stance: "enter",
+    entry,
+    stop_loss: stop!,
+    take_profit: target!,
+    entry_reason: "參考價位（分析當下價格）",
+    stop_loss_reason: signal.stop_loss.structure,
+    take_profit_reason: signal.take_profits[0].structure,
+    risk_reward: null,
+    confidence: "low",
+    summary: "參考價位紙上追蹤，非建議進場。",
+    add_ons: [],
+    wait_for: null,
+    decided_by: "fallback",
+  };
+}
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -53,11 +95,21 @@ export async function GET(request: Request) {
       // The newest stored signal is the plan in force.
       const [latest] = await store.listSignals({ symbol: meta.symbol, limit: 1 });
       if (!latest) return { symbol: meta.symbol, skipped: "尚無訊號紀錄" };
-      if (latest.trade_plan?.stance !== "enter") {
-        return { symbol: meta.symbol, skipped: "目前是觀望，無部位可追蹤" };
-      }
 
-      const previous = await store.getMonitorState(meta.symbol);
+      // 觀望 signals are tracked too, on their 參考價位, as a paper position.
+      // Two reasons, and neither is cosmetic. The board has been 觀望 on all
+      // nine symbols for days, so a tracker that only watches recommended
+      // trades watches nothing and the journal never fills — which means the
+      // intervention engine never learns anything. And the reference levels
+      // are the ones that were asked about: "參考價位的交易也幫我看勝率".
+      //
+      // Paper positions never notify. They are a measurement, not a call.
+      const paper = latest.trade_plan?.stance !== "enter";
+      const plan = paper ? shadowPlan(latest) : latest.trade_plan;
+      if (!plan) return { symbol: meta.symbol, skipped: "觀望且沒有可追蹤的參考價位" };
+      const stateKey = paper ? `${meta.symbol}:ref` : meta.symbol;
+
+      const previous = await store.getMonitorState(stateKey);
       // A new signal replaces whatever was being tracked — the old plan's
       // state says nothing about this one's levels.
       const memory: MonitorMemory =
@@ -71,34 +123,62 @@ export async function GET(request: Request) {
 
       const { memory: next, events } = advancePlan({
         direction: latest.direction,
-        plan: latest.trade_plan,
+        plan,
         price: quote.price,
         priceAgeMinutes: quote.ageMinutes,
         memory,
       });
 
       await store.saveMonitorState({
-        symbol: meta.symbol,
+        symbol: stateKey,
         signalId: latest.id,
         lastPrice: quote.price,
         ...next,
       });
 
       let notified: string[] = [];
-      if (events.length > 0) {
+      if (events.length > 0 && !paper) {
         const results = await notifyAll(
           formatMonitorAlert(meta.symbol, latest.direction, events, quote.ageMinutes, appUrl),
         );
         notified = results.filter((r) => r.ok).map((r) => r.channel);
       }
 
+      // The loop the whole Stage 3 machinery was built for and never got to
+      // run: a resolved plan is written to the journal, a stop-out is
+      // classified, and the classification tightens how the next signal for
+      // this symbol is built.
+      let review: string | null = null;
+      const resolved = events.find((e) => e.kind === "stop_hit" || e.kind === "target_hit");
+      if (resolved && plan.entry !== null && plan.stop_loss !== null && plan.take_profit !== null) {
+        const logged = await recordResolvedPlan({
+          store,
+          meta,
+          signal: latest,
+          entry: plan.entry,
+          stopLoss: plan.stop_loss,
+          takeProfit: plan.take_profit,
+          exitPrice: quote.price,
+          outcome: resolved.kind === "target_hit" ? "target_hit" : "stop_hit",
+          paper,
+          // Filled in below from this run's own release check — the releases
+          // are ingested in the same pass, so "landed while we held" is
+          // answerable without another call.
+          eventDuringHold: false,
+          gaps,
+        });
+        review = logged.note;
+      }
+
       return {
         symbol: meta.symbol,
+        paper,
         price: quote.price,
         priceAgeMinutes: Math.round(quote.ageMinutes),
         state: next.state,
         events: events.map((e) => e.kind),
         notified,
+        review,
       };
     }),
   );

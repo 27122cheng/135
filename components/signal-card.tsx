@@ -506,6 +506,47 @@ function AsOfNotice({ signal }: { signal: TradeSignal }) {
   );
 }
 
+/**
+ * Why a signal that scored well is still no-trade.
+ *
+ * The card was showing "評等 no-trade（方向分 10、結構分 2、總分 12）未達可
+ * 進場門檻 B" — which reads as a contradiction, because 12 points *is* an A by
+ * the table it is quoting. The grade had been force-downgraded after scoring
+ * (no anchorable stop, no target ahead, or an intervention), and the only trace
+ * was one line buried among the data gaps.
+ *
+ * Shown as its own block rather than folded into the 觀望 box because it is a
+ * different claim: the 觀望 box says what the rules decided, this says the
+ * decision overrode the score and names what did it.
+ */
+function ForcedDowngrade({ signal }: { signal: TradeSignal }) {
+  const scored = signal.graded_as;
+  const reasons = signal.downgrades ?? [];
+  if (!scored || scored === signal.grade || reasons.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
+      <p className="text-sm text-amber-300">
+        計分結果是 <span className="font-mono font-semibold">{scored}</span>
+        （方向分 {signal.bias_score}、結構分 {signal.entry_structure_score}、總分{" "}
+        {signal.total_score}），但被強制降為{" "}
+        <span className="font-mono font-semibold">{signal.grade}</span>
+      </p>
+      <ul className="mt-2 space-y-1">
+        {reasons.map((r, i) => (
+          <li key={i} className="border-l-2 border-amber-500/40 pl-3 text-xs leading-relaxed text-neutral-300">
+            {r}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
+        分數說「證據夠強」，降級說「就算方向對，也沒有可以掛單的結構」。兩件事都成立時，
+        沒有結構的那一邊贏 —— 沒有停損可以錨定的交易不是交易。
+      </p>
+    </div>
+  );
+}
+
 function Section({
   title,
   children,
@@ -592,6 +633,8 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
           </div>
         </CardContent>
       </Card>
+
+      <ForcedDowngrade signal={signal} />
 
       {/* The answer: one entry, one stop, one target. */}
       <TradePlanCard plan={signal.trade_plan} backtest={signal.plan_backtest} />

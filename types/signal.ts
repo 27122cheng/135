@@ -339,6 +339,17 @@ export interface TradeSignal {
    * Optional because signals written before this existed are still readable.
    */
   chart_patterns?: ChartPattern[];
+  /**
+   * The grade the scoring table produced, before any force-downgrade.
+   *
+   * Equal to `grade` on a normal signal. When they differ, `downgrades` says
+   * why — and that difference is what made the card self-contradictory: it
+   * announced "評等 no-trade（總分 12）未達可進場門檻 B" while 12 points is an
+   * A by the very table it was quoting.
+   */
+  graded_as?: Grade;
+  /** Every reason the computed grade was overruled, in the order applied. */
+  downgrades?: string[];
   data_gaps: string[];
 }
 

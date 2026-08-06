@@ -313,6 +313,12 @@ async function buildSignalForSymbol(
   const takeProfits = buildTakeProfits(direction, entryZone, technical.pathObstacles);
 
   let grade = score.grade;
+  // Every reason the computed grade was overruled, in order. The card showed
+  // "評等 no-trade（方向分 10、結構分 2、總分 12）未達可進場門檻 B" — which
+  // reads as a contradiction, because by the scoring table 12 points *is* an A.
+  // The grade had been force-downgraded, and the only trace of it was one line
+  // buried among the data gaps.
+  const downgrades: string[] = [];
   const finalStopLoss = stopLoss ?? {
     price: round(currentPrice),
     structure: "無足夠結構保護",
@@ -321,11 +327,15 @@ async function buildSignalForSymbol(
   };
   if (!stopLoss) {
     grade = "no-trade";
-    gaps.push("無法錨定有效停損結構，訊號強制降級為 no-trade");
+    const why = "找不到距進場 1.5% 內、方向正確的支撐／壓力結構，沒有東西可以錨定停損";
+    gaps.push(`無法錨定有效停損結構，訊號強制降級為 no-trade（${why}）`);
+    downgrades.push(`無法錨定停損：${why}`);
   }
   if (takeProfits.length === 0) {
     grade = "no-trade";
-    gaps.push("path_obstacles 中找不到方向正確的停利價位，訊號強制降級為 no-trade");
+    const why = "path_obstacles 裡沒有任何在進場價前方、方向正確的障礙";
+    gaps.push(`找不到方向正確的停利價位，訊號強制降級為 no-trade（${why}）`);
+    downgrades.push(`無法錨定停利：${why}`);
   }
 
   // ── Stage 3 干涉 ────────────────────────────────────────────────
@@ -346,6 +356,7 @@ async function buildSignalForSymbol(
     if (!hasPullback) {
       grade = "no-trade";
       gaps.push("S2 干涉：強制要求回測確認因子，但找不到可回測的保護結構，訊號降為 no-trade");
+      downgrades.push("S2 干涉：要求回測確認，但沒有可回測的保護結構");
     }
   }
 
@@ -368,6 +379,7 @@ async function buildSignalForSymbol(
   });
   grade = penalties.grade;
   gaps.push(...penalties.notes);
+  if (penalties.grade !== baselineGrade) downgrades.push(...penalties.notes);
 
   if (grade !== baselineGrade) {
     // The net grade change gets its own line so the card can show the outcome
@@ -521,6 +533,8 @@ async function buildSignalForSymbol(
     interventions,
     direction_tie: tie,
     chart_patterns: chartPatterns,
+    graded_as: score.grade,
+    downgrades,
     data_gaps: dedupedGaps,
   };
 
