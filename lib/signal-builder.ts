@@ -2,6 +2,7 @@ import type { BiasItem, CommodityMeta, SupportedSymbol, TradeSignal } from "@/ty
 import { COMMODITIES } from "@/types/signal";
 import { FUNDAMENTALS_CONFIG, type FundamentalsConfig } from "@/config/fundamentals";
 import { fetchOHLCV } from "./data-sources/ohlcv";
+import { fetchLatestPrice } from "./data-sources/yfinance";
 import { atr as computeAtr } from "./analysis/indicators";
 import { analyzeTechnical } from "./analysis/technical";
 import { detectAllPatterns, patternContributions } from "./analysis/patterns";
@@ -217,7 +218,34 @@ async function buildSignalForSymbol(
     W1: w1?.candles,
   };
 
-  const currentPrice = d1?.candles.at(-1)?.close ?? h4?.candles.at(-1)?.close ?? w1?.candles.at(-1)?.close;
+  // The live quote, not the last daily close.
+  //
+  // This was `d1.candles.at(-1).close`, and it is why "重新分析" changed
+  // nothing: on a daily feed that is yesterday's settlement, so every rescan
+  // rebuilt the entry zone around the same number no matter how far the market
+  // had moved. NAS100 came back with a long entry zone of 29,829–30,043 while
+  // the instrument was trading 29,369 — the levels were not stale, they were
+  // describing a different day, and no amount of refreshing could fix that
+  // because the input never changed.
+  //
+  // The 5-minute monitor has always used this quote (2-minute TTL); the analysis
+  // that produces the levels the monitor watches was using something else
+  // entirely. Same feed, one call, and now a rescan two minutes later genuinely
+  // sees a new price.
+  const quote = await fetchLatestPrice(meta.yfinanceSymbol, gaps);
+  const lastClose = d1?.candles.at(-1)?.close ?? h4?.candles.at(-1)?.close ?? w1?.candles.at(-1)?.close;
+  if (quote && quote.ageMinutes > 60) {
+    gaps.push(
+      `即時報價已延遲 ${Math.round(quote.ageMinutes)} 分鐘（${quote.at.slice(11, 16)} UTC），進場區間以此價位計算`,
+    );
+  }
+  if (!quote && lastClose != null) {
+    gaps.push("取不到即時報價，進場區間改用最後一根 K 棒收盤價計算，可能與市價有落差");
+  }
+  const currentPrice = quote?.price ?? lastClose;
+  const priceBasis = quote
+    ? `即時報價 ${round(quote.price)}（${Math.round(quote.ageMinutes)} 分鐘前）`
+    : `最後收盤價 ${lastClose == null ? "—" : round(lastClose)}（取不到即時報價）`;
   if (currentPrice == null) {
     // Without a price there is no entry, no structure and no valid signal — but
     // the other five dimensions may still have produced real findings, so return
@@ -291,8 +319,8 @@ async function buildSignalForSymbol(
     high: round(currentPrice + zoneBuffer),
     reason:
       (atrD1
-        ? `即時價位 ${round(currentPrice)} ± 0.15×ATR(14)×${effects.entryZoneWidthFactor}=${round(zoneBuffer)}`
-        : `ATR 不可得，改用即時價位 ${round(currentPrice)} ± 0.05% 作為極小容差`) + narrowedNote,
+        ? `${priceBasis} ± 0.15×ATR(14)×${effects.entryZoneWidthFactor}=${round(zoneBuffer)}`
+        : `ATR 不可得，改用 ${priceBasis} ± 0.05% 作為極小容差`) + narrowedNote,
   };
 
   const score = scoreSignal(

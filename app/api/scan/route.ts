@@ -50,6 +50,9 @@ export async function GET(request: Request) {
   try {
     const scan = await runScan(meta, {
       extraKeys: parseUserKeyHeader(request.headers.get("x-user-keys")),
+      // A scan the user asked for goes to the sources. The scheduled sweep
+      // does not need to: four hours is longer than every TTL involved.
+      fresh: url.searchParams.get("fresh") !== "0",
     });
     const { stored, storeError } = await storeScan(scan.signal);
     return json({

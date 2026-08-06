@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { DEFAULT_STALE_MS, getCached, getStale, setCached } from "./cache";
 import { recordFailure, recordSuccess, tryConsume, type QuotaLimit } from "./quota";
 import { getSignalStore } from "@/lib/db";
@@ -108,6 +109,24 @@ async function writePersisted(key: string, value: unknown): Promise<void> {
   }
 }
 
+/**
+ * Request-scoped "skip the fresh cache" flag.
+ *
+ * Same mechanism as the per-request API keys: a flag threaded through twenty
+ * fetchers as an argument is a flag that gets forgotten in one of them, and the
+ * one that forgets is the one that keeps serving yesterday's price.
+ */
+const forceStore = new AsyncLocalStorage<boolean>();
+
+/** Runs `fn` with every free source going to the network for fresh data. */
+export function withFreshData<T>(fn: () => Promise<T>): Promise<T> {
+  return forceStore.run(true, fn);
+}
+
+function isForced(): boolean {
+  return forceStore.getStore() === true;
+}
+
 export async function fetchFree<T>(opts: FreeFetchOptions<T>): Promise<FreeFetchResult<T> | null> {
   const {
     source,
@@ -122,7 +141,17 @@ export async function fetchFree<T>(opts: FreeFetchOptions<T>): Promise<FreeFetch
     staleMs = DEFAULT_STALE_MS,
   } = opts;
 
-  const fresh = getCached<T>(key);
+  // "重新分析" has to mean it. When the caller asked for fresh data, the two
+  // *fresh* cache tiers are skipped and the source is actually called — a
+  // refresh button that returns the cached answer is not a refresh button, and
+  // that is precisely what made pressing it change nothing.
+  //
+  // The stale tier below is deliberately still reachable: forcing a fetch is a
+  // request to try, not permission to invent. If the live call fails, an old
+  // answer clearly labelled as old is still better than none.
+  const forced = isForced();
+
+  const fresh = forced ? undefined : getCached<T>(key);
   if (fresh !== undefined) return { value: fresh, stale: false, ageMs: 0 };
 
   // Second look, in the database. On a serverless platform the in-memory cache
@@ -130,7 +159,7 @@ export async function fetchFree<T>(opts: FreeFetchOptions<T>): Promise<FreeFetch
   // request and was gone — so without this the whole caching layer was
   // decorative and every source hiccup became "無資料".
   const persisted = await readPersisted<T>(key, ttlMs, staleMs);
-  if (persisted?.fresh) {
+  if (persisted?.fresh && !forced) {
     setCached(key, persisted.value, ttlMs - persisted.ageMs, staleMs - persisted.ageMs);
     return { value: persisted.value, stale: false, ageMs: persisted.ageMs };
   }

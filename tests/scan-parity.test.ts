@@ -97,4 +97,32 @@ const shared = read("lib/scan.ts");
     settings.includes("只在這台裝置") && settings.includes("排程也有"));
 }
 
+// ── a refresh has to actually refresh ─────────────────────────────
+//
+// "價格一直沒刷新就算我更新了一樣". Two separate causes, both here.
+{
+  const builder = read("lib/signal-builder.ts");
+  const freeSource = read("lib/data-sources/free-source.ts");
+
+  // 1. The entry zone was built from the last *daily close*, so on a daily feed
+  //    it was yesterday's settlement and no rescan could move it. NAS100 came
+  //    back long at 29,829–30,043 while the market traded 29,369.
+  check("the analysis uses the live quote", builder.includes("fetchLatestPrice("));
+  check("not the last daily close as the primary price",
+    !builder.includes("const currentPrice = d1?.candles.at(-1)?.close"));
+  check("the last close is kept only as a fallback",
+    builder.includes("quote?.price ?? lastClose"));
+  check("and the card says which one was used", builder.includes("priceBasis"));
+
+  // 2. Even with a live quote, every source sat behind a fresh-cache tier, so a
+  //    rescan inside the TTL returned byte-identical inputs.
+  check("a forced fetch skips the memory cache", freeSource.includes("forced ? undefined : getCached"));
+  check("and the persisted fresh tier", freeSource.includes("persisted?.fresh && !forced"));
+  // Forcing is permission to try, not permission to invent: the stale tier must
+  // stay reachable so a failed live call still answers with something labelled.
+  check("but the stale tier is still reachable", freeSource.includes("serveStale("));
+  check("the browser scan asks for fresh data by default",
+    scanRoute.includes('searchParams.get("fresh") !== "0"'));
+}
+
 report("scan parity");

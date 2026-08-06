@@ -144,11 +144,34 @@ export function planConfidence(signal: TradeSignal): Confidence {
     }
   }
 
-  const gaps = signal.data_gaps?.length ?? 0;
-  if (gaps > 0) {
-    const penalty = Math.min(15, gaps * 3);
-    score -= penalty;
-    factors.push(`${gaps} 項資料缺口（-${penalty}）`);
+  // Data gaps, priced by whether the evidence is actually missing.
+  //
+  // This used to charge 3 points for every line in `data_gaps`, and that list
+  // does not contain one kind of thing. "CFTC 合約代碼查無資料" means a whole
+  // dimension is blank. "GDELT 429，改用 4 小時前的快取（stale）" means we have
+  // the data and it is a few hours old — on a signal built from H4 candles that
+  // is barely a defect at all. "所有 AI 供應商皆無法回應" is already charged
+  // separately, five points below, as the fallback penalty.
+  //
+  // Charging all three the same is how NAS100 came back at 59 against a bar of
+  // 60: a rate-limited news feed and an exhausted AI tier, both already
+  // accounted for elsewhere, were being billed a second time at full price.
+  // Missing evidence should cost; the same misfortune counted twice should not.
+  const allGaps = signal.data_gaps ?? [];
+  const stale = allGaps.filter((g) => g.includes("快取") || g.includes("stale"));
+  const aiRelated = allGaps.filter((g) => g.includes("AI") && !stale.includes(g));
+  const missing = allGaps.filter((g) => !stale.includes(g) && !aiRelated.includes(g));
+  if (allGaps.length > 0) {
+    // Missing evidence at full price; stale-but-served at a third of it,
+    // because having the number late is not the same as not having it.
+    const penalty = Math.min(15, missing.length * 3 + stale.length);
+    if (penalty > 0) score -= penalty;
+    factors.push(
+      `${allGaps.length} 項資料缺口（-${penalty}）：` +
+        `${missing.length} 項真的沒有` +
+        (stale.length > 0 ? `、${stale.length} 項改用快取（有資料，只是不即時）` : "") +
+        (aiRelated.length > 0 ? `、${aiRelated.length} 項 AI 相關（已在下方單獨計價）` : ""),
+    );
   }
 
   if (signal.trade_plan?.decided_by === "fallback") {

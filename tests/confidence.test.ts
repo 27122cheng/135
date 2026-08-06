@@ -94,6 +94,23 @@ function obstacle(price: number, strength: 1 | 2 | 3): PathObstacle {
   const veryGappy = planConfidence(signal({ data_gaps: Array(20).fill("x") as string[] }));
   check("the gap penalty is capped", veryGappy.score >= base - 15, veryGappy.score);
 
+  // Gaps are not all the same thing, and pricing them as if they were is what
+  // put NAS100 at 59 against a bar of 60. A source that answered from cache
+  // still answered; the AI's absence is already billed as the fallback penalty.
+  const staleOnly = planConfidence(
+    signal({ data_gaps: ["GDELT 新聞 本次取得失敗：HTTP 429，改用 4 小時前的快取結果（stale，非即時）"] as string[] }),
+  );
+  const missingOnly = planConfidence(
+    signal({ data_gaps: ["CFTC COT 取得失敗：合約代碼查無資料"] as string[] }),
+  );
+  check("a source served from cache costs less than a missing one",
+    staleOnly.score > missingOnly.score, [staleOnly.score, missingOnly.score]);
+  check("and the split is spelled out",
+    staleOnly.factors.some((f) => f.includes("改用快取")), staleOnly.factors);
+  check("an AI outage is not charged here as well",
+    planConfidence(signal({ data_gaps: ["所有 AI 供應商皆無法回應（429）"] as string[] })).score === base,
+    planConfidence(signal({ data_gaps: ["所有 AI 供應商皆無法回應（429）"] as string[] })).score);
+
   const fallback = planConfidence(
     signal({ trade_plan: { ...signal().trade_plan, decided_by: "fallback" } }),
   );

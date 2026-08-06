@@ -3,6 +3,7 @@ import { FUNDAMENTALS_CONFIG, type FundamentalsConfig } from "@/config/fundament
 import { buildSignalFor } from "./signal-builder";
 import { ingestReleases, type IngestedRelease } from "./analysis/data-release";
 import { withUserKeys } from "./api-keys";
+import { withFreshData } from "./data-sources/free-source";
 import { storedApiKeys } from "./settings";
 import { getSignalStore } from "./db";
 
@@ -43,6 +44,19 @@ import { getSignalStore } from "./db";
  */
 
 export interface ScanOptions {
+  /**
+   * Skip the fresh-cache tiers and actually call the sources.
+   *
+   * For 重新分析 / 立即全部掃描, where the whole point is that the numbers
+   * should be new. Without it a rescan inside the 30-minute OHLCV TTL returned
+   * byte-identical inputs and therefore a byte-identical signal, which is how
+   * pressing refresh came to mean nothing.
+   *
+   * Not the default: the scheduled sweep runs every four hours, which is longer
+   * than every TTL involved, so forcing there would only spend quota to be told
+   * the same thing.
+   */
+  fresh?: boolean;
   /**
    * Keys the browser supplied on this request, layered over the stored ones.
    *
@@ -89,7 +103,7 @@ export async function runScan(
   const keys = { ...stored, ...(options.extraKeys ?? {}) };
 
   const releaseGaps: string[] = [];
-  const result = await withUserKeys(keys, async () => {
+  const build = async () => {
     // Before the build, so a print that landed since the last run is already in
     // the table when the analysis reads it. Otherwise the first scan after a
     // release records it and scores it one run later.
@@ -99,7 +113,10 @@ export async function runScan(
     }));
     const signal = await buildSignalFor(meta, configFor(meta));
     return { signal, ingest };
-  });
+  };
+  const result = await withUserKeys(keys, () =>
+    options.fresh ? withFreshData(build) : build(),
+  );
 
   const notes = [...releaseGaps, ...result.ingest.gaps];
   // Folded in rather than returned separately: whatever went wrong fetching a
