@@ -16,5 +16,15 @@ import { NextResponse } from "next/server";
 export function json(data: unknown, init?: ResponseInit): NextResponse {
   const response = NextResponse.json(data, init);
   response.headers.set("content-type", "application/json; charset=utf-8");
+  // Every route in this app returns live state — signals, quota, settings,
+  // scan results. None of it is cacheable, and a cached copy is actively
+  // harmful: the board's first response (an empty board, taken before anything
+  // had been scanned) was being replayed to every later reload, so scans wrote
+  // rows nobody ever saw and the header read 已掃描 0/9 indefinitely.
+  //
+  // `dynamic = "force-dynamic"` on the route governs the *server's* rendering.
+  // It says nothing about the browser or an intermediary, which is what this
+  // header is for.
+  response.headers.set("cache-control", "no-store, must-revalidate");
   return response;
 }

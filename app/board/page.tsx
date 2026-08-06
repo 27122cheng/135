@@ -97,7 +97,12 @@ export default function BoardPage() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/board");
+      // `no-store` is not optional here. Without it the browser happily serves
+      // the first response — an empty board, taken before anything had been
+      // scanned — back to every later reload, so scans wrote rows nobody ever
+      // saw and the header read 已掃描 0/9 indefinitely. The route is
+      // force-dynamic on the server; that says nothing about the client cache.
+      const res = await fetch("/api/board", { cache: "no-store" });
       const body: BoardResponse = await res.json();
       setData(body);
       setError(res.ok ? null : (body.next ?? body.error ?? "讀取失敗"));
@@ -157,13 +162,18 @@ export default function BoardPage() {
             else if (body?.error) setScanError(String(body.error));
           } catch {
             // Ignored: a symbol that failed keeps its stored row, which is
-            // older but real. The reload below is the source of truth.
+            // older but real. The reload is the source of truth.
           } finally {
             setRescanning((prev) => {
               const next = new Set(prev);
               next.delete(row.symbol);
               return next;
             });
+            // Re-read after each symbol, not only when all nine finish. A
+            // full sweep at two-at-a-time takes minutes; showing nothing until
+            // the last one lands is indistinguishable from being broken, which
+            // is exactly how this looked.
+            await load();
           }
         }
       };
