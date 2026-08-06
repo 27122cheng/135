@@ -158,29 +158,48 @@ function fallbackPlan(input: TradePlanInput): TradePlan {
       "fallback",
     );
   }
-  const entry = input.entryCandidates[0];
-  const sl = input.slCandidates[0];
-  const tp = input.tpCandidates[0];
+  // Search the menu instead of taking the first of each list.
+  //
+  // The old version used index 0 throughout, which meant the *nearest* target —
+  // systematically the worst payoff on offer. That mattered more than it looks:
+  // a fallback plan is penalised in the confidence score for not having been
+  // chosen by a model, and it was earning that penalty partly by making a
+  // choice nobody would defend. Picking the best available combination is what
+  // makes the penalty about missing judgement rather than about bad arithmetic.
+  let entry: Candidate | undefined;
+  let sl: Candidate | undefined;
+  let tp: Candidate | undefined;
+  let rr = 0;
+  for (const e of input.entryCandidates) {
+    for (const s of input.slCandidates) {
+      for (const t of input.tpCandidates) {
+        const candidateRr = riskReward(input.direction, e.price, s.price, t.price);
+        if (candidateRr === null || candidateRr < MIN_RISK_REWARD) continue;
+        // Strictly greater, so an equal payoff keeps the earlier — and
+        // therefore nearer — entry. Without that tie-break the search drifts
+        // toward the furthest pullback for free, since a more distant entry
+        // mechanically improves the ratio.
+        if (candidateRr > rr) {
+          entry = e;
+          sl = s;
+          tp = t;
+          rr = candidateRr;
+        }
+      }
+    }
+  }
+
   if (!entry || !sl || !tp) {
+    // Either there were no candidates at all, or every combination lost on
+    // geometry. decideStance already refuses the second case before the AI is
+    // called, so reaching here means the lists themselves were empty.
     return waitPlan(
-      "缺少可用的進場、停損或停利結構，無法組成計畫。",
-      "等待價格接近有效的支撐／壓力結構。",
-      "fallback",
-    );
-  }
-  const rr = riskReward(input.direction, entry.price, sl.price, tp.price);
-  if (rr === null) {
-    return waitPlan(
-      "預設規則算出的停損／停利方向不合理，無法組成計畫。",
-      "等待更清楚的結構出現。",
-      "fallback",
-    );
-  }
-  // A trade that risks more than it stands to make isn't worth taking.
-  if (rr < 1) {
-    return waitPlan(
-      `預設規則算出的風險報酬比僅 1:${rr}，賠率不划算，建議觀望。`,
-      `等待價格回落到更好的進場位置（例如 ${round(input.entryCandidates.at(-1)?.price ?? entry.price)} 附近），或等更遠的停利結構出現。`,
+      input.entryCandidates.length === 0 ||
+        input.slCandidates.length === 0 ||
+        input.tpCandidates.length === 0
+        ? "缺少可用的進場、停損或停利結構，無法組成計畫。"
+        : `現有結構的任何組合風險報酬比都低於 1:${MIN_RISK_REWARD}，賠率不划算，建議觀望。`,
+      "等待價格接近有效的支撐／壓力結構，或等更遠的停利結構出現。",
       "fallback",
     );
   }
@@ -196,7 +215,7 @@ function fallbackPlan(input: TradePlanInput): TradePlan {
     confidence: input.grade === "A+" || input.grade === "A" ? "medium" : "low",
     summary:
       "未使用 AI 判斷（未設定 AI 金鑰、額度用盡或呼叫失敗），改用預設規則：" +
-      "取最接近的進場點、最近的保護結構做停損、路徑上第一個障礙做停利。",
+      `在所有真實結構的組合中，選出風險報酬比最佳且不低於 1:${MIN_RISK_REWARD} 的一組（本組 1:${rr}）。`,
     add_ons: [],
     wait_for: null,
     decided_by: "fallback",

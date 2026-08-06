@@ -122,8 +122,18 @@ export function planConfidence(signal: TradeSignal): Confidence {
   }
 
   if (signal.trade_plan?.decided_by === "fallback") {
-    score -= 10;
-    factors.push("價位由預設規則挑選，未經 AI 判斷（-10）");
+    // Was −10, when the fallback simply took the first candidate of each list —
+    // systematically the nearest target and therefore the worst payoff. It now
+    // searches every combination and keeps the best risk/reward, so the penalty
+    // is about the missing judgement (which structure suits *this* context) and
+    // not about a choice nobody would defend.
+    //
+    // The size matters: with gaps costing up to 15, a −10 here meant even an A+
+    // could not reach the 60 entry bar on a run where the free AI tier was
+    // exhausted — which is every run once the tier is exhausted. A threshold no
+    // grade can clear is a disabled feature.
+    score -= 5;
+    factors.push("價位由預設規則挑選，未經 AI 判斷（-5）");
   }
 
   const bt = signal.plan_backtest;

@@ -208,16 +208,44 @@ function obstacle(price: number, strength: 1 | 2 | 3): PathObstacle {
   check("a C grade cannot reach the bar even on a perfect payoff",
     !clearsEntryBar(cGradeBest.score), cGradeBest.score);
 
-  // An AI-less plan is not a confident trade, whatever the grade.
-  const noAi = planConfidence(
+  // The case that made "no signal, ever" arithmetically guaranteed: the free AI
+  // tier is exhausted, so every plan is a fallback, and a normal run has a
+  // handful of gaps. With the old −10 even A+ could not reach 60 in that state.
+  const exhausted = (grade: TradeSignal["grade"]) =>
+    planConfidence(
+      signal({
+        grade,
+        trade_plan: { ...signal().trade_plan, decided_by: "fallback", risk_reward: 2.5 },
+        data_gaps: ["a", "b", "c", "d", "e"] as string[],
+      }),
+    );
+
+  check("A+ can still trade with no AI and five gaps", clearsEntryBar(exhausted("A+").score),
+    exhausted("A+").score);
+  // A cannot, and that is left standing rather than tuned away. Five gaps is a
+  // third of the inputs missing; the honest reading is "only the very best
+  // setups qualify while the data is in this state", and the fix is the data.
+  // Lowering a constant until it produces the answer you wanted is how a
+  // threshold stops meaning anything.
+  check("A cannot, while five sources are down", !clearsEntryBar(exhausted("A").score),
+    exhausted("A").score);
+  check("nor can B", !clearsEntryBar(exhausted("B").score), exhausted("B").score);
+
+  // But on a healthy run A must trade even with no AI at all — otherwise the
+  // bar is once again something nothing can clear.
+  const healthy = planConfidence(
     signal({
       grade: "A",
-      trade_plan: { ...signal().trade_plan, decided_by: "fallback" },
-      data_gaps: ["a", "b", "c", "d", "e"] as string[],
+      trade_plan: { ...signal().trade_plan, decided_by: "fallback", risk_reward: 2.5 },
+      data_gaps: ["a", "b"] as string[],
     }),
   );
-  check("a fallback plan on a gappy run stays below the bar", !clearsEntryBar(noAi.score),
-    noAi.score);
+  check("A trades on a healthy run without AI", clearsEntryBar(healthy.score), healthy.score);
+
+  check("the fallback penalty is 5, not 10",
+    planConfidence(signal()).score -
+      planConfidence(signal({ trade_plan: { ...signal().trade_plan, decided_by: "fallback" } }))
+        .score === 5);
 }
 
 // ── the bands ─────────────────────────────────────────────────────

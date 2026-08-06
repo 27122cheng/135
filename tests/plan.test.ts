@@ -26,7 +26,13 @@ async function main() {
     gaps,
   );
   console.log("1 stance:", p1.stance, p1.entry, p1.stop_loss, p1.take_profit, "RR", p1.risk_reward);
-  check("1", p1.stance === "enter" && p1.risk_reward === 2);
+  // 5, not 2. The fallback used to take entryCandidates[0] — the current price
+  // — giving 80/40. It now searches every combination, and the pullback entry
+  // at 4100 against the same stop is 100/20. Both are real structures the
+  // analysis produced; the old rule simply never looked at the better one.
+  check("1 picks the best available payoff", p1.stance === "enter" && p1.risk_reward === 5,
+    p1.risk_reward);
+  check("1 uses the pullback entry that earned it", p1.entry === 4100, p1.entry);
 
   // 2. no-trade grade -> must be wait, with a wait_for.
   const p2 = await buildTradePlan(
@@ -50,7 +56,32 @@ async function main() {
     gaps,
   );
   console.log("3 stance:", p3.stance, "|", p3.summary.slice(0, 40));
-  check("3 should refuse bad R:R", p3.stance === "wait" && p3.entry === null);
+  // This used to be a wait, and that was the bug rather than the feature:
+  // entering at the current price gives 5/40, but the pullback entry at 4100
+  // against the same stop gives 25/20 = 1.25, which clears the floor. The old
+  // fallback refused a workable plan because it only ever examined one of the
+  // three combinations — and `decideStance`, which does check them all, was
+  // meanwhile saying "enter". The two now agree.
+  check("3 finds the combination that clears 1:1", p3.stance === "enter", p3.summary);
+  check("3 uses the pullback entry", p3.entry === 4100, p3.entry);
+  check("3 reports the real ratio", p3.risk_reward === 1.25, p3.risk_reward);
+
+  // A menu where *nothing* clears the floor must still refuse.
+  const p4 = await buildTradePlan(
+    {
+      ...base,
+      grade: "B",
+      bias_score: 4,
+      entry_structure_score: 4,
+      total_score: 8,
+      gradeForcesWait: false,
+      entryCandidates: [{ price: 4120, label: "現價" }],
+      tpCandidates: [{ price: 4125, label: "很近的前高" }],
+    },
+    gaps,
+  );
+  check("4 refuses when no combination clears 1:1", p4.stance === "wait" && p4.entry === null,
+    p4.summary);
 
   console.log("\nall assertions passed if no FAIL above");
 }
