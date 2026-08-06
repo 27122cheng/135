@@ -1,5 +1,6 @@
 import { COMMODITIES, type AddOnLevel, type Grade, type SignalRow } from "@/types/signal";
 import { getSignalStore } from "@/lib/db";
+import { readLatest } from "@/lib/latest-signals";
 import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
@@ -178,7 +179,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const latest = await store.latestPerSymbol();
+    const { rows: latest, source, note } = await readLatest(store);
     const bySymbol = new Map(latest.map((r) => [r.symbol, r]));
 
     // `?symbol=` returns the full stored signal, which is what the detail page
@@ -195,6 +196,8 @@ export async function GET(request: Request) {
 
     return json({
       rows,
+      source,
+      note,
       tradeCount: rows.filter((r) => r.stance === "enter").length,
       scannedCount: rows.filter((r) => r.generatedAt !== null).length,
       oldestAt: rows.reduce<string | null>(

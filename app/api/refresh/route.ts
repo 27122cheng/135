@@ -92,10 +92,15 @@ export async function GET(request: Request) {
       // Both: the append-only timeline /history and the backtest read, and the
       // single current row every view reads.
       await store.insertSignal(signal);
-      await store.saveLatest(signal).catch(() => {
-        // A missing latest_signal table must not fail a refresh that already
-        // wrote the history row it was actually asked to write.
-      });
+      // A missing latest_signal table must not fail a refresh that already
+      // wrote the history row it was actually asked to write — but it must not
+      // be invisible either. Swallowing this entirely is how the board sat at
+      // 已掃描 0/9 for days while /history filled up normally: the only thing
+      // that could have said "the table isn't there" threw the message away.
+      const latestError = await store
+        .saveLatest(signal)
+        .then(() => null)
+        .catch((err: unknown) => (err instanceof Error ? err.message : String(err)));
 
       const decision = shouldAlert(signal, previous ?? null, minGrade);
       let notified: string[] = [];
@@ -107,6 +112,7 @@ export async function GET(request: Request) {
       }
       return {
         grade: signal.grade,
+        latestError,
         gaps: signal.data_gaps.length,
         alerted: decision.alert,
         alertReason: decision.reason,

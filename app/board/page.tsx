@@ -28,6 +28,10 @@ interface BoardResponse {
   tradeCount?: number;
   scannedCount?: number;
   oldestAt?: string | null;
+  /** Which table answered — "signals" means latest_signal was empty. */
+  source?: "latest_signal" | "signals";
+  /** Set when the board is running off a fallback the owner should fix. */
+  note?: string | null;
   error?: string;
   next?: string;
 }
@@ -56,6 +60,31 @@ const SCAN_INTERVAL_MS = 30 * 60_000;
  * costs only wall-clock time, which nobody is watching.
  */
 const SCAN_CONCURRENCY = 2;
+/**
+ * How long to wait for one symbol before calling it failed.
+ *
+ * `/api/scan` declares `maxDuration = 60`, so a request still open past that is
+ * one Vercel has already killed. Slightly over the ceiling so a function that
+ * finishes at 58 seconds still counts, and the extra five seconds are for the
+ * round trip on a phone.
+ */
+const SCAN_TIMEOUT_MS = 65_000;
+
+/**
+ * `AbortSignal.timeout`, with a fallback.
+ *
+ * Not defensive programming for its own sake: this page is used from a phone
+ * browser, and `AbortSignal.timeout` only arrived in Safari 16. Calling it
+ * where it doesn't exist throws a TypeError *before* the fetch is made, which
+ * would turn "one symbol was slow" into "every scan fails instantly" on any
+ * older device — a much worse failure than the one it is here to catch.
+ */
+function timeoutSignal(ms: number): AbortSignal {
+  if (typeof AbortSignal.timeout === "function") return AbortSignal.timeout(ms);
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(new DOMException("timeout", "TimeoutError")), ms);
+  return controller.signal;
+}
 
 const GRADE_STYLE: Record<string, string> = {
   "A+": "bg-emerald-500/20 text-emerald-300",
@@ -165,8 +194,17 @@ export default function BoardPage() {
   const [open, setOpen] = useState<string | null>(null);
   const [rescanning, setRescanning] = useState<Set<string>>(new Set());
   const [autoScan, setAutoScan] = useState(true);
-  /** Why a completed scan did not appear — almost always a missing table. */
-  const [scanError, setScanError] = useState<string | null>(null);
+  /**
+   * Why each symbol's scan did not produce a row, keyed by symbol.
+   *
+   * Was a single string, set only from `body.storeError` / `body.error`. That
+   * covered exactly one of the four ways a scan can fail and silently dropped
+   * the other three — a non-2xx status, a body that isn't JSON (Vercel's
+   * 504 `FUNCTION_INVOCATION_TIMEOUT` page is HTML), and a fetch that throws.
+   * All three left the row at 無紀錄 with an empty screen and no clue, which is
+   * precisely the state this page kept being reported in.
+   */
+  const [scanErrors, setScanErrors] = useState<Record<string, string>>({});
   // The scan timer must see the newest rows without being torn down and
   // rebuilt every time they change — that would reset the 5-minute clock on
   // every poll and the rescan would never fire.
@@ -214,8 +252,11 @@ export default function BoardPage() {
   const rescan = useCallback(
     async (targets: BoardRow[]) => {
       if (targets.length === 0) return;
-      setScanError(null);
+      setScanErrors({});
       setRescanning(new Set(targets.map((r) => r.symbol)));
+
+      const fail = (symbol: string, why: string) =>
+        setScanErrors((prev) => ({ ...prev, [symbol]: why }));
 
       // A small worker pool rather than Promise.all over all nine. Same total
       // work, but it arrives at a rate the free AI tiers accept instead of as
@@ -227,19 +268,58 @@ export default function BoardPage() {
           const row = queue.shift();
           if (!row) return;
           try {
+            // A hard client-side deadline. Without it a request that never
+            // answers leaves the row spinning forever and the pool wedged on
+            // it, which looks exactly like "the scan is still working" — the
+            // most expensive possible way to say nothing.
             const res = await fetch(`/api/scan?symbol=${row.symbol}`, {
               cache: "no-store",
               headers: userKeyHeaders(),
+              signal: timeoutSignal(SCAN_TIMEOUT_MS),
             });
-            const body = await res.json().catch(() => null);
-            // A scan that ran but could not be stored leaves the board showing
-            // 尚未掃描 forever. Surfacing the first such error is the whole
-            // difference between "it's still working" and "it silently isn't".
-            if (body?.storeError) setScanError(String(body.storeError));
-            else if (body?.error) setScanError(String(body.error));
-          } catch {
-            // Ignored: a symbol that failed keeps its stored row, which is
-            // older but real. The reload is the source of truth.
+            // Read as text first. A Vercel function that blows its 60-second
+            // ceiling answers 504 with an HTML page, and `res.json()` on that
+            // throws — which the old `.catch(() => null)` turned into "no
+            // error", i.e. a silent failure indistinguishable from success.
+            const raw = await res.text();
+            let body: { error?: string; storeError?: string; stored?: boolean } | null = null;
+            try {
+              body = JSON.parse(raw);
+            } catch {
+              body = null;
+            }
+
+            if (!res.ok) {
+              fail(
+                row.symbol,
+                body?.error ??
+                  (res.status === 504
+                    ? "分析超過 60 秒，Vercel 中斷了這次請求"
+                    : `HTTP ${res.status}`),
+              );
+            } else if (body === null) {
+              fail(row.symbol, "伺服器回傳的不是 JSON（多半是逾時或崩潰頁）");
+            } else if (body.storeError) {
+              // The scan ran but the result could not be stored — the board
+              // would stay at 無紀錄 forever with the analysis silently thrown
+              // away.
+              fail(row.symbol, body.storeError);
+            } else if (body.error) {
+              fail(row.symbol, body.error);
+            }
+          } catch (err) {
+            // Not ignorable. A symbol whose scan threw has no stored row to
+            // fall back on, and swallowing this is how nine failed scans
+            // produced a blank board with no explanation anywhere.
+            const name = err instanceof Error ? err.name : "";
+            fail(
+              row.symbol,
+              name === "TimeoutError" || name === "AbortError"
+                ? `等超過 ${Math.round(SCAN_TIMEOUT_MS / 1000)} 秒沒有回應`
+                : err instanceof Error
+                  ? err.message
+                  : String(err),
+            );
           } finally {
             setRescanning((prev) => {
               const next = new Set(prev);
@@ -339,6 +419,7 @@ export default function BoardPage() {
   });
 
   const trades = sorted.filter((r) => r.stance === "enter");
+  const failedSymbols = Object.keys(scanErrors);
   const oldest = rows.reduce<string | null>(
     (acc, r) => (r.generatedAt && (!acc || r.generatedAt < acc) ? r.generatedAt : acc),
     null,
@@ -400,15 +481,28 @@ export default function BoardPage() {
           {error}
         </div>
       )}
-      {scanError && (
+      {data?.note && (
+        <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-400">
+          {data.note}
+        </div>
+      )}
+      {failedSymbols.length > 0 && (
         <div className="mb-3 rounded-xl border border-red-500/40 bg-red-500/5 p-3 text-xs text-red-300">
-          <p>掃描跑完了，但結果沒能存進資料庫：{scanError}</p>
-          <p className="mt-1 text-red-400/70">
-            多半是 <code>latest_signal</code> 資料表還沒建立。到{" "}
+          <p className="font-medium">{failedSymbols.length} 個商品掃描失敗</p>
+          <ul className="mt-1.5 flex flex-col gap-1">
+            {failedSymbols.map((symbol) => (
+              <li key={symbol} className="flex gap-2">
+                <span className="w-16 shrink-0 text-red-400/70">{symbol}</span>
+                <span className="break-all text-red-300/90">{scanErrors[symbol]}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-red-400/70">
+            存不進去多半是 <code>latest_signal</code> 資料表還沒建立 —— 到{" "}
             <Link href="/setup" className="underline">
               設定頁
             </Link>{" "}
-            按「建立資料表」。
+            按「建立資料表」。逾時則是這個商品的資料來源太慢，重按一次通常會過，因為第二次讀的是快取。
           </p>
         </div>
       )}
@@ -434,7 +528,9 @@ export default function BoardPage() {
                   {row.label}
                 </span>
 
-                {row.stance === null ? (
+                {scanErrors[row.symbol] ? (
+                  <span className="text-xs text-red-400">掃描失敗</span>
+                ) : row.stance === null ? (
                   // "目前無交易", not "尚未掃描". A stored row with no plan is a
                   // finished scan that decided there is nothing to take; only
                   // the timestamp column is qualified to say whether a scan
@@ -545,7 +641,11 @@ export default function BoardPage() {
                     </>
                   ) : (
                     <>
-                      {row.generatedAt === null ? (
+                      {scanErrors[row.symbol] ? (
+                        <p className="text-red-300">
+                          這次掃描失敗：{scanErrors[row.symbol]}
+                        </p>
+                      ) : row.generatedAt === null ? (
                         <p className="text-neutral-600">
                           這個商品還沒有掃描紀錄。等下一次排程，或按上面的「立即全部掃描」。
                         </p>
