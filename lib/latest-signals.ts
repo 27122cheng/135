@@ -32,11 +32,48 @@ export interface LatestRead {
  * the correct board. The `note` says which table answered, because a board
  * silently running off a fallback is how a missing table survives for weeks.
  */
+/**
+ * Fill in what a stored row cannot carry, so every reader gets a whole signal.
+ *
+ * The `signals` table predates several fields and has no column for them —
+ * `interventions`, `news_digest`, `direction_tie`, `confidence`. That was
+ * harmless while history rows only fed /history, which reads a handful of
+ * scalars. The moment the board started falling back to that table, those rows
+ * reached the signal card, and `signal.interventions.length` on an undefined
+ * threw during render: the detail page went to a black screen reading
+ * "Application error: a client-side exception has occurred".
+ *
+ * Normalising here rather than guarding at each of the twenty-odd use sites.
+ * The consumers are right to expect a complete `TradeSignal` — that is what the
+ * type promises — so the place to make it true is where storage is turned back
+ * into one. The defaults are honest: an empty list means "nothing recorded",
+ * which is exactly what a missing column means. `confidence` is deliberately
+ * left absent rather than invented; the card recomputes it from the signal.
+ */
+function completeSignal(row: SignalRow): SignalRow {
+  return {
+    ...row,
+    take_profits: row.take_profits ?? [],
+    bias_items: row.bias_items ?? [],
+    entry_structures: row.entry_structures ?? [],
+    path_obstacles: row.path_obstacles ?? [],
+    interventions: row.interventions ?? [],
+    data_gaps: row.data_gaps ?? [],
+    news_digest: row.news_digest ?? null,
+    plan_backtest: row.plan_backtest ?? null,
+    direction_tie: row.direction_tie ?? false,
+  };
+}
+
 export async function readLatest(store: SignalStore): Promise<LatestRead> {
   let latestError: string | null = null;
   try {
     const rows = await store.latestPerSymbol();
-    if (rows.length > 0) return { rows, source: "latest_signal", note: null };
+    // Normalised on this path too: a payload written by an older build of the
+    // signal builder has the same holes as a history row.
+    if (rows.length > 0) {
+      return { rows: rows.map(completeSignal), source: "latest_signal", note: null };
+    }
   } catch (err) {
     latestError = err instanceof Error ? err.message : String(err);
   }
@@ -46,7 +83,7 @@ export async function readLatest(store: SignalStore): Promise<LatestRead> {
   // listSignals is ordered generated_at desc, so the first row seen for a
   // symbol is its newest.
   for (const row of history) {
-    if (!newest.has(row.symbol)) newest.set(row.symbol, row);
+    if (!newest.has(row.symbol)) newest.set(row.symbol, completeSignal(row));
   }
   const rows = [...newest.values()];
 

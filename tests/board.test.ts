@@ -96,6 +96,41 @@ async function suite() {
       (gold as TradeSignal | undefined)?.generated_at);
   }
 
+  // ── a history row must still be a whole signal ────────────────────
+  //
+  // The crash this pins: `signals` has no column for interventions,
+  // news_digest or direction_tie, so a row read from it arrives with those
+  // fields undefined. /api/board?symbol= feeds the same row to the detail
+  // page, where `signal.interventions.length` threw during render and the
+  // whole page went black with "Application error: a client-side exception".
+  // The fallback caused it; the fallback has to fix it.
+  {
+    const bare = {
+      id: "x", created_at: "2026-08-06T06:00:00Z", symbol: "XAUUSD",
+      generated_at: "2026-08-06T06:00:00Z",
+    } as unknown as SignalRow;
+    const read = await readLatest(store({ listSignals: async () => [bare] }));
+    const s = read.rows[0];
+    check("interventions is a list", Array.isArray(s.interventions));
+    check("bias_items is a list", Array.isArray(s.bias_items));
+    check("entry_structures is a list", Array.isArray(s.entry_structures));
+    check("path_obstacles is a list", Array.isArray(s.path_obstacles));
+    check("take_profits is a list", Array.isArray(s.take_profits));
+    check("data_gaps is a list", Array.isArray(s.data_gaps));
+    check("news_digest is null, not undefined", s.news_digest === null);
+    check("plan_backtest is null, not undefined", s.plan_backtest === null);
+    check("direction_tie is false, not undefined", s.direction_tie === false);
+    // Not invented. A missing column means the number was never computed, and
+    // the card recomputes it from the signal rather than being handed a zero.
+    check("confidence is left absent", s.confidence === undefined);
+
+    // The same holes appear in a latest_signal payload written by an older
+    // build, so that path is normalised too.
+    const viaLatest = await readLatest(store({ latestPerSymbol: async () => [bare] }));
+    check("latest_signal rows are normalised as well",
+      Array.isArray(viaLatest.rows[0].interventions));
+  }
+
   // ── nothing anywhere ──────────────────────────────────────────────
   {
     const read = await readLatest(store({}));
