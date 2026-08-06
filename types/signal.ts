@@ -70,14 +70,7 @@ export interface PathObstacle {
   strength: 1 | 2 | 3;
 }
 
-/**
- * 圖形交易 — the classical chart patterns the engine looks for.
- *
- * V 頂／V 底 are deliberately absent: a V has no boundary and no consolidation,
- * so there is nothing to retest, and the confirmation rule (break, volume,
- * retest holds) could never be satisfied. A pattern that can never be confirmed
- * would be noise dressed as a signal.
- */
+/** 圖形交易 — the classical chart patterns the engine looks for. */
 export type PatternName =
   | "頭肩頂"
   | "頭肩底"
@@ -87,6 +80,10 @@ export type PatternName =
   | "三重底"
   | "圓頂"
   | "圓底"
+  // A V's neckline is the swing before the final leg — the base the spike
+  // launched from. It is a level like any other, so a V confirms like any other.
+  | "V頂"
+  | "V底"
   | "對稱三角形"
   | "上升三角形"
   | "下降三角形"

@@ -191,6 +191,55 @@ function doubleBottom(tail: number[], range = 2, vol: number | null = 1000): Can
     (tri?.target ?? 0) > (tri?.breakout_level ?? 0), [tri?.target, tri?.breakout_level]);
 }
 
+// ── V top: it does have a neckline ────────────────────────────────
+//
+// The first cut left V tops out, on the reasoning that a V has no
+// consolidation and therefore nothing to retest. Wrong: the neckline is the
+// swing the final leg launched from, and it retests like any other level.
+{
+  // Base at 100, a six-bar spike to 160, then straight back down through 100.
+  const vTop = (tail: number[]) =>
+    series([...LEAD, ...ramp(100, 160, 7), ...ramp(160, 104, 8), ...tail], 3);
+
+  {
+    const { patterns } = detectPatterns(vTop([102, 101]), "D1");
+    const v = patterns.find((p) => p.name === "V頂");
+    check("a V top is found", v !== undefined, patterns.map((p) => p.name));
+    check("it points short", v?.direction === "short");
+    check("it is a reversal", v?.kind === "reversal");
+    check("the neckline is the base the spike came from",
+      Math.abs((v?.breakout_level ?? 0) - 100) < 4, v?.breakout_level);
+    check("the tip is the invalidation", (v?.invalidation_level ?? 0) > 155,
+      v?.invalidation_level);
+    // Same measured-move rule as everything else: the tip sets the distance.
+    const down = (v?.breakout_level ?? 0) - (v?.target ?? 0);
+    const up = (v?.invalidation_level ?? 0) - (v?.breakout_level ?? 0);
+    check("the target is the tip's distance from the neckline, projected down",
+      Math.abs(down - up) < 0.01, [down, up]);
+    check("the note explains what makes it a V",
+      v?.note.includes("中間沒有任何轉折結構") === true, v?.note);
+  }
+
+  {
+    // The rule the owner gave applies here too — a break alone is not a trade.
+    const { patterns } = detectPatterns(vTop([...ramp(100, 88, 5)]), "D1");
+    const v = patterns.find((p) => p.name === "V頂");
+    check("a V that has broken its neckline still needs the retest",
+      v?.status === "broken_out", v?.status);
+  }
+
+  {
+    // A slow, gentle turn of the same size is not a V.
+    const gentle = series(
+      [...LEAD, ...ramp(100, 160, 30), ...ramp(160, 104, 30), 102, 101],
+      3,
+    );
+    const { patterns } = detectPatterns(gentle, "D1");
+    check("a slow turn is not a V", patterns.every((p) => p.name !== "V頂"),
+      patterns.map((p) => p.name));
+  }
+}
+
 // ── only confirmed patterns are allowed to change anything ────────
 {
   const candles = doubleBottom([...ramp(110, 122, 4), ...ramp(122, 111, 4), 119, 121]);

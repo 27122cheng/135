@@ -39,12 +39,13 @@ import { atr as computeAtr, findSwingPoints } from "./indicators";
  * level emitted is a pivot, a fitted boundary through pivots, or a projection
  * whose arithmetic is written on the card.
  *
- * ## Patterns deliberately not detected
+ * ## V 頂／V 底
  *
- * **V 頂／V 底.** A V has no boundary and no consolidation, so there is nothing
- * to retest. Under the confirmation rule above it could never reach
- * `confirmed`, and emitting a pattern that is structurally incapable of being
- * confirmed would be noise wearing a signal's clothes.
+ * Left out at first, on the reasoning that a V has no consolidation and
+ * therefore nothing to retest. That was wrong. A V's neckline is the swing that
+ * preceded the final leg — the base the spike launched from — and price coming
+ * back through it is the same confirmation every other pattern gets from its
+ * neckline. See `detectV`.
  */
 
 // ── tuning ────────────────────────────────────────────────────────
@@ -78,6 +79,14 @@ const VOLUME_MULTIPLE = 1.5;
 const RETEST_WINDOW = 12;
 /** Range proxy when the instrument has no volume: breakout bar's TR vs ATR. */
 const RANGE_PROXY_ATR = 1.5;
+/** A V's legs must each be this many ATR, or it is an ordinary swing. */
+const V_LEG_ATR = 3;
+/** …and travelled in at most this many bars, or it is not a spike. */
+const V_MAX_LEG_BARS = 12;
+/** The return leg has to give back this much of the first one. */
+const V_RETRACE = 0.6;
+/** How much slower the return leg may be than the first. */
+const V_SYMMETRY = 2.5;
 
 // ── geometry helpers ──────────────────────────────────────────────
 
@@ -681,6 +690,93 @@ function detectBoundaryPattern(
 }
 
 /**
+ * V 頂／V 底.
+ *
+ * These were left out at first on the reasoning that a V has no consolidation
+ * and therefore nothing to retest. That was wrong, and the owner said so: a V
+ * does have a neckline. It is the swing that preceded the final leg — the base
+ * the spike launched from on a V top, the shelf it dropped from on a V bottom.
+ * Price coming back through that level is exactly the confirmation the other
+ * patterns get from their necklines, and it can be retested like any other.
+ *
+ * What makes it a V rather than a rounded top or the left half of a
+ * head-and-shoulders is that both legs are steep and there is nothing between
+ * them: one clean move up, one apex bar, one clean move back. So the tests are
+ * about the *absence* of structure — no intervening pivots on either leg —
+ * as much as about the size of the move.
+ */
+function detectV(pivots: Pivot[], candles: Candle[], atr: number, top: boolean): Built | null {
+  const lastIndex = candles.length - 1;
+  const apexType = top ? "high" : "low";
+  // The apex is the most recent turn of the right kind that still has room for
+  // a return leg after it.
+  const apex = [...pivots].reverse().find((p) => p.type === apexType);
+  if (!apex) return null;
+
+  if (atr <= 0) return null;
+
+  // The neckline: where the final leg started. Found by walking back from the
+  // apex for as long as the bars keep making progress in the leg's direction,
+  // rather than by looking for a pivot — a spike out of a quiet range launches
+  // from the middle of that range, where there is no pivot to find. The walk
+  // stops the moment progress stops, which is what makes the leg *one* leg:
+  // a rally with a pullback in it ends the walk at the pullback and comes out
+  // too short to qualify, which is correct. A V has no pullback.
+  const flatEps = atr * 0.05;
+  let baseIndex = apex.index;
+  let basePrice = apex.price;
+  for (let i = apex.index - 1; i >= 0; i--) {
+    const v = top ? candles[i].low : candles[i].high;
+    const progressed = top ? v < basePrice - flatEps : v > basePrice + flatEps;
+    if (!progressed) break;
+    basePrice = v;
+    baseIndex = i;
+  }
+  const base = { index: baseIndex, price: basePrice };
+
+  const legBars = apex.index - base.index;
+  const legSize = Math.abs(apex.price - base.price);
+  if (legBars < 2 || legBars > V_MAX_LEG_BARS) return null;
+  if (legSize / atr < V_LEG_ATR) return null;
+
+  // Nothing between the base and the apex: an intervening turn means the market
+  // built structure on the way up, which is some other pattern.
+  if (pivots.some((p) => p.index > base.index && p.index < apex.index)) return null;
+
+  // And a return leg that has actually given back most of it, with nothing
+  // between the apex and now either — a pivot after the apex means the market
+  // built structure on the way down, which is a different pattern.
+  if (pivots.some((p) => p.index > apex.index)) return null;
+  const returnBars = lastIndex - apex.index;
+  if (returnBars < 2 || returnBars > legBars * V_SYMMETRY) return null;
+
+  const extremeSince = top
+    ? Math.min(...candles.slice(apex.index).map((c) => c.low))
+    : Math.max(...candles.slice(apex.index).map((c) => c.high));
+  const givenBack = Math.abs(apex.price - extremeSince) / legSize;
+  if (givenBack < V_RETRACE) return null;
+
+  return {
+    name: top ? "V頂" : "V底",
+    kind: "reversal",
+    direction: top ? "short" : "long",
+    // Horizontal at the base: a V's neckline is a level, not a sloping line —
+    // there is only one swing on each side to draw it through.
+    breakLine: { slope: 0, intercept: base.price },
+    extreme: apex.price,
+    extremeLabel: top ? "V 頂尖端" : "V 底尖端",
+    invalidation: apex.price,
+    startIndex: base.index,
+    breakFrom: apex.index,
+    note:
+      `${legBars} 根走完 ${round(legSize)}（${(legSize / atr).toFixed(1)}×ATR）的單邊急拉` +
+      `${top ? "後急殺" : "後急拉"}，中間沒有任何轉折結構。` +
+      `頸線取尖端前的${top ? "起漲低點" : "起跌高點"} ${round(base.price)}，` +
+      `已回吐 ${Math.round(givenBack * 100)}%。`,
+  };
+}
+
+/**
  * 菱形 — broadening then converging.
  *
  * Detected as two halves rather than one fit, because a diamond's boundaries
@@ -807,8 +903,13 @@ export function detectPatterns(candles: Candle[], timeframe: Timeframe): Pattern
   const windowed = candles.slice(Math.max(0, candles.length - WINDOW_BARS));
   const pivots = cleanPivots(windowed, atr);
 
-  if (pivots.length < 4) {
-    return { patterns: [], gaps: [`${timeframe} 近 ${windowed.length} 根只找到 ${pivots.length} 個擺盪點，不足以構成型態`] };
+  // No blanket "need N pivots" gate here. A V needs exactly one — its apex —
+  // and an early return on a pivot count would have made the pattern with the
+  // fewest turning points the one pattern that could never be found. Each
+  // detector states its own requirement; the shortfall is only worth reporting
+  // if nothing was found at all.
+  if (pivots.length === 0) {
+    return { patterns: [], gaps: [`${timeframe} 近 ${windowed.length} 根找不到任何擺盪轉折點，無法辨識圖形型態`] };
   }
 
   const built: Built[] = [
@@ -817,6 +918,10 @@ export function detectPatterns(candles: Candle[], timeframe: Timeframe): Pattern
   ];
   const boundary = detectBoundaryPattern(pivots, windowed, atr);
   if (boundary) built.push(boundary);
+  for (const top of [true, false]) {
+    const v = detectV(pivots, windowed, atr, top);
+    if (v) built.push(v);
+  }
   const diamond = detectDiamond(pivots, windowed);
   if (diamond) built.push(diamond);
   const rounding = detectRounding(windowed, atr);
@@ -832,6 +937,12 @@ export function detectPatterns(candles: Candle[], timeframe: Timeframe): Pattern
     failed: 3,
   };
   patterns.sort((a, b) => rank[a.status] - rank[b.status] || b.strength - a.strength);
+
+  if (patterns.length === 0 && pivots.length < 4) {
+    gaps.push(
+      `${timeframe} 近 ${windowed.length} 根只找到 ${pivots.length} 個擺盪轉折點，不足以構成型態`,
+    );
+  }
 
   return { patterns, gaps };
 }
