@@ -59,6 +59,7 @@ function completeSignal(row: SignalRow): SignalRow {
     path_obstacles: row.path_obstacles ?? [],
     interventions: row.interventions ?? [],
     data_gaps: row.data_gaps ?? [],
+    chart_patterns: row.chart_patterns ?? [],
     news_digest: row.news_digest ?? null,
     plan_backtest: row.plan_backtest ?? null,
     direction_tie: row.direction_tie ?? false,

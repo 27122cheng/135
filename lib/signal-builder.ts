@@ -4,6 +4,7 @@ import { FUNDAMENTALS_CONFIG, type FundamentalsConfig } from "@/config/fundament
 import { fetchOHLCV } from "./data-sources/ohlcv";
 import { atr as computeAtr } from "./analysis/indicators";
 import { analyzeTechnical } from "./analysis/technical";
+import { detectAllPatterns, patternContributions } from "./analysis/patterns";
 import { analyzeFundamental } from "./analysis/fundamental";
 import { analyzePositioning } from "./analysis/positioning";
 import { analyzeNews } from "./analysis/news";
@@ -234,12 +235,25 @@ async function buildSignalForSymbol(
   if (atrD1 == null) gaps.push("D1 K棒不足以計算 ATR(14)");
   const technical = analyzeTechnical(candlesByTf, currentPrice, atrD1, gaps);
 
+  // 圖形交易. Detected separately from the indicator work because a pattern is
+  // a shape over pivots rather than a reading at the last bar, but folded into
+  // the same three lists so everything downstream — scoring, the stop anchor,
+  // the take-profit ladder, the AI's candidate menu — sees pattern levels as
+  // exactly what they are: structures, on the same footing as a prior high.
+  //
+  // Only confirmed patterns contribute anything; see patternContributions.
+  const chartPatterns = detectAllPatterns(candlesByTf, gaps);
+  const patternParts = patternContributions(chartPatterns, currentPrice);
+  technical.entryStructures.push(...patternParts.entryStructures);
+  technical.pathObstacles.push(...patternParts.pathObstacles);
+
   // Open interest needs both the COT reports and price over the same weeks, so
   // it runs here rather than inside fundFlow — pure computation, no fetching.
   const openInterestItems = analyzeOpenInterest(meta, positioning.reports, d1?.candles ?? null, gaps);
 
   const biasItems: BiasItem[] = [
     ...technical.biasItems,
+    ...patternParts.biasItems,
     ...fundamentalItems,
     ...positioning.biasItems,
     ...news.biasItems,
@@ -496,6 +510,7 @@ async function buildSignalForSymbol(
     plan_backtest: planBacktest,
     interventions,
     direction_tie: tie,
+    chart_patterns: chartPatterns,
     data_gaps: dedupedGaps,
   };
 

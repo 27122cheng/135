@@ -45,7 +45,10 @@ export type EntryStructureType =
   | "EMA"
   | "趨勢線"
   | "未填缺口"
-  | "高成交量節點";
+  | "高成交量節點"
+  // 圖形交易: the neckline of a confirmed pattern, which by definition has been
+  // broken and retested — that is exactly what a protecting structure is.
+  | "型態頸線";
 
 /** 進場點的「同向」結構 — 這是加分項 */
 export interface EntryStructure {
@@ -65,6 +68,77 @@ export interface PathObstacle {
   type: string;
   timeframe: Timeframe;
   strength: 1 | 2 | 3;
+}
+
+/**
+ * 圖形交易 — the classical chart patterns the engine looks for.
+ *
+ * V 頂／V 底 are deliberately absent: a V has no boundary and no consolidation,
+ * so there is nothing to retest, and the confirmation rule (break, volume,
+ * retest holds) could never be satisfied. A pattern that can never be confirmed
+ * would be noise dressed as a signal.
+ */
+export type PatternName =
+  | "頭肩頂"
+  | "頭肩底"
+  | "雙重頂"
+  | "雙重底"
+  | "三重頂"
+  | "三重底"
+  | "圓頂"
+  | "圓底"
+  | "對稱三角形"
+  | "上升三角形"
+  | "下降三角形"
+  | "擴散三角形"
+  | "上升楔形"
+  | "下降楔形"
+  | "菱形"
+  | "矩形"
+  | "通道"
+  | "旗形"
+  | "尖旗形";
+
+/** One confirmation gate and whether this pattern has cleared it. */
+export interface PatternCheck {
+  label: string;
+  passed: boolean;
+  /** The arithmetic, so the verdict can be argued with rather than trusted. */
+  detail: string;
+}
+
+export interface ChartPattern {
+  name: PatternName;
+  /** Whether the shape turns the trend or continues it. */
+  kind: "reversal" | "continuation" | "either";
+  /** Where it points if it breaks as the shape suggests. */
+  direction: "long" | "short";
+  timeframe: Timeframe;
+  /** The neckline or boundary a close must clear. */
+  breakout_level: number;
+  /** Beyond this the shape is wrong — the head, or the far boundary. */
+  invalidation_level: number;
+  /**
+   * Measured move: the pattern's own height projected from the broken line.
+   * For 頭肩頂/底 the head sets that height; for a reversal triangle the
+   * triangle's extreme does.
+   */
+  target: number;
+  /** How `target` was arrived at, in full. */
+  target_basis: string;
+  /**
+   * `confirmed` is the only status that may produce a trade — it means the
+   * break closed beyond the line, carried volume (or range, where the
+   * instrument has no volume), and the retest came back and held.
+   */
+  status: "forming" | "broken_out" | "confirmed" | "failed";
+  checks: PatternCheck[];
+  /** First and last bar of the shape. */
+  from: string;
+  to: string;
+  bars: number;
+  strength: 1 | 2 | 3;
+  note: string;
 }
 
 export type Grade = "A+" | "A" | "B" | "C" | "no-trade";
@@ -238,6 +312,11 @@ export interface TradeSignal {
     level: "high" | "medium" | "low";
     factors: string[];
   };
+  /**
+   * 圖形交易 — classical chart patterns found on the chart, in every state.
+   * Optional because signals written before this existed are still readable.
+   */
+  chart_patterns?: ChartPattern[];
   data_gaps: string[];
 }
 

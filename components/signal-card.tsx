@@ -345,6 +345,121 @@ function PriceRow({
   );
 }
 
+const PATTERN_STATUS: Record<
+  NonNullable<TradeSignal["chart_patterns"]>[number]["status"],
+  { label: string; className: string }
+> = {
+  confirmed: { label: "已確認", className: "bg-emerald-500/15 text-emerald-400" },
+  broken_out: { label: "已突破待回踩", className: "bg-amber-500/15 text-amber-400" },
+  forming: { label: "形成中", className: "bg-neutral-700 text-neutral-300" },
+  failed: { label: "假突破", className: "bg-red-500/15 text-red-400" },
+};
+
+/**
+ * 圖形交易 — the patterns on the chart and, more importantly, what each one is
+ * still waiting for.
+ *
+ * Unconfirmed patterns are shown rather than filtered out. The rule is that a
+ * break is not a trade until price retests and the level holds with volume, so
+ * "頭肩底已突破，待回踩守住" is the single most useful line this card can
+ * carry: it names a setup that is close, and it names the exact thing that has
+ * to happen before it counts. Hiding it until it qualifies would mean the card
+ * only ever shows patterns you have already missed.
+ *
+ * Every check is listed with its arithmetic, because the whole claim of this
+ * section is that the verdict is reproducible.
+ */
+function ChartPatterns({ patterns }: { patterns: NonNullable<TradeSignal["chart_patterns"]> }) {
+  if (patterns.length === 0) return null;
+  const confirmed = patterns.filter((p) => p.status === "confirmed").length;
+
+  return (
+    <Section
+      title={`圖形型態（${patterns.length}）`}
+      defaultOpen={confirmed > 0}
+      aside={
+        confirmed > 0 ? (
+          <span className="rounded px-1.5 py-0.5 text-[11px] font-medium bg-emerald-500/15 text-emerald-400">
+            {confirmed} 個已確認
+          </span>
+        ) : (
+          <span className="text-[11px] text-neutral-600">無已確認型態</span>
+        )
+      }
+    >
+      <ul className="flex flex-col gap-2.5">
+        {patterns.map((p, i) => {
+          const status = PATTERN_STATUS[p.status];
+          return (
+            <li key={i} className="rounded-lg border border-neutral-800 bg-neutral-950/50 p-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-neutral-200">{p.name}</span>
+                <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", status.className)}>
+                  {status.label}
+                </span>
+                <span className="text-[10px] text-neutral-600">
+                  {p.timeframe}·{p.bars} 根·{p.kind === "reversal" ? "反轉" : p.kind === "continuation" ? "續勢" : "待定"}
+                </span>
+                <span
+                  className={cn(
+                    "ml-auto text-[11px]",
+                    p.direction === "long" ? "text-emerald-400" : "text-red-400",
+                  )}
+                >
+                  {p.direction === "long" ? "做多" : "做空"}
+                </span>
+              </div>
+
+              <dl className="mt-2 grid grid-cols-3 gap-2">
+                <div>
+                  <dt className="text-[10px] text-neutral-600">頸線／邊界</dt>
+                  <dd className="font-mono text-xs text-neutral-300">
+                    {formatPrice(p.breakout_level)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[10px] text-neutral-600">目標</dt>
+                  <dd className="font-mono text-xs text-emerald-400/80">{formatPrice(p.target)}</dd>
+                </div>
+                <div>
+                  <dt className="text-[10px] text-neutral-600">失效</dt>
+                  <dd className="font-mono text-xs text-red-400/80">
+                    {formatPrice(p.invalidation_level)}
+                  </dd>
+                </div>
+              </dl>
+
+              <ul className="mt-2 flex flex-col gap-0.5">
+                {p.checks.map((c, j) => (
+                  <li key={j} className="flex gap-1.5 text-[11px] leading-relaxed">
+                    <span className={c.passed ? "text-emerald-500" : "text-neutral-600"}>
+                      {c.passed ? "✓" : "○"}
+                    </span>
+                    <span className={c.passed ? "text-neutral-400" : "text-amber-500/80"}>
+                      <span className="text-neutral-500">{c.label}：</span>
+                      {c.detail}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
+              <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-600">
+                {p.note}
+                <br />
+                目標算法：{p.target_basis}
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-2.5 text-[10px] leading-relaxed text-neutral-600">
+        只有「已確認」的型態會影響評分、成為停損可錨定的結構、並把目標放進停利階梯。
+        已突破但還沒回踩守住的，依規則不算可交易。
+      </p>
+    </Section>
+  );
+}
+
 function Section({
   title,
   children,
@@ -504,6 +619,8 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
           )}
         </div>
       </Section>
+
+      <ChartPatterns patterns={signal.chart_patterns ?? []} />
 
       {/* Six dimensions — the main "why", so it stays open. */}
       <Card>
