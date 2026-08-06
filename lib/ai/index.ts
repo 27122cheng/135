@@ -135,11 +135,55 @@ function promptKey(schemaName: string, prompt: string): string {
   return `ai:${schemaName}:${prompt.length}:${(hash >>> 0).toString(36)}`;
 }
 
+/**
+ * Why the AI was not used, for callers that have to explain themselves.
+ *
+ * `null` from `completeAI` used to be the whole story, so every fallback said
+ * the same thing: "未設定 AI 金鑰、額度用盡或呼叫失敗". Three possibilities in
+ * one sentence, with the one that blames the reader first — and the reader had
+ * in fact set the keys, and the actual cause was a spent free tier. A message
+ * that lists what *might* be wrong is worse than no message: it sends someone
+ * to check a setting that was never the problem.
+ */
+export type AiUnavailableReason = "no-key" | "quota" | "error";
+
+export interface AiUnavailable {
+  reason: AiUnavailableReason;
+  /** One line, already in Chinese, safe to put on the card. */
+  message: string;
+  /** The raw provider errors, for diagnostics. */
+  detail: string;
+}
+
+/** 429 / quota / rate-limit wording, across providers that all phrase it differently. */
+function looksLikeQuota(text: string): boolean {
+  return /429|quota|rate.?limit|too many requests|tokens per day|TPD|額度/i.test(text);
+}
+
+function classifyFailure(failures: string[]): AiUnavailable {
+  const joined = failures.join("；");
+  if (failures.length > 0 && failures.every((f) => looksLikeQuota(f))) {
+    return {
+      reason: "quota",
+      message: "AI 免費額度已用盡（金鑰有設定且有效），本次改用預設規則",
+      detail: joined,
+    };
+  }
+  return {
+    reason: "error",
+    message: "AI 供應商呼叫失敗，本次改用預設規則",
+    detail: joined,
+  };
+}
+
 export async function completeAI<T>(
   prompt: string,
   schema: ResponseSchema<T>,
   gaps: string[],
-  options?: CompleteOptions,
+  options?: CompleteOptions & {
+    /** Told why, when the answer is null. Same sink pattern as fetchJson. */
+    onUnavailable?: (why: AiUnavailable) => void;
+  },
 ): Promise<AIResult<T> | null> {
   // Identical question, still inside the same H4 bar → reuse the answer.
   // Checked before the provider list so it costs nothing even when every
@@ -155,6 +199,11 @@ export async function completeAI<T>(
     gaps.push(
       "未設定任何 AI 金鑰（GEMINI_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY），AI 環節改用本地規則",
     );
+    options?.onUnavailable?.({
+      reason: "no-key",
+      message: "未設定任何 AI 金鑰，AI 環節改用本地規則",
+      detail: "no provider configured",
+    });
     return null;
   }
 
@@ -177,7 +226,9 @@ export async function completeAI<T>(
     }
   }
 
+  const why = classifyFailure(failures);
   gaps.push(`所有 AI 供應商皆無法回應（${failures.join("；")}）`);
+  options?.onUnavailable?.(why);
   return null;
 }
 

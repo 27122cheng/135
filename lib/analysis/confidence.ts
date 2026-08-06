@@ -133,7 +133,11 @@ export function planConfidence(signal: TradeSignal): Confidence {
     // exhausted — which is every run once the tier is exhausted. A threshold no
     // grade can clear is a disabled feature.
     score -= 5;
-    factors.push("價位由預設規則挑選，未經 AI 判斷（-5）");
+    // Says which of the three possible causes it actually was. The generic
+    // wording sent the owner to check an API key that was correctly set while
+    // the real cause — a spent free tier — went unnamed.
+    const why = signal.trade_plan.fallback_reason;
+    factors.push(why ? `${why}（-5）` : "價位由預設規則挑選，未經 AI 判斷（-5）");
   }
 
   const bt = signal.plan_backtest;

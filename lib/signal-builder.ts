@@ -434,6 +434,9 @@ async function buildSignalForSymbol(
       narrative,
       knownGaps: [...new Set(gaps)],
       gradeForcesWait: grade === "no-trade",
+      // So the geometry is chosen on what has actually happened to this
+      // instrument, not on which combination has the prettiest ratio.
+      candles: d1?.candles,
     },
     gaps,
   );

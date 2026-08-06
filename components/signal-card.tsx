@@ -460,6 +460,52 @@ function ChartPatterns({ patterns }: { patterns: NonNullable<TradeSignal["chart_
   );
 }
 
+/**
+ * The price every level below was computed from, and how long ago.
+ *
+ * Reported because the levels are only meaningful relative to it. A signal came
+ * back with a long entry zone of 29,829–30,043 and a stop at 29,542 while the
+ * instrument was trading 29,369 — already through the stop, before the trade
+ * ever existed. Nothing on the card said what price the analysis had used, so
+ * the only reading available was "the system told me to buy and it was instantly
+ * wrong", when the truth was "these levels describe a market that has since
+ * moved 1.9%".
+ *
+ * The entry zone is `analysis price ± 0.15×ATR` by construction, so its midpoint
+ * *is* that price — no new field, no second source that could disagree with the
+ * first.
+ */
+function AsOfNotice({ signal }: { signal: TradeSignal }) {
+  const mid = (signal.entry_zone.low + signal.entry_zone.high) / 2;
+  if (!Number.isFinite(mid) || mid <= 0) return null;
+  const ageMs = Date.now() - new Date(signal.generated_at).getTime();
+  const hours = Number.isFinite(ageMs) ? ageMs / 3_600_000 : null;
+  const age =
+    hours === null
+      ? ""
+      : hours < 1
+        ? `${Math.max(0, Math.round(hours * 60))} 分鐘前`
+        : `${Math.round(hours)} 小時前`;
+  // 4 hours is the refresh cycle; past it the levels describe a bar that has
+  // closed and the whole set wants recomputing.
+  const stale = hours !== null && hours >= 4;
+
+  return (
+    <p
+      className={cn(
+        "mb-2 rounded-lg px-3 py-1.5 text-[11px] leading-relaxed",
+        stale ? "bg-amber-500/10 text-amber-400/90" : "text-neutral-500",
+      )}
+    >
+      以下價位是用<span className="font-mono text-neutral-300">{formatPrice(mid)}</span>
+      （分析當下價格，{age}）算出來的。
+      {stale
+        ? "已超過一個 H4 K 棒，市價若已離開這個區間，整組價位需要重新掃描才有效。"
+        : "市價若已離開這個區間，整組價位就要重算。"}
+    </p>
+  );
+}
+
 function Section({
   title,
   children,
@@ -585,6 +631,7 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
               : "評等為 no-trade，以下價位僅供參考，不構成有效交易訊號。"}
           </p>
         )}
+        <AsOfNotice signal={signal} />
         <div className="rounded-lg border border-neutral-800 bg-neutral-950/50 px-3">
             <PriceRow
               label="進場"

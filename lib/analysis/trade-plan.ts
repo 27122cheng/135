@@ -1,6 +1,9 @@
-import { completeAI, jsonSchema } from "@/lib/ai";
+import { completeAI, jsonSchema, type AiUnavailable } from "@/lib/ai";
 import type { BiasItem, Grade, TradePlan, TradeSignal } from "@/types/signal";
 import { MIN_ENTRY_GRADE, gradeAllowsEntry } from "@/lib/scoring";
+import { backtestPlanGeometry } from "./backtest";
+import type { Candle } from "../data-sources/ohlcv";
+import type { PlanBacktest } from "@/types/signal";
 
 interface Candidate {
   price: number;
@@ -26,6 +29,13 @@ export interface TradePlanInput {
    * still explain and say what to wait for, but must not turn it into an entry.
    */
   gradeForcesWait: boolean;
+  /**
+   * The instrument's own history, used to rank candidate geometries by what has
+   * actually happened rather than by which one has the prettiest ratio. Optional
+   * so a caller without candles still gets a plan — it just gets the old rule
+   * and is told so.
+   */
+  candles?: Candle[];
 }
 
 function round(n: number): number {
@@ -131,6 +141,7 @@ function waitPlan(
   summary: string,
   waitFor: string | null,
   decidedBy: "ai" | "fallback",
+  fallbackReason: string | null = null,
 ): TradePlan {
   return {
     stance: "wait",
@@ -146,50 +157,149 @@ function waitPlan(
     add_ons: [],
     wait_for: waitFor,
     decided_by: decidedBy,
+    fallback_reason: fallbackReason,
+  };
+}
+
+/**
+ * How many resolved samples a combination needs before its backtest is allowed
+ * to rank it. Below this the hit rate is noise, and choosing a plan on noise is
+ * worse than choosing it on arithmetic.
+ */
+const MIN_RESOLVED_FOR_RANKING = 30;
+
+/** Expectancies within this of the best are treated as equal, so the tie-break decides. */
+const EXPECTANCY_EPSILON = 0.05;
+
+interface Combo {
+  entry: Candidate;
+  sl: Candidate;
+  tp: Candidate;
+  rr: number;
+  backtest: PlanBacktest | null;
+}
+
+/** Every combination that clears the risk/reward floor. */
+function viableCombos(input: TradePlanInput): Combo[] {
+  const out: Combo[] = [];
+  for (const entry of input.entryCandidates) {
+    for (const sl of input.slCandidates) {
+      for (const tp of input.tpCandidates) {
+        const rr = riskReward(input.direction, entry.price, sl.price, tp.price);
+        if (rr === null || rr < MIN_RISK_REWARD) continue;
+        out.push({ entry, sl, tp, rr, backtest: null });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Pick the plan's geometry.
+ *
+ * **Was: highest risk/reward.** That is the wrong objective, and the live board
+ * showed exactly how it fails — NAS100 came back at 1:9.38 with a local hit
+ * rate of 13% (30 wins in 230). Maximising the ratio always drifts to the
+ * furthest target and the furthest entry, because distance mechanically
+ * improves the ratio and nothing pushed back. The result is a plan that reads
+ * beautifully and gets stopped out six times in seven.
+ *
+ * **Now: highest historical expectancy**, measured on the instrument's own
+ * candles with the same backtest already shown on the card. Expectancy in R —
+ * `hitRate × rr − (1 − hitRate)` — is the quantity that actually says whether a
+ * geometry has been worth taking, and it prices the trade-off the ratio ignores:
+ * a 1:9 that fills 13% of the time (+0.35R) loses to a 1:2 that fills half
+ * (+0.5R).
+ *
+ * Two guards keep this honest:
+ *
+ *  - A combination is only *ranked* by its backtest once it has
+ *    {@link MIN_RESOLVED_FOR_RANKING} resolved samples. Fewer than that and the
+ *    hit rate is noise; picking on noise is worse than picking on arithmetic,
+ *    so the old ratio rule is used instead and says so.
+ *  - Among expectancies that are effectively tied, the higher hit rate wins.
+ *    Two plans with the same edge are not the same plan to hold, and the one
+ *    that resolves in your favour more often is the one a person can actually
+ *    follow.
+ */
+function chooseGeometry(input: TradePlanInput): { combo: Combo; basis: string } | null {
+  const combos = viableCombos(input);
+  if (combos.length === 0) return null;
+
+  // Highest ratio, nearest entry on a tie — the previous rule, kept as the
+  // fallback for when there is not enough history to measure anything.
+  const byRatio = combos.reduce((best, c) => (c.rr > best.rr ? c : best));
+
+  const candles = input.candles;
+  if (!candles || candles.length < 60) {
+    return {
+      combo: byRatio,
+      basis: `歷史 K 棒不足以回測各組合，改以風險報酬比最佳者為準（本組 1:${byRatio.rr}）`,
+    };
+  }
+
+  for (const c of combos) {
+    c.backtest = backtestPlanGeometry(
+      input.direction,
+      c.entry.price,
+      c.sl.price,
+      c.tp.price,
+      candles,
+      c.rr,
+    );
+  }
+
+  const rankable = combos.filter(
+    (c) =>
+      c.backtest !== null &&
+      c.backtest.resolved >= MIN_RESOLVED_FOR_RANKING &&
+      c.backtest.expectancyR !== null,
+  );
+  if (rankable.length === 0) {
+    return {
+      combo: byRatio,
+      basis:
+        `各組合的回測樣本都不足 ${MIN_RESOLVED_FOR_RANKING} 筆，不足以比較勝率，` +
+        `改以風險報酬比最佳者為準（本組 1:${byRatio.rr}）`,
+    };
+  }
+
+  const bestExpectancy = Math.max(...rankable.map((c) => c.backtest!.expectancyR!));
+  const tied = rankable.filter(
+    (c) => c.backtest!.expectancyR! >= bestExpectancy - EXPECTANCY_EPSILON,
+  );
+  const chosen = tied.reduce((best, c) =>
+    (c.backtest!.hitRate ?? 0) > (best.backtest!.hitRate ?? 0) ? c : best,
+  );
+
+  const bt = chosen.backtest!;
+  const hitPct = Math.round((bt.hitRate ?? 0) * 100);
+  const note =
+    chosen === byRatio
+      ? ""
+      : `（賠率最高的一組是 1:${byRatio.rr}，但本地回測期望值較低，未採用）`;
+  return {
+    combo: chosen,
+    basis:
+      `在 ${combos.length} 組真實結構組合中，以本地回測期望值最高者為準：` +
+      `${bt.resolved} 次中 ${bt.wins} 勝（勝率 ${hitPct}%），` +
+      `每單位風險期望 ${bt.expectancyR}R，風報比 1:${chosen.rr}${note}`,
   };
 }
 
 /** Deterministic choice used when the AI is unavailable or returns anything invalid. */
-function fallbackPlan(input: TradePlanInput): TradePlan {
+function fallbackPlan(input: TradePlanInput, why: string | null): TradePlan {
   if (input.gradeForcesWait) {
     return waitPlan(
       `評等為 no-trade（方向分 ${input.bias_score}、結構分 ${input.entry_structure_score}、總分 ${input.total_score}），依硬性規則不進場。`,
       "等待評等回到 C 以上，或等價格回測到有效結構再重新評估。",
       "fallback",
+      why,
     );
   }
-  // Search the menu instead of taking the first of each list.
-  //
-  // The old version used index 0 throughout, which meant the *nearest* target —
-  // systematically the worst payoff on offer. That mattered more than it looks:
-  // a fallback plan is penalised in the confidence score for not having been
-  // chosen by a model, and it was earning that penalty partly by making a
-  // choice nobody would defend. Picking the best available combination is what
-  // makes the penalty about missing judgement rather than about bad arithmetic.
-  let entry: Candidate | undefined;
-  let sl: Candidate | undefined;
-  let tp: Candidate | undefined;
-  let rr = 0;
-  for (const e of input.entryCandidates) {
-    for (const s of input.slCandidates) {
-      for (const t of input.tpCandidates) {
-        const candidateRr = riskReward(input.direction, e.price, s.price, t.price);
-        if (candidateRr === null || candidateRr < MIN_RISK_REWARD) continue;
-        // Strictly greater, so an equal payoff keeps the earlier — and
-        // therefore nearer — entry. Without that tie-break the search drifts
-        // toward the furthest pullback for free, since a more distant entry
-        // mechanically improves the ratio.
-        if (candidateRr > rr) {
-          entry = e;
-          sl = s;
-          tp = t;
-          rr = candidateRr;
-        }
-      }
-    }
-  }
 
-  if (!entry || !sl || !tp) {
+  const picked = chooseGeometry(input);
+  if (!picked) {
     // Either there were no candidates at all, or every combination lost on
     // geometry. decideStance already refuses the second case before the AI is
     // called, so reaching here means the lists themselves were empty.
@@ -201,8 +311,11 @@ function fallbackPlan(input: TradePlanInput): TradePlan {
         : `現有結構的任何組合風險報酬比都低於 1:${MIN_RISK_REWARD}，賠率不划算，建議觀望。`,
       "等待價格接近有效的支撐／壓力結構，或等更遠的停利結構出現。",
       "fallback",
+      why,
     );
   }
+
+  const { entry, sl, tp, rr } = picked.combo;
   return {
     stance: "enter",
     entry: round(entry.price),
@@ -213,12 +326,11 @@ function fallbackPlan(input: TradePlanInput): TradePlan {
     take_profit_reason: tp.label,
     risk_reward: rr,
     confidence: input.grade === "A+" || input.grade === "A" ? "medium" : "low",
-    summary:
-      "未使用 AI 判斷（未設定 AI 金鑰、額度用盡或呼叫失敗），改用預設規則：" +
-      `在所有真實結構的組合中，選出風險報酬比最佳且不低於 1:${MIN_RISK_REWARD} 的一組（本組 1:${rr}）。`,
+    summary: `${why ?? "未使用 AI 判斷"}。${picked.basis}。`,
     add_ons: [],
     wait_for: null,
     decided_by: "fallback",
+    fallback_reason: why,
   };
 }
 
@@ -328,10 +440,20 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
     return waitPlan(verdict.summary, verdict.waitFor, "fallback");
   }
 
-  const result = await completeAI(buildPrompt(input), PLAN_SCHEMA, gaps, { maxTokens: 900 });
+  // Captured so the card can say *why* the AI was skipped. "未設定金鑰、額度
+  // 用盡或呼叫失敗" is three guesses in one sentence, and it led with the one
+  // that blamed the reader for a setting they had got right.
+  let unavailable: AiUnavailable | null = null;
+  const result = await completeAI(buildPrompt(input), PLAN_SCHEMA, gaps, {
+    maxTokens: 900,
+    onUnavailable: (why) => {
+      unavailable = why;
+    },
+  });
   if (!result) {
+    const why = (unavailable as AiUnavailable | null)?.message ?? "AI 未回應，改用預設規則";
     gaps.push("交易計畫改用預設規則判斷");
-    return fallbackPlan(input);
+    return fallbackPlan(input, why);
   }
   const parsed = result.value;
 
@@ -341,7 +463,7 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
     !validIndex(parsed.tp_index, input.tpCandidates)
   ) {
     gaps.push("交易計畫 AI 回傳的價位編號無效（可能試圖給出清單外的價格），已改用預設規則");
-    return fallbackPlan(input);
+    return fallbackPlan(input, "AI 回傳的價位編號無效，已改用預設規則");
   }
 
   const entry = input.entryCandidates[parsed.entry_index];
@@ -350,14 +472,14 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
   const rr = riskReward(input.direction, entry.price, sl.price, tp.price);
   if (rr === null) {
     gaps.push("AI 選出的停損／停利方向不合理（停損未在虧損側或停利未在獲利側），已改用預設規則");
-    return fallbackPlan(input);
+    return fallbackPlan(input, "AI 選出的停損／停利方向不合理，已改用預設規則");
   }
   // The same floor the deterministic path applies. It was missing here, so the
   // AI could hand back a trade risking more than it stood to make while the
   // fallback would have refused the identical geometry.
   if (rr < MIN_RISK_REWARD) {
     gaps.push(`AI 選出的組合風險報酬比僅 1:${rr}，低於 1:${MIN_RISK_REWARD} 門檻，已改用預設規則`);
-    return fallbackPlan(input);
+    return fallbackPlan(input, `AI 選出的組合風報比僅 1:${rr}，低於門檻，已改用預設規則`);
   }
 
   // Not taken from the model. `lib/analysis/confidence.ts` computes the number

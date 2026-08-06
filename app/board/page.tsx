@@ -43,17 +43,26 @@ const READ_INTERVAL_MS = 60_000;
 /**
  * Expensive: nine pipelines, each making AI calls.
  *
- * Was 5 minutes, to match the position monitor. That was wrong, and measurably
- * so: nine symbols every five minutes burned 98,299 of Groq's 100,000 free
- * daily tokens in an afternoon, after which every signal silently fell back to
- * local rules while still looking like a normal analysis on screen.
+ * 5 minutes → 30 minutes → 4 hours, and each cut was forced by the same
+ * evidence. At 5 minutes nine symbols burned 98,299 of Groq's 100,000 free
+ * daily tokens in an afternoon. At 30 minutes it still did: the live board
+ * came back with `Used 98,565` on Groq and a 429 on Gemini, so every signal
+ * had silently fallen back to local rules while still looking like a full
+ * analysis on screen.
  *
- * 30 minutes is what a free tier actually supports for a full nine-symbol
- * sweep. The position monitor still runs on its own 5-minute clock server-side
- * — that one only reads a cached quote and costs no AI at all, which is why it
- * can be frequent and this cannot.
+ * 4 hours is not a budget compromise, it is the honest interval. The whole
+ * analysis is built on the H4 candle; inside one bar the inputs have not
+ * moved — same candles, same COT (weekly), same yields (daily) — so a rescan
+ * buys a differently-worded answer to identical facts. It is also exactly what
+ * the scheduled refresh already does for all nine symbols, which means the
+ * browser was re-running work that had just been done, eight times over, and
+ * paying for it with the budget that made the *scheduled* run work.
+ *
+ * 立即全部掃描 is still there for when you actually want it now. The position
+ * monitor still runs on its own 5-minute server-side clock — that one reads a
+ * cached quote and costs no AI at all, which is why it can be frequent.
  */
-const SCAN_INTERVAL_MS = 30 * 60_000;
+const SCAN_INTERVAL_MS = 4 * 60 * 60_000;
 /**
  * How many symbols to analyse at once.
  *
@@ -476,7 +485,7 @@ export default function BoardPage() {
             onChange={(e) => setAutoScan(e.target.checked)}
             className="h-3 w-3 accent-emerald-500"
           />
-          每 30 分鐘自動掃描
+          每 4 小時自動掃描
         </label>
         <button
           type="button"
@@ -696,14 +705,17 @@ export default function BoardPage() {
         </p>
         <p>
           <span className="text-neutral-400">打開這頁會掃描一次</span>，
-          之後每分鐘重讀資料庫（便宜）、每 30 分鐘重跑分析。
-          兩者都只動<span className="text-neutral-400">超過 30 分鐘沒更新</span>的商品，
-          一次只跑 2 個。分頁切到背景就暫停。
+          之後每分鐘重讀資料庫（便宜）、每 4 小時重跑分析。
+          兩者都只動<span className="text-neutral-400">超過 4 小時沒更新</span>的商品，
+          一次只跑 2 個。分頁切到背景就暫停。想馬上要就按「立即全部掃描」。
         </p>
         <p className="text-amber-500/70">
-          間隔本來是 5 分鐘，實測會把 Groq 每日 10 萬 token 在一個下午用光
+          間隔從 5 分鐘改成 30 分鐘、再改成 4 小時，每一次都是被同一份證據逼的：
+          實測 Groq 每日 10 萬 token 還是會用光（Used 98,565），Gemini 429
           —— 之後每筆訊號都悄悄退回本地規則，畫面上看起來卻跟正常分析一樣。
-          免費額度撐得起的全商品掃描大約就是半小時一輪。
+          4 小時不是省錢的妥協，是誠實的間隔：整套分析建在 H4 K 棒上，同一根
+          K 棒內輸入根本沒變，重跑只會換一種說法講同一組事實。排程本來就每 4
+          小時掃完九個商品，瀏覽器等於在重做剛做完的事，還花掉讓排程能跑的額度。
         </p>
         {/* So "the fix didn't work" and "the fix isn't deployed yet" stop
             looking the same from a phone screenshot. */}

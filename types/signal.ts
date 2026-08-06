@@ -207,6 +207,15 @@ export interface TradePlan {
   wait_for: string | null;
   /** Whether Claude chose the levels, or the deterministic fallback did. */
   decided_by: "ai" | "fallback";
+  /**
+   * When `decided_by` is "fallback", *why* — in words, and specific.
+   *
+   * The old summary said "未設定 AI 金鑰、額度用盡或呼叫失敗", three
+   * possibilities in one sentence with the one that blames the reader first.
+   * A message listing what might be wrong sends someone to check a setting
+   * that was never the problem.
+   */
+  fallback_reason?: string | null;
 }
 
 /**

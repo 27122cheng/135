@@ -21,8 +21,12 @@ export interface FundamentalsConfig {
    * CFTC COT legacy futures-only report 合約代碼。null 代表該商品無 CFTC 資料
    * （例如 GER40/DAX 在 Eurex 交易，非美國受監管交易所，CFTC 不會有報告）。
    * 代碼取自訓練資料記憶、未於此沙盒環境即時驗證，信心度標註於註解。
+   *
+   * 也可以給一組候選代碼：同一個標的在 CFTC 會有期貨專用、合併、舊制等不只
+   * 一個代碼，而哪一個真的有資料，文件上看不出來。所有候選會在同一個請求裡
+   * 一起查，所以列三個跟列一個一樣便宜。
    */
-  cotContractCode: string | null;
+  cotContractCode: string | string[] | null;
   /** true 表示該外匯合約報價方向與 symbol 的報價方向相反（例如 CME 日圓期貨是「每日圓兌美元」，
    * 非商業淨多單放大代表看多日圓＝看空 USD/JPY），計算 bias 時需要反轉正負號。 */
   cotInverted: boolean;
@@ -59,7 +63,10 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     vixRiskOffDirection: "short",
     useEarningsSeason: true,
     useEiaInventory: false,
-    cotContractCode: "20974P", // NASDAQ-100 STOCK INDEX (MINI) - CME，信心度中等
+    // 20974P (consolidated) returned 查無資料 on every run; 209742 is the
+    // futures-only E-MINI NASDAQ-100 series that actually has rows. Both are
+    // listed so a change at the CFTC's end doesn't silently empty this again.
+    cotContractCode: ["209742", "20974P"],
     cotInverted: false,
     newsKeywords: ["nasdaq", "tech stocks", "fed", "rate cut", "rate hike"],
     gdeltQuery: '"Nasdaq 100" OR "tech stocks" OR "Nasdaq index"',
@@ -180,7 +187,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
  */
 export function defaultFundamentals(
   symbol: string,
-  opts: { cotContractCode: string | null; gdeltQuery: string; newsKeywords: string[] },
+  opts: { cotContractCode: string | string[] | null; gdeltQuery: string; newsKeywords: string[] },
 ): FundamentalsConfig {
   return {
     symbol,
