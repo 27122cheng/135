@@ -127,15 +127,68 @@ export default function SettingsPage() {
   const [keys, setKeys] = useState<UserKeys>({});
   const [saved, setSaved] = useState(false);
   const [reveal, setReveal] = useState<Record<string, boolean>>({});
+  /** Which keys the server itself holds — see `syncToServer`. */
+  const [serverKeys, setServerKeys] = useState<string[] | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   useEffect(() => {
     setKeys(loadUserKeys());
+    void refreshServerKeys();
   }, []);
 
-  function save() {
+  async function refreshServerKeys() {
+    try {
+      const res = await fetch("/api/notify/config", { cache: "no-store" });
+      const body = (await res.json()) as {
+        settings?: Array<{ key: string; configured: boolean }>;
+      };
+      // `configured` covers both an environment variable and a stored row —
+      // either way the scheduled run has it, which is the only question here.
+      setServerKeys((body.settings ?? []).filter((s) => s.configured).map((s) => s.key));
+    } catch {
+      setServerKeys(null);
+    }
+  }
+
+  /**
+   * Saving writes the keys twice: to this browser, and to the deployment.
+   *
+   * localStorage alone was the whole problem. The scheduled scan runs from
+   * GitHub Actions with no browser anywhere near it, so it only ever saw
+   * `app_settings` — which stayed empty. That is how Telegram could announce a
+   * trade built by the local fallback rules ("未設定任何 AI 金鑰") while the
+   * website, holding the same keys in localStorage, was reporting a spent
+   * quota. Two different analyses, one name.
+   *
+   * The browser copy is kept as well, so a request still carries its own keys
+   * and a deployment shared with someone else does not silently inherit them
+   * mid-session.
+   */
+  async function save() {
     saveUserKeys(keys);
     setSaved(true);
+    setSyncError(null);
     setTimeout(() => setSaved(false), 2000);
+
+    const payload = Object.fromEntries(
+      Object.entries(keys).filter(([, v]) => typeof v === "string" && v.trim()),
+    );
+    if (Object.keys(payload).length === 0) return;
+    try {
+      const res = await fetch("/api/notify/config", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        setSyncError(body?.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      await refreshServerKeys();
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   // Model-name fields hold an identifier, not a secret, so they render as plain
@@ -167,6 +220,17 @@ export default function SettingsPage() {
               已設定
             </span>
           )}
+          {/* The distinction that mattered: a key this browser has is not a key
+              the 4-hourly scheduled scan has. */}
+          {serverKeys?.includes(k.name) ? (
+            <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-400">
+              排程也有
+            </span>
+          ) : keys[k.name] ? (
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-400">
+              只在這台裝置
+            </span>
+          ) : null}
         </div>
         <p className="mb-2 text-[11px] leading-relaxed text-neutral-500">{k.what}</p>
 
@@ -256,7 +320,14 @@ export default function SettingsPage() {
         >
           儲存
         </button>
-        {saved && <span className="text-xs text-emerald-400">已儲存，下次查詢就會生效</span>}
+        {saved && !syncError && (
+          <span className="text-xs text-emerald-400">已儲存到這台裝置與排程，下次掃描就會生效</span>
+        )}
+        {syncError && (
+          <span className="text-xs text-amber-400">
+            已存到這台裝置，但寫進排程失敗（{syncError}）—— 排程掃描仍會用本地規則
+          </span>
+        )}
         <button
           type="button"
           onClick={() => {

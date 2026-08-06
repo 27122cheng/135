@@ -1,5 +1,6 @@
 import { COMMODITIES } from "@/types/signal";
 import { getSignalStore } from "@/lib/db";
+import { readLatest } from "@/lib/latest-signals";
 import { fetchLatestPrice } from "@/lib/data-sources/yfinance";
 import { notifyAll } from "@/lib/notify";
 import { formatReleaseAlert } from "@/lib/notify/alert";
@@ -90,10 +91,20 @@ export async function GET(request: Request) {
   const requested = new URL(request.url).searchParams.get("symbol")?.toUpperCase();
   const targets = requested ? COMMODITIES.filter((c) => c.symbol === requested) : COMMODITIES;
 
+  // One read for all nine, not one per symbol: this is the same query the board
+  // makes, and it answers for every instrument at once.
+  const current = await readLatest(store)
+    .then((r) => new Map(r.rows.map((row) => [row.symbol, row])))
+    .catch(() => new Map<string, Awaited<ReturnType<typeof readLatest>>["rows"][number]>());
+
   const settled = await Promise.allSettled(
     targets.map(async (meta) => {
-      // The newest stored signal is the plan in force.
-      const [latest] = await store.listSignals({ symbol: meta.symbol, limit: 1 });
+      // The *same row the board and the detail page show*, not the newest
+      // history row. Those could differ: a browser scan used to write only
+      // `latest_signal`, so the monitor would be watching an older plan than
+      // the one on screen — and now that a resolved plan writes itself into the
+      // journal, watching the wrong plan writes the wrong lesson.
+      const latest = current.get(meta.symbol);
       if (!latest) return { symbol: meta.symbol, skipped: "尚無訊號紀錄" };
 
       // 觀望 signals are tracked too, on their 參考價位, as a paper position.

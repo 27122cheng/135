@@ -1,10 +1,8 @@
 import { COMMODITIES } from "@/types/signal";
-import { buildTradeSignal } from "@/lib/signal-builder";
 import { getSignalStore } from "@/lib/db";
 import { notifyAll } from "@/lib/notify";
-import { ingestReleases } from "@/lib/analysis/data-release";
-import { withUserKeys } from "@/lib/api-keys";
-import { storedApiKeys } from "@/lib/settings";
+import type { IngestedRelease } from "@/lib/analysis/data-release";
+import { runScan, storeScan } from "@/lib/scan";
 import { configuredMinGrade, formatAlert, shouldAlert } from "@/lib/notify/alert";
 import { json } from "@/lib/json-response";
 
@@ -57,27 +55,10 @@ export async function GET(request: Request) {
   // works without anyone setting APP_URL in Vercel as well as in GitHub.
   const appUrl = process.env.APP_URL?.trim() || new URL(request.url).origin;
 
-  // A scheduled run has no browser, so the AI keys pasted into /settings never
-  // reach it — every 4-hourly signal was being built with the local-rule
-  // fallback while the same symbol viewed by hand got the full analysis. The
-  // stored copies close that gap; `getKey` still prefers a request header when
-  // one exists, so nothing changes for a browser.
-  const keys = await storedApiKeys().catch(() => ({}));
-
-  // Ingest before building, so a print that landed since the last run is
-  // already in the table when the analysis reads it — otherwise the first scan
-  // after a release would record it and score it one run later.
-  //
-  // Also here, not only in the 5-minute monitor: the monitor needs a stored
-  // plan to watch, and a deployment running only the 4-hour refresh must still
-  // pick releases up.
-  const releaseGaps: string[] = [];
-  const ingest = await withUserKeys(keys, () =>
-    ingestReleases(releaseGaps).catch((err: unknown) => ({
-      fresh: [],
-      gaps: [`數據公布偵測失敗：${err instanceof Error ? err.message : String(err)}`],
-    })),
-  );
+  // Releases are ingested inside each scan (they are an input to it), and
+  // collected here so the run still reports what landed.
+  const releases: IngestedRelease[] = [];
+  const releaseNotes: string[] = [];
 
   // allSettled: one symbol failing must not cost the others their refresh.
   const settled = await Promise.allSettled(
@@ -88,19 +69,14 @@ export async function GET(request: Request) {
         .listSignals({ symbol: meta.symbol, limit: 1 })
         .catch(() => []);
 
-      const signal = await withUserKeys(keys, () => buildTradeSignal(meta.symbol));
-      // Both: the append-only timeline /history and the backtest read, and the
-      // single current row every view reads.
-      await store.insertSignal(signal);
-      // A missing latest_signal table must not fail a refresh that already
-      // wrote the history row it was actually asked to write — but it must not
-      // be invisible either. Swallowing this entirely is how the board sat at
-      // 已掃描 0/9 for days while /history filled up normally: the only thing
-      // that could have said "the table isn't there" threw the message away.
-      const latestError = await store
-        .saveLatest(signal)
-        .then(() => null)
-        .catch((err: unknown) => (err instanceof Error ? err.message : String(err)));
+      // The same scan the browser runs — same keys, same release ingestion,
+      // same storage. Divergence here is what let Telegram announce a trade the
+      // website did not have.
+      const scan = await runScan(meta);
+      const signal = scan.signal;
+      releases.push(...scan.releases);
+      releaseNotes.push(...scan.releaseNotes);
+      const { storeError: latestError } = await storeScan(signal);
 
       const decision = shouldAlert(signal, previous ?? null, minGrade);
       let notified: string[] = [];
@@ -112,7 +88,7 @@ export async function GET(request: Request) {
       }
       return {
         grade: signal.grade,
-        latestError,
+        storeError: latestError,
         gaps: signal.data_gaps.length,
         alerted: decision.alert,
         alertReason: decision.reason,
@@ -137,8 +113,8 @@ export async function GET(request: Request) {
       ranAt: new Date().toISOString(),
       store: store.kind,
       results,
-      newReleases: ingest.fresh.map((f) => `${f.release.label} ${f.period}`),
-      releaseNotes: [...releaseGaps, ...ingest.gaps],
+      newReleases: [...new Set(releases.map((f) => `${f.release.label} ${f.period}`))],
+      releaseNotes: [...new Set(releaseNotes)],
     },
     // A non-2xx makes the workflow step fail loudly instead of a green run
     // that quietly wrote nothing.

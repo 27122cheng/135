@@ -1,8 +1,6 @@
 import { COMMODITIES } from "@/types/signal";
-import { buildTradeSignal } from "@/lib/signal-builder";
-import { getSignalStore } from "@/lib/db";
-import { parseUserKeyHeader, withUserKeys } from "@/lib/api-keys";
-import { storedApiKeys } from "@/lib/settings";
+import { parseUserKeyHeader } from "@/lib/api-keys";
+import { runScan, storeScan } from "@/lib/scan";
 import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
@@ -13,28 +11,33 @@ export const maxDuration = 60;
  *
  * ## Why this exists rather than just calling /api/signal
  *
- * The board and the detail page were each building their own copy. Two builds
- * of the same symbol minutes apart returned different answers — one said 觀望,
- * the other showed a full entry — because the trade plan's `stance` is chosen
- * by the AI, and an AI asked the same question twice does not have to answer
- * the same way. Nothing was stale and nothing was broken; the two views were
- * simply looking at two different signals.
+ * The board and the detail page were each building their own copy, and two
+ * builds of the same symbol minutes apart returned different answers. The fix
+ * is not to make the model deterministic, which isn't available; it is to stop
+ * building the same signal twice. This route writes the result and every view
+ * reads that one row, so agreement is structural.
  *
- * The fix is not to make the model deterministic, which isn't available. It is
- * to stop building the same signal twice: this route writes the result, and
- * every view reads that one row. Agreement becomes structural.
+ * ## Why it is the same scan the scheduler runs
+ *
+ * Everything that decides *what the signal is* now lives in `lib/scan.ts` and
+ * both routes call it — same key resolution, same release ingestion, same
+ * storage. They used to differ in all three, which is how Telegram could
+ * announce "US30 做多 ▲ A" while the site showed no-trade, and how the alert
+ * could say "未設定任何 AI 金鑰" while the site reported a spent quota. Both
+ * were true about themselves.
  *
  * ## Why it doesn't alert
  *
- * Sending Telegram is the scheduled refresh's job. A button in the UI that
- * pushed a notification to the owner's phone every time they pressed it would
- * train them to ignore the channel that exists to interrupt them.
+ * The one thing still allowed to differ. Sending Telegram is the scheduled
+ * refresh's job: a button that pushed a notification to the owner's phone every
+ * time they pressed it would train them to ignore the channel that exists to
+ * interrupt them.
  *
  * ## Why it isn't behind CRON_SECRET
  *
  * `/api/signal` already does the identical work unauthenticated. The only thing
- * added here is a row in the caller's own history, so gating it would cost the
- * board its whole reason for existing without protecting anything new.
+ * added here is a stored result, so gating it would cost the board its whole
+ * reason for existing without protecting anything new.
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -44,42 +47,26 @@ export async function GET(request: Request) {
     return json({ error: `Unknown symbol ${symbol ?? ""}` }, { status: 404 });
   }
 
-  // Header first, stored second — a browser carrying its own keys must not have
-  // them replaced by whatever the deployment happens to store.
-  const merged = {
-    ...(await storedApiKeys().catch(() => ({}))),
-    ...parseUserKeyHeader(request.headers.get("x-user-keys")),
-  };
-
   try {
-    const signal = await withUserKeys(merged, () => buildTradeSignal(meta.symbol));
-
-    const store = getSignalStore();
-    let stored = false;
-    let storeError: string | null = null;
-    if (store) {
-      try {
-        // Upsert, not append. The dashboard rescans every symbol on a timer;
-        // appending would write thousands of full history rows a day and bury
-        // the 4-hourly timeline underneath them.
-        await store.saveLatest(signal);
-        stored = true;
-      } catch (err) {
-        // A failed write must not cost the caller the signal it just waited 20
-        // seconds for — but it must not be silent either. Swallowing it is how
-        // nine successful scans produced a board reading 已掃描 0/9 with no
-        // explanation anywhere: the analysis ran, the write failed, and nothing
-        // said so.
-        storeError = err instanceof Error ? err.message : String(err);
-      }
-    } else {
-      storeError = "未設定資料庫，掃描結果無處可存";
-    }
-    return json({ signal, stored, storeError });
+    const scan = await runScan(meta, {
+      extraKeys: parseUserKeyHeader(request.headers.get("x-user-keys")),
+    });
+    const { stored, storeError } = await storeScan(scan.signal);
+    return json({
+      signal: scan.signal,
+      stored,
+      // A failed write must not cost the caller the signal it just waited 20
+      // seconds for — but it must not be silent either. Swallowing it is how
+      // nine successful scans produced a board reading 已掃描 0/9 with no
+      // explanation anywhere.
+      storeError,
+      releases: scan.releases.map((f) => `${f.release.label} ${f.period}`),
+      // Which keys the *server* holds, as opposed to the ones this browser
+      // sent. When the two differ, the scheduled run and this one are working
+      // with different tools, and that is worth being able to see.
+      serverKeys: scan.serverKeyNames,
+    });
   } catch (err) {
-    return json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 502 },
-    );
+    return json({ error: err instanceof Error ? err.message : String(err) }, { status: 502 });
   }
 }

@@ -33,9 +33,17 @@ import { getSignalStore, type StoredRelease } from "../db";
 /** How far back the scoring pass looks; individual releases expire sooner. */
 const LOOKBACK_HOURS = 72;
 
+/** One print seen for the first time in this run. */
+export interface IngestedRelease {
+  release: TrackedRelease;
+  value: number;
+  previous: number | null;
+  period: string;
+}
+
 export interface ReleaseIngestResult {
   /** Prints seen for the first time in this run — the ones worth announcing. */
-  fresh: Array<{ release: TrackedRelease; value: number; previous: number | null; period: string }>;
+  fresh: IngestedRelease[];
   gaps: string[];
 }
 
