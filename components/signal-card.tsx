@@ -244,6 +244,36 @@ const CONFIDENCE_STYLE: Record<ConfidenceLevel, string> = {
  * "中" alone hides that 45 and 69 are both 中; "62" alone reads as a
  * probability. Together they say what they are: a ranking with a threshold.
  */
+
+/**
+ * Which way the levels point.
+ *
+ * Repeated here rather than left to the card header because the two are far
+ * apart on a phone: by the time you have scrolled to a stop of 1.35300 above an
+ * entry of 1.34610, the 做空 that makes those numbers coherent is off-screen,
+ * and a stop *above* the entry reads as a mistake instead of a short.
+ */
+function DirectionChip({ signal }: { signal: TradeSignal }) {
+  if (signal.direction_tie) {
+    return (
+      <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[11px] font-medium text-neutral-400">
+        中性
+      </span>
+    );
+  }
+  const long = signal.direction === "long";
+  return (
+    <span
+      className={cn(
+        "rounded px-1.5 py-0.5 text-[11px] font-medium",
+        long ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400",
+      )}
+    >
+      {long ? "做多 ▲" : "做空 ▼"}
+    </span>
+  );
+}
+
 function ConfidenceBadge({ c, compact = false }: { c: Confidence; compact?: boolean }) {
   return (
     <span
@@ -411,12 +441,19 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
 
       <Section
         title={tradeable ? "完整價位與分批出場" : "參考價位（未達可交易門檻）"}
-        aside={<ConfidenceBadge c={overallConfidence} />}
+        aside={
+          <span className="flex items-center gap-1.5">
+            <DirectionChip signal={signal} />
+            <ConfidenceBadge c={overallConfidence} />
+          </span>
+        }
       >
         {!tradeable && !isNoTrade && (
           <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
             <p className="text-xs text-amber-400">
-              信心度 {overallConfidence.score}，未達可交易門檻 {CONFIDENT_ENTRY_MIN}。
+              方向{" "}
+              {signal.direction_tie ? "中性" : signal.direction === "long" ? "做多" : "做空"}
+              ，信心度 {overallConfidence.score}，未達可交易門檻 {CONFIDENT_ENTRY_MIN}。
               以下價位是分析算出的真實結構，可以拿來掛單觀察，但這不是建議進場。
             </p>
             <ul className="mt-1.5 space-y-0.5 text-[11px] leading-relaxed text-amber-500/70">
