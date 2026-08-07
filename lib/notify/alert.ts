@@ -61,6 +61,22 @@ export function shouldAlert(
   const plan = current.trade_plan;
 
   if (plan.stance !== "enter") {
+    // The trade you were told about, disappearing.
+    //
+    // Silence here is what made "telegram 有交易但網站沒有" a real complaint
+    // rather than a misreading: the 08:54 sweep found A+ and announced it, the
+    // next sweep found no-trade and said nothing, and the site — correctly
+    // showing the newer row — had nothing to show. Nobody was wrong and nobody
+    // was told. A recommendation that is withdrawn has to be withdrawn out
+    // loud; that is the same duty that made it worth announcing.
+    const prev = previous?.trade_plan;
+    if (
+      prev?.stance === "enter" &&
+      previous !== null &&
+      rank(previous.grade) >= rank(minGrade)
+    ) {
+      return { alert: true, reason: "先前的進場訊號已失效" };
+    }
     return { alert: false, reason: "觀望，不發送" };
   }
   if (rank(current.grade) < rank(minGrade)) {
@@ -154,6 +170,24 @@ export function formatReleaseAlert(
 export function formatAlert(signal: TradeSignal, reason: string, appUrl?: string): string {
   const plan = signal.trade_plan;
   const dir = signal.direction === "long" ? "做多 ▲" : "做空 ▼";
+
+  // A withdrawal is not a trade card with empty prices. It has one job — tell
+  // you the thing you were told about is off — and printing 進場 — 停損 — over
+  // it would read as a plan with missing numbers.
+  if (plan.stance !== "enter") {
+    const withdrawal = [
+      `<b>${signal.symbol} 先前的進場訊號已失效</b>`,
+      `本次掃描結果：${signal.grade}，${plan.wait_for ? "觀望" : "不進場"}`,
+      "",
+      plan.summary,
+      plan.wait_for ? `等待條件：${plan.wait_for}` : null,
+      "",
+      `<i>觸發：${reason}</i>`,
+    ];
+    if (appUrl) withdrawal.push(appUrl);
+    return withdrawal.filter((l) => l !== null).join("\n");
+  }
+
   const lines = [
     `<b>${signal.symbol} ${dir} ${signal.grade}</b>`,
     `進場 <b>${fmt(plan.entry)}</b>`,

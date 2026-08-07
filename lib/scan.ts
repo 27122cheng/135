@@ -167,20 +167,28 @@ export async function storeScan(signal: TradeSignal): Promise<{
 }> {
   const store = getSignalStore();
   if (!store) return { stored: false, storeError: "未設定資料庫，掃描結果無處可存" };
-  try {
-    await store.saveLatest(signal);
-  } catch (err) {
-    return { stored: false, storeError: err instanceof Error ? err.message : String(err) };
-  }
-  try {
-    await store.insertSignal(signal);
-  } catch (err) {
-    // The current row is written; the timeline is a log. Losing the log entry
-    // must not cost the caller the signal, but it must be reported.
-    return {
-      stored: true,
-      storeError: `已更新目前訊號，但寫入歷史時間軸失敗：${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-  return { stored: true, storeError: null };
+
+  // Independently, and both attempted whatever the other does.
+  //
+  // The first cut returned early when `saveLatest` threw, which skipped the
+  // timeline write entirely — so a missing or erroring `latest_signal` meant
+  // *nothing at all* got stored, and the board froze on whatever row had last
+  // succeeded while the scheduled scan kept running and alerting. Before the
+  // refactor the refresh route wrote history first and swallowed the upsert
+  // failure, so the regression turned a degraded state into a silent one.
+  //
+  // They fail for different reasons and neither is a reason to skip the other:
+  // the timeline is the record, the current row is the view.
+  const errors: string[] = [];
+  await store.saveLatest(signal).catch((err: unknown) => {
+    errors.push(`目前訊號（latest_signal）：${err instanceof Error ? err.message : String(err)}`);
+  });
+  await store.insertSignal(signal).catch((err: unknown) => {
+    errors.push(`歷史時間軸（signals）：${err instanceof Error ? err.message : String(err)}`);
+  });
+
+  return {
+    stored: errors.length < 2,
+    storeError: errors.length > 0 ? `寫入失敗 — ${errors.join("；")}` : null,
+  };
 }

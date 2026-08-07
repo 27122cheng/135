@@ -484,6 +484,9 @@ async function buildSignalForSymbol(
       // So the geometry is chosen on what has actually happened to this
       // instrument, not on which combination has the prettiest ratio.
       candles: d1?.candles,
+      // Lets the geometry search reject a stop inside the noise and a target
+      // the 20-bar horizon cannot reach — neither of which a ratio can express.
+      atr: atrD1,
     },
     gaps,
   );

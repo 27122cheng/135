@@ -36,6 +36,11 @@ export interface TradePlanInput {
    * and is told so.
    */
   candles?: Candle[];
+  /**
+   * D1 ATR, for the sizing screens. Without it the ratio floor is the only
+   * constraint, and a ratio cannot tell a stop inside the noise from a sane one.
+   */
+  atr?: number | null;
 }
 
 function round(n: number): number {
@@ -171,6 +176,46 @@ const MIN_RESOLVED_FOR_RANKING = 30;
 /** Expectancies within this of the best are treated as equal, so the tie-break decides. */
 const EXPECTANCY_EPSILON = 0.05;
 
+/**
+ * A stop closer than this many ATR to the entry is not a stop, it is a coin
+ * flip on noise.
+ *
+ * The live board produced US30 long at 53,289.30 with a stop at 53,160.77 —
+ * 128 points, 0.24%, a fraction of a day's range on that index — against a
+ * target 1,455 points away. 1:11.32 on paper, 15% hit rate in the backtest, and
+ * the second number is a direct consequence of the first: the market crosses
+ * that distance while doing nothing at all.
+ *
+ * Expectancy alone did not catch it, because 0.15 × 11.32 − 0.85 = +0.85R still
+ * beats a sane 1:2. A positive expectation you get stopped out of six times in
+ * seven is arithmetically fine and unusable — and the arithmetic is only fine
+ * if the 15% is real, which a sample drawn from resolved cases at that
+ * stop distance is not.
+ */
+const MIN_STOP_ATR = 0.6;
+
+/**
+ * A target beyond this many ATR is not a 20-bar trade.
+ *
+ * The backtest's horizon is 20 bars. A target 11R away with a stop inside the
+ * noise is a lottery ticket priced as a plan: it resolves rarely, and the few
+ * resolutions it does produce are what the hit rate gets computed from. Capping
+ * the distance is the honest way to keep the plan inside the window the
+ * evidence covers.
+ */
+const MAX_TARGET_ATR = 4;
+
+/**
+ * The hit rate below which a plan is not followable, whatever its expectancy.
+ *
+ * This is a judgement, stated as one. An edge you cannot sit through is not an
+ * edge you will capture: eight consecutive stop-outs is where a person stops
+ * taking the signal, and a system that produces them is a system that gets
+ * turned off. Combinations below this are only used when nothing clears it, and
+ * the summary says so rather than hiding it.
+ */
+const MIN_HIT_RATE = 0.3;
+
 interface Combo {
   entry: Candidate;
   sl: Candidate;
@@ -179,19 +224,74 @@ interface Combo {
   backtest: PlanBacktest | null;
 }
 
-/** Every combination that clears the risk/reward floor. */
-function viableCombos(input: TradePlanInput): Combo[] {
+interface ComboScreen {
+  combos: Combo[];
+  /** Why combinations were dropped, for the summary. Empty when none were. */
+  rejected: string[];
+}
+
+/**
+ * Every combination that clears the risk/reward floor *and* is sized like a
+ * trade rather than like a lottery ticket.
+ *
+ * The two ATR screens are what the risk/reward floor cannot express. A ratio is
+ * scale-free by construction — 1:11 says nothing about whether the stop is
+ * inside a day's noise or the target is a month away — and both of those are
+ * exactly the questions that decide whether the plan is takeable.
+ */
+function viableCombos(input: TradePlanInput): ComboScreen {
   const out: Combo[] = [];
+  const atr = input.atr && input.atr > 0 ? input.atr : null;
+  let tooTight = 0;
+  let tooFar = 0;
+  let badRr = 0;
+
   for (const entry of input.entryCandidates) {
     for (const sl of input.slCandidates) {
       for (const tp of input.tpCandidates) {
         const rr = riskReward(input.direction, entry.price, sl.price, tp.price);
-        if (rr === null || rr < MIN_RISK_REWARD) continue;
+        if (rr === null || rr < MIN_RISK_REWARD) {
+          badRr++;
+          continue;
+        }
+        if (atr) {
+          if (Math.abs(entry.price - sl.price) < atr * MIN_STOP_ATR) {
+            tooTight++;
+            continue;
+          }
+          if (Math.abs(tp.price - entry.price) > atr * MAX_TARGET_ATR) {
+            tooFar++;
+            continue;
+          }
+        }
         out.push({ entry, sl, tp, rr, backtest: null });
       }
     }
   }
-  return out;
+
+  const rejected: string[] = [];
+  if (tooTight > 0) rejected.push(`${tooTight} 組停損距離不足 ${MIN_STOP_ATR}×ATR（在雜訊內）`);
+  if (tooFar > 0) rejected.push(`${tooFar} 組停利超過 ${MAX_TARGET_ATR}×ATR（20 根內走不到）`);
+  if (badRr > 0) rejected.push(`${badRr} 組風報比低於 1:${MIN_RISK_REWARD}`);
+
+  // Nothing survived the ATR screens but something cleared the ratio floor:
+  // rather than refusing outright, fall back to the ratio-only set and say the
+  // sizing screens found nothing. Standing aside is still available downstream
+  // if the geometry is genuinely unusable.
+  if (out.length === 0 && atr) {
+    for (const entry of input.entryCandidates) {
+      for (const sl of input.slCandidates) {
+        for (const tp of input.tpCandidates) {
+          const rr = riskReward(input.direction, entry.price, sl.price, tp.price);
+          if (rr === null || rr < MIN_RISK_REWARD) continue;
+          out.push({ entry, sl, tp, rr, backtest: null });
+        }
+      }
+    }
+    if (out.length > 0) rejected.push("沒有任何組合同時通過停損與停利的 ATR 篩選，改用未篩選的組合");
+  }
+
+  return { combos: out, rejected };
 }
 
 /**
@@ -223,8 +323,9 @@ function viableCombos(input: TradePlanInput): Combo[] {
  *    follow.
  */
 function chooseGeometry(input: TradePlanInput): { combo: Combo; basis: string } | null {
-  const combos = viableCombos(input);
+  const { combos, rejected } = viableCombos(input);
   if (combos.length === 0) return null;
+  const screen = rejected.length > 0 ? `（已排除：${rejected.join("、")}）` : "";
 
   // Highest ratio, nearest entry on a tie — the previous rule, kept as the
   // fallback for when there is not enough history to measure anything.
@@ -234,7 +335,7 @@ function chooseGeometry(input: TradePlanInput): { combo: Combo; basis: string } 
   if (!candles || candles.length < 60) {
     return {
       combo: byRatio,
-      basis: `歷史 K 棒不足以回測各組合，改以風險報酬比最佳者為準（本組 1:${byRatio.rr}）`,
+      basis: `歷史 K 棒不足以回測各組合，改以風險報酬比最佳者為準（本組 1:${byRatio.rr}）${screen}`,
     };
   }
 
@@ -260,12 +361,21 @@ function chooseGeometry(input: TradePlanInput): { combo: Combo; basis: string } 
       combo: byRatio,
       basis:
         `各組合的回測樣本都不足 ${MIN_RESOLVED_FOR_RANKING} 筆，不足以比較勝率，` +
-        `改以風險報酬比最佳者為準（本組 1:${byRatio.rr}）`,
+        `改以風險報酬比最佳者為準（本組 1:${byRatio.rr}）${screen}`,
     };
   }
 
-  const bestExpectancy = Math.max(...rankable.map((c) => c.backtest!.expectancyR!));
-  const tied = rankable.filter(
+  // Followability first, then expectancy. Ranking on expectancy alone is how a
+  // 1:11 at a 15% hit rate wins: the arithmetic is positive and the plan is
+  // one nobody sits through. Combinations that clear the hit-rate floor are
+  // ranked among themselves; only if none does are the rest considered, and
+  // then the summary says the hit rate is low rather than quietly shipping it.
+  const followable = rankable.filter((c) => (c.backtest!.hitRate ?? 0) >= MIN_HIT_RATE);
+  const pool = followable.length > 0 ? followable : rankable;
+  const lowHitRate = followable.length === 0;
+
+  const bestExpectancy = Math.max(...pool.map((c) => c.backtest!.expectancyR!));
+  const tied = pool.filter(
     (c) => c.backtest!.expectancyR! >= bestExpectancy - EXPECTANCY_EPSILON,
   );
   const chosen = tied.reduce((best, c) =>
@@ -277,13 +387,17 @@ function chooseGeometry(input: TradePlanInput): { combo: Combo; basis: string } 
   const note =
     chosen === byRatio
       ? ""
-      : `（賠率最高的一組是 1:${byRatio.rr}，但本地回測期望值較低，未採用）`;
+      : `（賠率最高的一組是 1:${byRatio.rr}，但${lowHitRate ? "勝率或" : ""}本地回測期望值較低，未採用）`;
+  const warn = lowHitRate
+    ? `⚠ 沒有任何組合的回測勝率達到 ${Math.round(MIN_HIT_RATE * 100)}%，本組已是可選中最高，` +
+      `期望值為正但會經常停損，部位要放小。`
+    : "";
   return {
     combo: chosen,
     basis:
-      `在 ${combos.length} 組真實結構組合中，以本地回測期望值最高者為準：` +
-      `${bt.resolved} 次中 ${bt.wins} 勝（勝率 ${hitPct}%），` +
-      `每單位風險期望 ${bt.expectancyR}R，風報比 1:${chosen.rr}${note}`,
+      `在 ${combos.length} 組真實結構組合中，先要求回測勝率 ≥ ${Math.round(MIN_HIT_RATE * 100)}%，` +
+      `再取期望值最高者：${bt.resolved} 次中 ${bt.wins} 勝（勝率 ${hitPct}%），` +
+      `每單位風險期望 ${bt.expectancyR}R，風報比 1:${chosen.rr}${note}${screen}${warn}`,
   };
 }
 
