@@ -547,6 +547,76 @@ function ForcedDowngrade({ signal }: { signal: TradeSignal }) {
   );
 }
 
+/**
+ * 參考價位, chosen the same way a traded plan is chosen.
+ *
+ * The block below this one lists the raw structures — entry zone, the nearest
+ * protecting level, every target found. Useful, but it is a list of nearby
+ * prices, and it was being read as a plan. This is the plan: one combination,
+ * picked by the same ATR sizing screens, the same backtest, the same hit-rate
+ * floor and the same expectancy ranking the traded signal goes through. The
+ * only thing that differs is that nobody is recommending it.
+ */
+function ReferencePlan({ signal }: { signal: TradeSignal }) {
+  const ref = signal.reference_plan;
+  if (!ref) return null;
+  const bt = ref.backtest;
+  const hit = bt?.hitRate ?? null;
+
+  return (
+    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4">
+      <div className="mb-2 flex flex-wrap items-baseline gap-2">
+        <span className="text-sm font-medium text-neutral-200">若要做，會是這一組</span>
+        <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
+          非建議進場
+        </span>
+        <span className="ml-auto font-mono text-xs text-neutral-400">1:{ref.risk_reward}</span>
+      </div>
+
+      <dl className="grid grid-cols-3 gap-2">
+        <div>
+          <dt className="text-[10px] text-neutral-600">進場</dt>
+          <dd className="font-mono text-sm text-neutral-200">{formatPrice(ref.entry)}</dd>
+        </div>
+        <div>
+          <dt className="text-[10px] text-neutral-600">停損</dt>
+          <dd className="font-mono text-sm text-red-400/80">{formatPrice(ref.stop_loss)}</dd>
+        </div>
+        <div>
+          <dt className="text-[10px] text-neutral-600">停利</dt>
+          <dd className="font-mono text-sm text-emerald-400/80">{formatPrice(ref.take_profit)}</dd>
+        </div>
+      </dl>
+
+      {hit !== null && bt && (
+        <p className="mt-2 text-[11px] leading-relaxed text-neutral-400">
+          本地回測 <span className="font-mono text-neutral-200">{Math.round(hit * 100)}%</span>{" "}
+          勝率（{bt.resolved} 次中 {bt.wins} 勝）
+          {bt.expectancyR !== null && (
+            <>
+              ，每單位風險期望{" "}
+              <span
+                className={cn(
+                  "font-mono",
+                  bt.expectancyR > 0 ? "text-emerald-400" : "text-red-400",
+                )}
+              >
+                {bt.expectancyR > 0 ? "+" : ""}
+                {bt.expectancyR}R
+              </span>
+            </>
+          )}
+        </p>
+      )}
+
+      <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-600">
+        {ref.entry_reason}｜停損：{ref.stop_reason}｜停利：{ref.target_reason}
+      </p>
+      <p className="mt-1 text-[10px] leading-relaxed text-neutral-600">{ref.basis}</p>
+    </div>
+  );
+}
+
 function Section({
   title,
   children,
@@ -675,6 +745,7 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
           </p>
         )}
         <AsOfNotice signal={signal} />
+        <ReferencePlan signal={signal} />
         <div className="rounded-lg border border-neutral-800 bg-neutral-950/50 px-3">
             <PriceRow
               label="進場"

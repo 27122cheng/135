@@ -2,6 +2,7 @@ import { completeAI, jsonSchema, type AiUnavailable } from "@/lib/ai";
 import type { BiasItem, Grade, TradePlan, TradeSignal } from "@/types/signal";
 import { MIN_ENTRY_GRADE, gradeAllowsEntry } from "@/lib/scoring";
 import { backtestPlanGeometry } from "./backtest";
+import { isNearEntry } from "./proximity";
 import type { Candle } from "../data-sources/ohlcv";
 import type { PlanBacktest } from "@/types/signal";
 
@@ -216,6 +217,28 @@ const MAX_TARGET_ATR = 4;
  */
 const MIN_HIT_RATE = 0.3;
 
+/**
+ * The risk/reward a given hit rate needs just to break even.
+ *
+ * `hitRate × rr − (1 − hitRate) = 0` → `rr = (1 − hitRate) / hitRate`.
+ *
+ * Worth having as a function because the request that keeps coming back —
+ * "keep the win rate around 80%" — is answerable with it, and the answer is not
+ * the one it sounds like. At 80% the breakeven ratio is 0.25: you would be
+ * risking four to make one. Every trade wins four times out of five and one
+ * loss erases four wins, so the whole edge lives in never having two losses in
+ * a row, which is not a property any of these markets has.
+ *
+ * A high hit rate is not something a system is tuned *to*; it is what falls out
+ * of putting the target close. It is always purchasable — move the target in
+ * far enough and you can have 95% — and it is never free.
+ */
+export function breakevenRr(hitRate: number): number {
+  if (hitRate <= 0) return Infinity;
+  if (hitRate >= 1) return 0;
+  return Math.round(((1 - hitRate) / hitRate) * 100) / 100;
+}
+
 interface Combo {
   entry: Candidate;
   sl: Candidate;
@@ -390,7 +413,8 @@ function chooseGeometry(input: TradePlanInput): { combo: Combo; basis: string } 
       : `（賠率最高的一組是 1:${byRatio.rr}，但${lowHitRate ? "勝率或" : ""}本地回測期望值較低，未採用）`;
   const warn = lowHitRate
     ? `⚠ 沒有任何組合的回測勝率達到 ${Math.round(MIN_HIT_RATE * 100)}%，本組已是可選中最高，` +
-      `期望值為正但會經常停損，部位要放小。`
+      `期望值為正但會經常停損，部位要放小。` +
+      `（以 ${hitPct}% 勝率計，只要風報比高於 1:${breakevenRr(bt.hitRate ?? 0)} 就是正期望值）`
     : "";
   return {
     combo: chosen,
@@ -398,6 +422,52 @@ function chooseGeometry(input: TradePlanInput): { combo: Combo; basis: string } 
       `在 ${combos.length} 組真實結構組合中，先要求回測勝率 ≥ ${Math.round(MIN_HIT_RATE * 100)}%，` +
       `再取期望值最高者：${bt.resolved} 次中 ${bt.wins} 勝（勝率 ${hitPct}%），` +
       `每單位風險期望 ${bt.expectancyR}R，風報比 1:${chosen.rr}${note}${screen}${warn}`,
+  };
+}
+
+/**
+ * The best geometry available *without* recommending it — 參考價位.
+ *
+ * When the rules stand aside, the card still shows an entry zone, a stop and a
+ * ladder of targets. Those were the raw computed levels: the mid of the entry
+ * zone, the nearest protecting structure, the nearest obstacles ahead. Nothing
+ * chose among them, so the reference prices were the one part of the card that
+ * had not been through any of the work that makes the traded plan trustworthy —
+ * no ATR sizing screen, no backtest, no expectancy, no hit rate. They were
+ * levels, not an analysis, and they were being read as an analysis.
+ *
+ * This runs the identical selection the traded plan gets. Same screens, same
+ * ranking, same numbers printed. The only difference is what it means: this is
+ * "if the rules had let you take something, this is what it would have been",
+ * and the card says so.
+ */
+export interface ReferenceGeometry {
+  entry: number;
+  stopLoss: number;
+  takeProfit: number;
+  riskReward: number;
+  entryReason: string;
+  stopReason: string;
+  targetReason: string;
+  /** How it was chosen — the same sentence the traded plan carries. */
+  basis: string;
+  backtest: PlanBacktest | null;
+}
+
+export function selectReferenceGeometry(input: TradePlanInput): ReferenceGeometry | null {
+  const picked = chooseGeometry(input);
+  if (!picked) return null;
+  const { entry, sl, tp, rr, backtest } = picked.combo;
+  return {
+    entry: round(entry.price),
+    stopLoss: round(sl.price),
+    takeProfit: round(tp.price),
+    riskReward: rr,
+    entryReason: entry.label,
+    stopReason: sl.label,
+    targetReason: tp.label,
+    basis: picked.basis,
+    backtest,
   };
 }
 
@@ -639,7 +709,7 @@ export function collectCandidates(
   for (const s of signal.entry_structures) {
     const isPullback =
       signal.direction === "long" ? s.role === "support" && s.price < mid : s.role === "resistance" && s.price > mid;
-    if (isPullback && Math.abs(s.distance_pct) <= 1.5) {
+    if (isPullback && isNearEntry(s, mid, atr)) {
       entryCandidates.push({
         price: round(s.price),
         label: `等回測 ${s.timeframe} ${s.type}（強度 ${s.strength}，距現價 ${s.distance_pct}%）`,

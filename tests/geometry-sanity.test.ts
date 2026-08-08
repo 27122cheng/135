@@ -1,5 +1,5 @@
 import { check, report } from "./_harness";
-import { buildTradePlan } from "@/lib/analysis/trade-plan";
+import { breakevenRr, buildTradePlan } from "@/lib/analysis/trade-plan";
 import { formatAlert, shouldAlert } from "@/lib/notify/alert";
 import { storeScan } from "@/lib/scan";
 import type { SignalRow, TradeSignal } from "@/types/signal";
@@ -181,6 +181,27 @@ async function main() {
       calls.join(",") === "latest,timeline", calls);
     check("and the failure is still reported", errors.length === 1, errors);
     check("storeScan is exported for both routes", typeof storeScan === "function");
+  }
+
+  // ── what an 80% hit rate actually costs ─────────────────────────
+  //
+  // The request keeps coming back, and the arithmetic answers it. Breakeven at
+  // hit rate H needs rr = (1 − H) / H. A high hit rate is always purchasable —
+  // move the target close enough and 95% is available — and never free.
+  {
+    check("breakeven at 50% is 1:1", breakevenRr(0.5) === 1);
+    check("breakeven at 30% is 1:2.33", breakevenRr(0.3) === 2.33, breakevenRr(0.3));
+    // Risking four to make one. One loss erases four wins.
+    check("breakeven at 80% is 1:0.25", breakevenRr(0.8) === 0.25, breakevenRr(0.8));
+    check("breakeven at 95% is 1:0.05", breakevenRr(0.95) === 0.05, breakevenRr(0.95));
+    check("a certain win needs no payoff", breakevenRr(1) === 0);
+    check("a certain loss can never break even", breakevenRr(0) === Infinity);
+
+    // And the consequence, stated as the invariant that makes 80% a bad target:
+    // at 80%/1:0.25 the loss is four times the win, so the drawdown from two
+    // consecutive losses is eight wins deep.
+    const rr = breakevenRr(0.8);
+    check("two losses at 80% cost eight wins", Math.round(2 / rr) === 8, [rr, 2 / rr]);
   }
 
   console.log("\nall assertions passed if no FAIL above");

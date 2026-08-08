@@ -1,4 +1,5 @@
 import type { EntryStructure, PathObstacle } from "@/types/signal";
+import { isNearEntry } from "./analysis/proximity";
 
 export interface BuiltStopLoss {
   price: number;
@@ -43,8 +44,11 @@ export function buildStopLoss(
    */
   bufferAtrMultiple = 0.5,
 ): BuiltStopLoss | null {
+  const mid = (entryZone.low + entryZone.high) / 2;
   const protecting = structures.filter((s) => {
-    if (Math.abs(s.distance_pct) > 1.5) return false;
+    // Same proximity rule the score uses, so a structure that earned points
+    // cannot then be ruled out as an anchor (or the reverse).
+    if (!isNearEntry(s, mid, atr)) return false;
     return direction === "long"
       ? s.role === "support" && s.price <= entryZone.high
       : s.role === "resistance" && s.price >= entryZone.low;

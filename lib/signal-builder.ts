@@ -7,6 +7,7 @@ import { atr as computeAtr } from "./analysis/indicators";
 import { analyzeTechnical } from "./analysis/technical";
 import { detectAllPatterns, patternContributions } from "./analysis/patterns";
 import { dedupeBiasItems } from "./analysis/evidence";
+import { describeProximity, isNearEntry } from "./analysis/proximity";
 import { analyzeFundamental } from "./analysis/fundamental";
 import { analyzePositioning } from "./analysis/positioning";
 import { analyzeNews } from "./analysis/news";
@@ -14,7 +15,7 @@ import { analyzeFundFlow } from "./analysis/fundflow";
 import { analyzeOpenInterest } from "./analysis/open-interest";
 import { backtestPlanGeometry } from "./analysis/backtest";
 import { generateNarrative, ruleNarrative } from "./analysis/ai-narrative";
-import { buildTradePlan, collectCandidates } from "./analysis/trade-plan";
+import { buildTradePlan, collectCandidates, selectReferenceGeometry } from "./analysis/trade-plan";
 import { buildAddOns } from "./analysis/add-on";
 import { CONFIDENT_ENTRY_MIN, clearsEntryBar, planConfidence } from "./analysis/confidence";
 import { gradeAllowsEntry, scoreSignal } from "./scoring";
@@ -329,6 +330,8 @@ async function buildSignalForSymbol(
     biasItems,
     technical.entryStructures,
     effects.biasScoreThresholdBump,
+    // "Near the entry" is 2×ATR, not 1.5% of price — see lib/analysis/proximity.ts.
+    atrD1,
   );
 
   const stopLoss = buildStopLoss(
@@ -350,12 +353,12 @@ async function buildSignalForSymbol(
   const finalStopLoss = stopLoss ?? {
     price: round(currentPrice),
     structure: "無足夠結構保護",
-    reason: "找不到符合條件（距離進場 ≤1.5%）的支撐/壓力結構，不提供結構錨定停損",
+    reason: `找不到符合條件（${describeProximity(currentPrice, atrD1)}）的支撐/壓力結構，不提供結構錨定停損`,
     invalidation: "no-trade：訊號不成立，此價位僅為當前市價參考，非實際停損建議",
   };
   if (!stopLoss) {
     grade = "no-trade";
-    const why = "找不到距進場 1.5% 內、方向正確的支撐／壓力結構，沒有東西可以錨定停損";
+    const why = `找不到 ${describeProximity(currentPrice, atrD1)}、方向正確的支撐／壓力結構，沒有東西可以錨定停損`;
     gaps.push(`無法錨定有效停損結構，訊號強制降級為 no-trade（${why}）`);
     downgrades.push(`無法錨定停損：${why}`);
   }
@@ -378,8 +381,8 @@ async function buildSignalForSymbol(
     const mid = (entryZone.low + entryZone.high) / 2;
     const hasPullback = technical.entryStructures.some((s) =>
       direction === "long"
-        ? s.role === "support" && s.price < mid && Math.abs(s.distance_pct) <= 1.5
-        : s.role === "resistance" && s.price > mid && Math.abs(s.distance_pct) <= 1.5,
+        ? s.role === "support" && s.price < mid && isNearEntry(s, mid, atrD1)
+        : s.role === "resistance" && s.price > mid && isNearEntry(s, mid, atrD1),
     );
     if (!hasPullback) {
       grade = "no-trade";
@@ -491,6 +494,30 @@ async function buildSignalForSymbol(
     gaps,
   );
 
+  // 參考價位 gets the same selection the traded plan gets — ATR screens,
+  // backtest, hit-rate floor, expectancy — so the levels shown when the rules
+  // stand aside are an analysis rather than a list of nearby prices.
+  const referenceGeometry =
+    tradePlan.stance === "enter"
+      ? null
+      : selectReferenceGeometry({
+          symbol: meta.symbol,
+          direction,
+          grade,
+          bias_score: score.biasScore,
+          entry_structure_score: score.entryStructureScore,
+          total_score: score.totalScore,
+          bias_items: biasItems,
+          entryCandidates,
+          slCandidates,
+          tpCandidates,
+          narrative,
+          knownGaps: [],
+          gradeForcesWait: false,
+          candles: d1?.candles,
+          atr: atrD1,
+        });
+
   // 加倉點 — structure-anchored, computed only for a plan that actually enters.
   // Attached after the plan exists because the levels depend on its entry, stop
   // and target, not just on the signal.
@@ -565,6 +592,19 @@ async function buildSignalForSymbol(
     direction_tie: tie,
     chart_patterns: chartPatterns,
     graded_as: score.grade,
+    reference_plan: referenceGeometry
+      ? {
+          entry: referenceGeometry.entry,
+          stop_loss: referenceGeometry.stopLoss,
+          take_profit: referenceGeometry.takeProfit,
+          risk_reward: referenceGeometry.riskReward,
+          entry_reason: referenceGeometry.entryReason,
+          stop_reason: referenceGeometry.stopReason,
+          target_reason: referenceGeometry.targetReason,
+          basis: referenceGeometry.basis,
+          backtest: referenceGeometry.backtest,
+        }
+      : null,
     downgrades,
     data_gaps: dedupedGaps,
   };

@@ -348,6 +348,28 @@ export interface TradeSignal {
    * A by the very table it was quoting.
    */
   graded_as?: Grade;
+  /**
+   * 參考價位 — the geometry that *would* have been taken, chosen the same way
+   * the traded plan is chosen.
+   *
+   * Present only when the rules stood aside. Before this, the reference block
+   * showed the raw computed levels: the mid of the entry zone, the nearest
+   * protecting structure, the nearest obstacles. Nothing had chosen among them,
+   * so the one part of the card without any sizing screen, backtest or hit rate
+   * was the part being read as an analysis.
+   */
+  reference_plan?: {
+    entry: number;
+    stop_loss: number;
+    take_profit: number;
+    risk_reward: number;
+    entry_reason: string;
+    stop_reason: string;
+    target_reason: string;
+    /** How it was chosen — the same sentence the traded plan carries. */
+    basis: string;
+    backtest: PlanBacktest | null;
+  } | null;
   /** Every reason the computed grade was overruled, in the order applied. */
   downgrades?: string[];
   data_gaps: string[];

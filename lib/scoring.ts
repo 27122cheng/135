@@ -1,4 +1,5 @@
 import type { BiasItem, EntryStructure, Grade } from "@/types/signal";
+import { isNearEntry } from "./analysis/proximity";
 
 /**
  * bias_score = Σ(weight of items agreeing with `direction`) - Σ(weight of items opposing it).
@@ -15,18 +16,24 @@ export function computeBiasScore(direction: "long" | "short", biasItems: BiasIte
 
 /**
  * entry_structure_score = Σ strength of structures that actually protect the entry:
- *  - long:  role='support'    AND price <= entry_zone.high AND distance_pct <= 1.5%
- *  - short: role='resistance' AND price >= entry_zone.low  AND distance_pct <= 1.5%
+ *  - long:  role='support'    AND price <= entry_zone.high AND near the entry
+ *  - short: role='resistance' AND price >= entry_zone.low  AND near the entry
  * Hard rule — do not count structures on the wrong side or too far from entry.
+ *
+ * "Near" was a flat 1.5% of price and is now 2×ATR — see lib/analysis/proximity.ts
+ * for why a percentage meant four different things across the nine instruments.
+ * The percentage remains as the fallback when ATR cannot be computed.
  */
 export function computeEntryStructureScore(
   direction: "long" | "short",
   entryZone: { low: number; high: number },
   structures: EntryStructure[],
+  atr: number | null = null,
 ): number {
+  const mid = (entryZone.low + entryZone.high) / 2;
   return structures
     .filter((s) => {
-      if (Math.abs(s.distance_pct) > 1.5) return false;
+      if (!isNearEntry(s, mid, atr)) return false;
       if (direction === "long") return s.role === "support" && s.price <= entryZone.high;
       return s.role === "resistance" && s.price >= entryZone.low;
     })
@@ -90,9 +97,10 @@ export function scoreSignal(
   biasItems: BiasItem[],
   structures: EntryStructure[],
   biasThresholdBump = 0,
+  atr: number | null = null,
 ): ScoreResult {
   const biasScore = computeBiasScore(direction, biasItems);
-  const entryStructureScore = computeEntryStructureScore(direction, entryZone, structures);
+  const entryStructureScore = computeEntryStructureScore(direction, entryZone, structures, atr);
   const totalScore = biasScore + entryStructureScore;
   return {
     biasScore,
