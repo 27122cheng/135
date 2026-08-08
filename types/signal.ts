@@ -347,6 +347,17 @@ export interface TradeSignal {
    * announced "評等 no-trade（總分 12）未達可進場門檻 B" while 12 points is an
    * A by the very table it was quoting.
    */
+  /**
+   * 市場休市時仍會分析，但不會通知。
+   *
+   * The system announced "US30 做多 ▲ A+" at 00:36 on a Sunday into an exchange
+   * that had been shut since Friday and would not reopen for a day and a half.
+   * Knowing where the levels are while the market is closed is useful; pushing
+   * a notification to take a trade nobody can place is not.
+   */
+  market_closed?: boolean;
+  /** Why the market is considered closed. Null when it is open. */
+  market_closed_reason?: string | null;
   graded_as?: Grade;
   /**
    * 參考價位 — the geometry that *would* have been taken, chosen the same way

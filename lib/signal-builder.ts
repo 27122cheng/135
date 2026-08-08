@@ -8,6 +8,7 @@ import { analyzeTechnical } from "./analysis/technical";
 import { detectAllPatterns, patternContributions } from "./analysis/patterns";
 import { dedupeBiasItems } from "./analysis/evidence";
 import { describeProximity, isNearEntry } from "./analysis/proximity";
+import { marketStatus } from "./market-hours";
 import { analyzeFundamental } from "./analysis/fundamental";
 import { analyzePositioning } from "./analysis/positioning";
 import { analyzeNews } from "./analysis/news";
@@ -235,7 +236,7 @@ async function buildSignalForSymbol(
   // sees a new price.
   const quote = await fetchLatestPrice(meta.yfinanceSymbol, gaps);
   const lastClose = d1?.candles.at(-1)?.close ?? h4?.candles.at(-1)?.close ?? w1?.candles.at(-1)?.close;
-  if (quote && quote.ageMinutes > 60) {
+  if (quote && quote.ageMinutes > 60 && quote.ageMinutes <= 180) {
     gaps.push(
       `即時報價已延遲 ${Math.round(quote.ageMinutes)} 分鐘（${quote.at.slice(11, 16)} UTC），進場區間以此價位計算`,
     );
@@ -243,6 +244,11 @@ async function buildSignalForSymbol(
   if (!quote && lastClose != null) {
     gaps.push("取不到即時報價，進場區間改用最後一根 K 棒收盤價計算，可能與市價有落差");
   }
+  // The clock and the feed, together. Neither stops the analysis; either stops
+  // the notification.
+  const market = marketStatus(new Date(), quote ? quote.ageMinutes : null);
+  if (market.closed && market.reason) gaps.push(market.reason);
+
   const currentPrice = quote?.price ?? lastClose;
   const priceBasis = quote
     ? `即時報價 ${round(quote.price)}（${Math.round(quote.ageMinutes)} 分鐘前）`
@@ -591,6 +597,8 @@ async function buildSignalForSymbol(
     interventions,
     direction_tie: tie,
     chart_patterns: chartPatterns,
+    market_closed: market.closed,
+    market_closed_reason: market.reason,
     graded_as: score.grade,
     reference_plan: referenceGeometry
       ? {

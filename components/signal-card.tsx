@@ -507,6 +507,32 @@ function AsOfNotice({ signal }: { signal: TradeSignal }) {
 }
 
 /**
+ * 休市 — analysed, but not announced, and not placeable.
+ *
+ * The system pushed "US30 做多 ▲ A+ 進場 53885.10" at 00:36 on a Sunday, into
+ * an exchange that had been shut since Friday and would not reopen for a day
+ * and a half. Knowing where the levels sit while the market is closed is worth
+ * having — it is what Sunday preparation looks like — but the card has to say
+ * which of the two it is, because the entry will not survive the weekly gap:
+ * spot gold opened one session 2.4% above the previous close.
+ */
+function MarketClosed({ signal }: { signal: TradeSignal }) {
+  if (!signal.market_closed) return null;
+  return (
+    <div className="rounded-xl border border-sky-500/40 bg-sky-500/5 p-4">
+      <p className="text-sm font-medium text-sky-300">市場休市中 — 以下是分析，不是可下單的計畫</p>
+      <p className="mt-1.5 text-xs leading-relaxed text-neutral-300">
+        {signal.market_closed_reason}
+      </p>
+      <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
+        價位仍然照算，開盤前可以先看。但開盤跳空常常直接越過進場區，
+        真的要下單前務必重新掃描一次。
+      </p>
+    </div>
+  );
+}
+
+/**
  * Why a signal that scored well is still no-trade.
  *
  * The card was showing "評等 no-trade（方向分 10、結構分 2、總分 12）未達可
@@ -703,6 +729,8 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
           </div>
         </CardContent>
       </Card>
+
+      <MarketClosed signal={signal} />
 
       <ForcedDowngrade signal={signal} />
 

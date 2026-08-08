@@ -60,6 +60,18 @@ export function shouldAlert(
 ): AlertDecision {
   const plan = current.trade_plan;
 
+  // A trade nobody can place is not worth a push notification. The analysis
+  // still ran and the levels are still on the site; what is suppressed is the
+  // interruption, because by the time the market reopens the gap will have
+  // moved the entry out from under it — spot gold opened one session 2.4% above
+  // the previous close while an alert built on that close sat unread.
+  if (current.market_closed) {
+    return {
+      alert: false,
+      reason: current.market_closed_reason ?? "市場休市，不發送",
+    };
+  }
+
   if (plan.stance !== "enter") {
     // The trade you were told about, disappearing.
     //

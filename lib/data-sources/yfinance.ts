@@ -150,13 +150,24 @@ export async function fetchLatestPrice(
       if (!res || !Array.isArray(res.timestamp)) return null;
       const closes = res.indicators?.quote?.[0]?.close ?? [];
 
+      // `meta.regularMarketTime` is when the instrument actually last traded.
+      // The bar timestamp is not: over a weekend Yahoo keeps emitting a bar for
+      // the current five-minute boundary carrying Friday's close forward, so a
+      // quote 40 hours old reported its age as 0 minutes and the card said
+      // "分析當下價格，0 分鐘前" about a market that had been shut since Friday.
+      const lastTrade = res.meta?.regularMarketTime;
+
       // Walk back to the last non-null close: Yahoo pads the tail of the
       // current session with nulls.
       for (let i = closes.length - 1; i >= 0; i--) {
         const close = closes[i];
         const ts = res.timestamp[i];
         if (close == null || !Number.isFinite(close) || ts == null) continue;
-        return { price: close, at: new Date(ts * 1000).toISOString() };
+        // The earlier of the two. A carried-forward bar cannot make the quote
+        // look fresher than the last trade, and a `regularMarketTime` running
+        // ahead of the bars (it does, intraday) cannot make it look staler.
+        const at = lastTrade && lastTrade < ts ? lastTrade : ts;
+        return { price: close, at: new Date(at * 1000).toISOString() };
       }
       return null;
     },
