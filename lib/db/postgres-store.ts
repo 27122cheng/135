@@ -86,6 +86,7 @@ export function postgresStore(connectionString: string): SignalStore {
         select * from signals
         where (${filter.symbol ?? null}::text is null or symbol = ${filter.symbol ?? null})
           and (${filter.grade ?? null}::text is null or grade = ${filter.grade ?? null})
+          and (${filter.stance ?? null}::text is null or trade_plan->>'stance' = ${filter.stance ?? null})
           and (${filter.from ?? null}::timestamptz is null or generated_at >= ${filter.from ?? null})
           and (${filter.to ?? null}::timestamptz is null or generated_at <= ${filter.to ?? null})
         order by generated_at desc

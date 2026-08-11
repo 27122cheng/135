@@ -179,7 +179,17 @@ export async function fetchOHLCV(
 
   const proxyGaps: string[] = [];
   const proxied = await fetchViaProxy(meta.yfinanceSymbol, timeframe, proxyGaps);
-  if (proxied) {
+  // A 200 with frozen bars is a failure wearing a success's clothes. Yahoo
+  // served this deployment data stuck at the previous Thursday — for days —
+  // and because the fetch "succeeded", the fallback chain never ran and Stooq
+  // sat unused while every card said 休市中. Four days covers any weekend plus
+  // slack; bars older than that mid-chain are grounds to try the next source,
+  // not something to present as the market.
+  const FROZEN_AFTER_MS = 4 * 24 * 60 * 60 * 1000;
+  const newest = proxied?.candles.at(-1)?.time;
+  const frozen =
+    newest !== undefined && Date.now() - new Date(newest).getTime() > FROZEN_AFTER_MS;
+  if (proxied && !frozen) {
     promoteStale(proxyGaps);
     return {
       symbol: meta.symbol,
@@ -189,7 +199,12 @@ export async function fetchOHLCV(
       stale: proxied.stale,
     };
   }
-  attempts.push(...proxyGaps, "行情代理無回應");
+  attempts.push(
+    ...proxyGaps,
+    frozen
+      ? `行情代理回應的 K 棒停在 ${String(newest).slice(0, 10)}（疑似上游凍結），視為失敗改試下一個來源`
+      : "行情代理無回應",
+  );
 
   const finnhubGaps: string[] = [];
   const finnhub = await fetchFinnhubOHLCV(meta, timeframe, finnhubGaps);
@@ -212,6 +227,22 @@ export async function fetchOHLCV(
     ...stooqGaps,
     STOOQ_INTERVAL[timeframe] ? "Stooq 無回應" : `Stooq 不支援 ${timeframe}`,
   );
+
+  // The frozen proxy answer is still the last resort: rejecting it existed to
+  // let a *better* source answer, and none did. An 11-day-old series labelled
+  // as such beats an empty chart — the same rule the stale cache tier follows.
+  if (proxied && frozen) {
+    gaps.push(
+      `${meta.symbol} ${timeframe} 僅剩行情代理的舊資料可用（最新 K 棒 ${String(newest).slice(0, 10)}，其他來源皆失敗），資料非即時`,
+    );
+    return {
+      symbol: meta.symbol,
+      timeframe,
+      candles: proxied.candles,
+      source: "yfinance-proxy",
+      stale: true,
+    };
+  }
 
   gaps.push(`${meta.symbol} ${timeframe} OHLCV 所有來源皆失敗（${attempts.join("；")}）`);
   return null;

@@ -53,6 +53,30 @@ function isPermanent(gap: string): boolean {
   return PERMANENT_PATTERNS.some((p) => p.test(gap));
 }
 
+/**
+ * Some lines in `data_gaps` are not gaps at all — they are the system
+ * explaining a decision it made on purpose. "本次不提供加倉點：評等 B…" is the
+ * add-on rule working exactly as designed; "AI 選出的組合風報比過低，已改用預設
+ * 規則" is the sanity check doing its job and the deterministic engine taking
+ * over. No data is missing in either case.
+ *
+ * They ride in `data_gaps` because that is the only per-signal free-text
+ * channel the schema has, but counting them in "⚠ N 項資料缺口" told the owner
+ * data was missing when it wasn't — the screenshot that prompted this had four
+ * "gaps" of which two were behaviour notes.
+ */
+const INFORMATIONAL_PATTERNS = [
+  /本次不提供加倉點/,
+  /已改用預設規則/,
+  // Legacy rows written before dedupe notes stopped being filed as gaps.
+  /已合併為一票/,
+  /合併後視為中性/,
+];
+
+export function isInformational(gap: string): boolean {
+  return INFORMATIONAL_PATTERNS.some((p) => p.test(gap));
+}
+
 export interface GroupedGaps {
   /** Unique env var names that would close one or more gaps. */
   missingKeys: string[];
@@ -62,6 +86,8 @@ export interface GroupedGaps {
   other: string[];
   /** Known limitations of the data landscape — informational, not actionable. */
   permanent: string[];
+  /** The system explaining its own behaviour — nothing is missing. */
+  informational: string[];
 }
 
 /**
@@ -108,12 +134,15 @@ export function groupDataGaps(gaps: string[]): GroupedGaps {
   const keyRelated: string[] = [];
   const other: string[] = [];
   const permanent: string[] = [];
+  const informational: string[] = [];
 
   for (const gap of gaps) {
     const match = gap.match(KEY_PATTERN);
     if (match && match[1].endsWith("_KEY")) {
       missingKeys.add(match[1]);
       keyRelated.push(gap);
+    } else if (isInformational(gap)) {
+      informational.push(gap);
     } else if (isPermanent(gap)) {
       permanent.push(gap);
     } else {
@@ -121,5 +150,5 @@ export function groupDataGaps(gaps: string[]): GroupedGaps {
     }
   }
 
-  return { missingKeys: [...missingKeys], keyRelated, other, permanent };
+  return { missingKeys: [...missingKeys], keyRelated, other, permanent, informational };
 }

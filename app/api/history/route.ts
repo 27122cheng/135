@@ -24,6 +24,7 @@ export async function GET(request: Request) {
       grade: searchParams.get("grade"),
       from: searchParams.get("from"),
       to: searchParams.get("to"),
+      stance: searchParams.get("stance") === "enter" ? "enter" : null,
       // Capped so a crafted ?limit= can't ask the database for everything.
       limit: Math.min(Number(searchParams.get("limit") ?? "50") || 50, 200),
     });

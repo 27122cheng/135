@@ -21,6 +21,17 @@ export interface HistoryFilter {
   grade?: string | null;
   from?: string | null;
   to?: string | null;
+  /**
+   * "enter" narrows to rows whose plan actually recommended a trade.
+   *
+   * A database predicate, not a client-side filter, because the difference is
+   * the whole bug it fixes: /history fetched the newest 50 rows and filtered
+   * them in the browser, and once the auto-scan was appending dozens of 觀望
+   * rows a day, every enter row had been pushed past row 50 — so the page said
+   * "這段期間的掃描全部是觀望" forever while Telegram kept announcing trades
+   * that were sitting in the same table, fifty rows down.
+   */
+  stance?: "enter" | null;
   limit: number;
 }
 

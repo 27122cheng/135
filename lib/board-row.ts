@@ -1,4 +1,5 @@
 import { COMMODITIES, type AddOnLevel, type Grade, type SignalRow } from "@/types/signal";
+import { groupDataGaps } from "@/lib/data-gaps";
 
 export interface BoardAddOn {
   sequence: number;
@@ -140,6 +141,13 @@ export function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | 
     waitFor: plan?.wait_for ?? null,
     reference: toReference(row),
     generatedAt: row.generated_at,
-    gapCount: Array.isArray(row.data_gaps) ? row.data_gaps.length : 0,
+    gapCount: Array.isArray(row.data_gaps)
+      ? // The board chip counts what someone could act on — behaviour notes and
+        // permanent free-data limitations are explained on the card, not here.
+        (() => {
+          const g = groupDataGaps(row.data_gaps as string[]);
+          return g.keyRelated.length + g.other.length;
+        })()
+      : 0,
   };
 }

@@ -44,7 +44,13 @@ export default function HistoryPage() {
     if (grade) params.set("grade", grade);
     if (from) params.set("from", from);
     if (to) params.set("to", to);
-    fetch(`/api/history?${params.toString()}`)
+    // Server-side, not filtered after the fetch. The client version pulled the
+    // newest 50 rows and filtered those, and once the auto-scan was appending
+    // dozens of 觀望 rows a day, every 進場 row sat past row 50 — the page
+    // said "全部是觀望" forever while Telegram announced trades living in the
+    // same table.
+    if (tradeableOnly) params.set("stance", "enter");
+    fetch(`/api/history?${params.toString()}`, { cache: "no-store" })
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -62,12 +68,9 @@ export default function HistoryPage() {
     return () => {
       cancelled = true;
     };
-  }, [symbol, grade, from, to]);
+  }, [symbol, grade, from, to, tradeableOnly]);
 
-  const visible = tradeableOnly
-    ? rows.filter((r) => r.trade_plan?.stance === "enter")
-    : rows;
-  const hidden = rows.length - visible.length;
+  const visible = rows;
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-5">
@@ -150,13 +153,12 @@ export default function HistoryPage() {
           className="h-3 w-3 accent-emerald-500"
         />
         只看建議進場的
-        {hidden > 0 && <span className="text-neutral-600">（隱藏了 {hidden} 筆觀望）</span>}
       </label>
 
       {!loading && !error && visible.length === 0 && (
         <p className="text-sm text-neutral-500">
-          {rows.length > 0
-            ? `這段期間的 ${rows.length} 次掃描全部是觀望，沒有建議進場的訊號。取消上面的勾選可以看全部。`
+          {tradeableOnly
+            ? "整個資料庫裡沒有任何一筆建議進場的歷史訊號（不只是最近幾筆）。取消上面的勾選可以看觀望紀錄。"
             : "尚無符合條件的歷史訊號。"}
         </p>
       )}

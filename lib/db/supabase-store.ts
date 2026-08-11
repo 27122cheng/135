@@ -83,6 +83,7 @@ export function supabaseStore(): SignalStore | null {
         .limit(filter.limit);
       if (filter.symbol) query = query.eq("symbol", filter.symbol);
       if (filter.grade) query = query.eq("grade", filter.grade);
+      if (filter.stance) query = query.eq("trade_plan->>stance", filter.stance);
       if (filter.from) query = query.gte("generated_at", filter.from);
       if (filter.to) query = query.lte("generated_at", filter.to);
 

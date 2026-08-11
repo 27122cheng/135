@@ -119,4 +119,22 @@ import { collapseCascades, groupDataGaps } from "@/lib/data-gaps";
   check("unknown wording stays actionable", g.other.length === 1 && g.permanent.length === 0, g);
 }
 
+// The system explaining its own behaviour is not a data gap. The screenshot
+// that prompted this said "4 項資料缺口" — two were real (a GDELT failure and
+// a key note) and two were rules doing their jobs: the add-on rule declining
+// to add on at grade B, and the RR sanity check rejecting an AI pick. Nothing
+// was missing in either, and counting them as gaps taught the owner the
+// warning panel lies.
+{
+  const g = groupDataGaps([
+    "本次不提供加倉點：評等 B 對方向的信心不足以加倉（僅 A / A+ 提供加倉點）",
+    "AI 選出的組合風險報酬比僅 1:0.66，低於 1:1 門檻，已改用預設規則",
+    "GDELT 新聞 (gold price) 取得失敗：HTTP 429，且無可用快取",
+  ]);
+  check("behaviour notes are informational, not gaps", g.informational.length === 2,
+    g.informational);
+  check("and are not counted as failures", g.other.length === 1, g.other);
+  check("while the real failure stays loud", g.other[0].includes("GDELT"), g.other);
+}
+
 report("data-gaps");

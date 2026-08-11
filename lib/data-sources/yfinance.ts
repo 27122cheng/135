@@ -1,6 +1,6 @@
 import type { Timeframe } from "@/types/signal";
 import { fetchFree } from "./free-source";
-import { fetchJson } from "./http";
+import { fetchJson, fetchText } from "./http";
 
 /**
  * The self-hosted yfinance proxy's engine.
@@ -111,8 +111,8 @@ export interface LatestPrice {
   at: string;
   /** How stale it is right now, in minutes. */
   ageMinutes: number;
-  /** Which feed answered — the direct quote, or the candle proxy's newest bar. */
-  source?: "yahoo-direct" | "proxy-bar";
+  /** Which feed answered — direct quote, Stooq, or the candle proxy's newest bar. */
+  source?: "yahoo-direct" | "stooq" | "proxy-bar";
 }
 
 /**
@@ -127,6 +127,8 @@ export interface LatestPrice {
 export async function fetchLatestPrice(
   ticker: string,
   gaps: string[],
+  /** Stooq's symbol for the same instrument — enables the independent fallback. */
+  stooqTicker?: string,
 ): Promise<LatestPrice | null> {
   const result = await fetchFree<{ price: number; at: string }>({
     source: "yahoo",
@@ -175,7 +177,7 @@ export async function fetchLatestPrice(
     },
   });
 
-  const direct = result
+  const direct: LatestPrice | null = result
     ? {
         price: result.value.price,
         at: result.value.at,
@@ -185,13 +187,24 @@ export async function fetchLatestPrice(
     : null;
   if (direct && direct.ageMinutes <= 3 * 60) return direct;
 
-  // Second source, different route. The direct endpoint served this deployment
-  // quotes whose last trade was 104 hours old — for days — while the candle
-  // proxy stayed minutes fresh. One feed is not redundancy: when the direct
-  // quote is missing or older than three hours, the proxy's newest hourly bar
-  // answers instead, with its own honest timestamp. The older direct answer is
-  // still returned if the proxy also fails, because a labelled old price beats
-  // none.
+  // Second opinion, different company. The proxy-bar fallback added first
+  // turned out to share Yahoo's upstream, and when Yahoo froze this
+  // deployment's data at the previous Thursday, both "independent" witnesses
+  // told the same lie and every card said 休市中 for days. Stooq is a separate
+  // provider entirely, keyless, with a latest-quote CSV — so a Yahoo-side
+  // freeze can no longer take out every price at once.
+  //
+  // Stooq stamps quotes in Warsaw local time (UTC+1/+2). Parsed as UTC the
+  // timestamp reads up to two hours *fresher* than reality — harmless for the
+  // staleness gate (the weekend clock covers the close, and two hours is under
+  // every threshold here) and preferable to a timezone table that rots.
+  if (stooqTicker) {
+    const stooq = await fetchStooqQuote(stooqTicker, gaps).catch(() => null);
+    if (stooq && (!direct || stooq.ageMinutes < direct.ageMinutes)) return stooq;
+  }
+
+  // Last resorts, same upstream as the direct quote: the proxy's newest hourly
+  // bar, then the labelled old direct answer — an old price beats none.
   const proxied = await fetchViaProxy(ticker, "H4", gaps).catch(() => null);
   const bar = proxied?.candles.at(-1);
   if (bar) {
@@ -201,6 +214,42 @@ export async function fetchLatestPrice(
     }
   }
   return direct;
+}
+
+/**
+ * Stooq's keyless latest-quote endpoint: one CSV line per symbol,
+ * `Symbol,Date,Time,Open,High,Low,Close,Volume`, "N/D" when unknown.
+ */
+async function fetchStooqQuote(stooqTicker: string, gaps: string[]): Promise<LatestPrice | null> {
+  const result = await fetchFree<{ price: number; at: string }>({
+    source: "stooq",
+    label: `Stooq 報價 (${stooqTicker})`,
+    key: `stooq:last:${stooqTicker}`,
+    ttlMs: 2 * 60 * 1000,
+    limit: { perMinute: 30 },
+    gaps,
+    staleMs: 10 * 60 * 1000,
+    fn: async () => {
+      const url = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqTicker)}&f=sd2t2ohlcv&h&e=csv`;
+      const text = await fetchText(url, undefined, 10000);
+      if (!text) return null;
+      const line = text.trim().split("\n")[1];
+      if (!line) return null;
+      const cols = line.split(",");
+      const [, date, time] = cols;
+      const close = Number(cols[6]);
+      if (!date || date === "N/D" || !Number.isFinite(close) || close <= 0) return null;
+      const at = new Date(`${date}T${time && time !== "N/D" ? time : "00:00:00"}Z`).toISOString();
+      return { price: close, at };
+    },
+  });
+  if (!result) return null;
+  return {
+    price: result.value.price,
+    at: result.value.at,
+    ageMinutes: Math.max(0, (Date.now() - new Date(result.value.at).getTime()) / 60000),
+    source: "stooq",
+  };
 }
 
 export interface ProxyResult {

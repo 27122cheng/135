@@ -63,6 +63,26 @@ function obstacle(price: number, strength: 1 | 2 | 3): PathObstacle {
   return { price, type: "前高", timeframe: "H4", strength };
 }
 
+// ── behaviour notes cost nothing ──────────────────────────────────
+{
+  // "本次不提供加倉點：評等 B…" is the add-on rule working as designed, filed
+  // in data_gaps because that's the only free-text channel. Billing it −3 as
+  // missing evidence made a signal lose confidence *because* one of its own
+  // rules fired correctly.
+  const clean = planConfidence(signal()).score;
+  const noted = planConfidence(
+    signal({
+      data_gaps: ["本次不提供加倉點：評等 B 對方向的信心不足以加倉（僅 A / A+ 提供加倉點）"],
+    }),
+  ).score;
+  check("a rule explaining itself does not cost confidence", noted === clean, [noted, clean]);
+
+  const real = planConfidence(
+    signal({ data_gaps: ["CFTC COT (XAUUSD) 取得失敗，且無可用快取"] }),
+  ).score;
+  check("while genuinely missing evidence still does", real < clean, [real, clean]);
+}
+
 // ── it is computed, not asked for ─────────────────────────────────
 {
   // Ten calls, one answer. The whole reason this exists rather than an AI field.

@@ -1,4 +1,5 @@
 import type { PathObstacle, TradeSignal } from "@/types/signal";
+import { isInformational } from "@/lib/data-gaps";
 import { breadthOf } from "./evidence";
 
 /**
@@ -157,7 +158,11 @@ export function planConfidence(signal: TradeSignal): Confidence {
   // 60: a rate-limited news feed and an exhausted AI tier, both already
   // accounted for elsewhere, were being billed a second time at full price.
   // Missing evidence should cost; the same misfortune counted twice should not.
-  const allGaps = signal.data_gaps ?? [];
+  // Behaviour notes ("本次不提供加倉點…", "已改用預設規則") describe a rule
+  // firing as designed, not evidence that failed to arrive. Billing them −3 as
+  // "missing" punished a signal for its own bookkeeping — a B-grade setup lost
+  // confidence points *because* the add-on rule correctly declined to add on.
+  const allGaps = (signal.data_gaps ?? []).filter((g) => !isInformational(g));
   const stale = allGaps.filter((g) => g.includes("快取") || g.includes("stale"));
   const aiRelated = allGaps.filter((g) => g.includes("AI") && !stale.includes(g));
   const missing = allGaps.filter((g) => !stale.includes(g) && !aiRelated.includes(g));

@@ -71,7 +71,8 @@ async function main() {
   const stale = await fetchOHLCV(gold, "D1", gaps4);
   check("serves the stale copy rather than nothing", stale?.candles.length === 1, stale);
   check("marks it stale", stale?.stale === true, stale?.stale);
-  check("announces staleness even on success", gaps4.some((g) => g.includes("stale")), gaps4);
+  check("announces staleness even on success",
+    gaps4.some((g) => g.includes("stale") || g.includes("非即時")), gaps4);
 
   report("ohlcv chain");
 }

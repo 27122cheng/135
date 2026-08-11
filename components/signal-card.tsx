@@ -160,7 +160,7 @@ function Interventions({ items }: { items: AppliedIntervention[] }) {
 }
 
 function DataGaps({ gaps }: { gaps: string[] }) {
-  const { missingKeys, keyRelated, other, permanent } = groupDataGaps(gaps);
+  const { missingKeys, keyRelated, other, permanent, informational } = groupDataGaps(gaps);
   // The headline count covers only what someone could actually fix. Permanent
   // limitations are still listed, just not counted as warnings — a number that
   // can never reach zero is a number people stop reading.
@@ -172,8 +172,10 @@ function DataGaps({ gaps }: { gaps: string[] }) {
         {missingKeys.length > 0 && (
           <span className="ml-1 text-amber-500/70">（{missingKeys.length} 個金鑰未設定）</span>
         )}
-        {actionable === 0 && permanent.length > 0 && (
-          <span className="ml-1 text-neutral-500">（{permanent.length} 項先天限制，無需處理）</span>
+        {actionable === 0 && permanent.length + informational.length > 0 && (
+          <span className="ml-1 text-neutral-500">
+            （{permanent.length + informational.length} 項說明，無需處理）
+          </span>
         )}
       </summary>
       <div className="space-y-4 px-4 pb-4">
@@ -204,6 +206,18 @@ function DataGaps({ gaps }: { gaps: string[] }) {
             <p className="mb-1.5 text-xs font-medium text-amber-300">本次取得失敗</p>
             <ul className="list-inside list-disc space-y-1 text-xs leading-relaxed text-amber-300/70">
               {other.map((g, i) => (
+                <li key={i}>{g}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {informational.length > 0 && (
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-neutral-400">
+              系統行為說明（規則照設計運作的紀錄，不是缺資料）
+            </p>
+            <ul className="list-inside list-disc space-y-1 text-xs leading-relaxed text-neutral-500">
+              {informational.map((g, i) => (
                 <li key={i}>{g}</li>
               ))}
             </ul>
