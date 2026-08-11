@@ -69,7 +69,8 @@ function riskReward(
  * A trade that risks more than it stands to make isn't worth taking.
  * Named because two code paths enforce it and they must not drift.
  */
-const MIN_RISK_REWARD = 1;
+/** 至少 1.5R — the operator's floor: a trade must stand to make 1.5× its risk. */
+const MIN_RISK_REWARD = 1.5;
 
 /** Prompt size caps — see buildPrompt for why each is where it is. */
 const MAX_CANDIDATES = 6;
@@ -219,8 +220,22 @@ export interface HorizonProfile {
   minHitRate: number;
 }
 
-export const DAY_PROFILE: HorizonProfile = { label: "當沖", maxTargetAtr: 2, minHitRate: 0.45 };
+/**
+ * The floors are the operator's, set explicitly: 當沖 70%, 參考價位 55%, and
+ * a minimum payoff of 1.5R everywhere — with the stated consequence accepted
+ * in the same breath: 「不然都顯示觀望」. A 70% floor at 1:1.5 is a genuinely
+ * hard bar (breakeven at 70% is only 1:0.43, so this demands nearly 3.5× the
+ * breakeven payoff); most scans will stand aside, and that is the instruction,
+ * not a malfunction. A floor that cannot be *demonstrated* — too little
+ * history to backtest — also reads as unmet: an unverifiable 70% is not 70%.
+ */
+export const DAY_PROFILE: HorizonProfile = { label: "當沖", maxTargetAtr: 2, minHitRate: 0.7 };
 export const SWING_PROFILE: HorizonProfile = { label: "波段", maxTargetAtr: 5, minHitRate: 0.3 };
+export const REFERENCE_PROFILE: HorizonProfile = {
+  label: "參考價位",
+  maxTargetAtr: 2,
+  minHitRate: 0.55,
+};
 
 /**
  * The risk/reward a given hit rate needs just to break even.
@@ -354,7 +369,7 @@ function viableCombos(input: TradePlanInput, profile: HorizonProfile): ComboScre
 function chooseGeometry(
   input: TradePlanInput,
   profile: HorizonProfile = DAY_PROFILE,
-): { combo: Combo; basis: string } | null {
+): { combo: Combo; basis: string; meetsFloor: boolean } | null {
   const { combos, rejected } = viableCombos(input, profile);
   if (combos.length === 0) return null;
   const screen = rejected.length > 0 ? `（已排除：${rejected.join("、")}）` : "";
@@ -368,6 +383,8 @@ function chooseGeometry(
     return {
       combo: byRatio,
       basis: `歷史 K 棒不足以回測各組合，改以風險報酬比最佳者為準（本組 1:${byRatio.rr}）${screen}`,
+      // Unverifiable is unmet: the floor is a claim about measured history.
+      meetsFloor: false,
     };
   }
 
@@ -394,6 +411,7 @@ function chooseGeometry(
       basis:
         `各組合的回測樣本都不足 ${MIN_RESOLVED_FOR_RANKING} 筆，不足以比較勝率，` +
         `改以風險報酬比最佳者為準（本組 1:${byRatio.rr}）${screen}`,
+      meetsFloor: false,
     };
   }
 
@@ -431,6 +449,7 @@ function chooseGeometry(
       `在 ${combos.length} 組真實結構組合中，先要求回測勝率 ≥ ${Math.round(profile.minHitRate * 100)}%，` +
       `再取期望值最高者：${bt.resolved} 次中 ${bt.wins} 勝（勝率 ${hitPct}%），` +
       `每單位風險期望 ${bt.expectancyR}R，風報比 1:${chosen.rr}${note}${screen}${warn}`,
+    meetsFloor: !lowHitRate,
   };
 }
 
@@ -464,8 +483,12 @@ export interface ReferenceGeometry {
 }
 
 export function selectReferenceGeometry(input: TradePlanInput): ReferenceGeometry | null {
-  const picked = chooseGeometry(input);
-  if (!picked) return null;
+  // The reference levels have their own floor (55%), set by the operator:
+  // paper trades below it teach nothing worth learning, and levels that
+  // cannot demonstrate it are not shown at all rather than shown with a
+  // caveat nobody reads.
+  const picked = chooseGeometry(input, REFERENCE_PROFILE);
+  if (!picked || !picked.meetsFloor) return null;
   const { entry, sl, tp, rr, backtest } = picked.combo;
   return {
     entry: round(entry.price),
@@ -493,7 +516,7 @@ export function selectReferenceGeometry(input: TradePlanInput): ReferenceGeometr
  */
 export function selectSwingVariant(input: TradePlanInput): SwingVariant | null {
   const picked = chooseGeometry(input, SWING_PROFILE);
-  if (!picked) return null;
+  if (!picked || !picked.meetsFloor) return null;
   const { entry, sl, tp, rr, backtest } = picked.combo;
   return {
     entry: round(entry.price),
@@ -528,6 +551,20 @@ function fallbackPlan(input: TradePlanInput, why: string | null): TradePlan {
         ? "缺少可用的進場、停損或停利結構，無法組成計畫。"
         : `現有結構的任何組合風險報酬比都低於 1:${MIN_RISK_REWARD}，賠率不划算，建議觀望。`,
       "等待價格接近有效的支撐／壓力結構，或等更遠的停利結構出現。",
+      "fallback",
+      why,
+    );
+  }
+
+  // 未達門檻一律觀望 — the operator's rule, verbatim. A best-available combo
+  // below the demonstrated 70% floor (or one whose floor cannot be verified)
+  // is shown as the reason for waiting, never shipped as a trade.
+  if (!picked.meetsFloor) {
+    const hit = picked.combo.backtest?.hitRate;
+    return waitPlan(
+      `最佳組合${hit != null ? `回測勝率僅 ${Math.round(hit * 100)}%` : "的勝率無法以足夠樣本驗證"}，` +
+        `未達${DAY_PROFILE.label}門檻 ${Math.round(DAY_PROFILE.minHitRate * 100)}% —— 規則：未達勝率門檻一律觀望。${picked.basis}`,
+      `等待市場結構出現回測勝率 ≥${Math.round(DAY_PROFILE.minHitRate * 100)}% 且風報比 ≥1:${MIN_RISK_REWARD} 的組合。`,
       "fallback",
       why,
     );
@@ -698,6 +735,25 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
   if (rr < MIN_RISK_REWARD) {
     gaps.push(`AI 選出的組合風險報酬比僅 1:${rr}，低於 1:${MIN_RISK_REWARD} 門檻，已改用預設規則`);
     return fallbackPlan(input, `AI 選出的組合風報比僅 1:${rr}，低於門檻，已改用預設規則`);
+  }
+  // The same hit-rate floor the deterministic path enforces. Without it the
+  // AI's pick was the one door around 未達門檻一律觀望 — the identical
+  // geometry the fallback would refuse could walk in wearing "AI 判斷".
+  const aiBacktest =
+    input.candles && input.candles.length >= 60
+      ? backtestPlanGeometry(input.direction, entry.price, sl.price, tp.price, input.candles, rr)
+      : null;
+  const aiHit = aiBacktest?.hitRate ?? null;
+  if (
+    aiBacktest === null ||
+    aiBacktest.resolved < MIN_RESOLVED_FOR_RANKING ||
+    (aiHit ?? 0) < DAY_PROFILE.minHitRate
+  ) {
+    gaps.push(
+      `AI 選出的組合回測勝率${aiHit != null ? `僅 ${Math.round(aiHit * 100)}%` : "無法驗證"}，` +
+        `未達 ${Math.round(DAY_PROFILE.minHitRate * 100)}% 門檻，已改用預設規則`,
+    );
+    return fallbackPlan(input, "AI 選出的組合未達勝率門檻，已改用預設規則");
   }
 
   // Not taken from the model. `lib/analysis/confidence.ts` computes the number

@@ -591,6 +591,12 @@ async function buildSignalForSymbol(
           atr: atrD1,
         });
 
+  if (tradePlan.stance !== "enter" && referenceGeometry === null) {
+    gaps.push(
+      "本次不提供參考價位：沒有任何組合通過參考價位門檻（回測勝率 ≥55% 且風報比 ≥1:1.5）",
+    );
+  }
+
   // 加倉點 — structure-anchored, computed only for a plan that actually enters.
   // Attached after the plan exists because the levels depend on its entry, stop
   // and target, not just on the signal.

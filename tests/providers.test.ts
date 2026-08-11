@@ -116,6 +116,16 @@ async function main() {
   __resetQuotaForTests();
   __resetCacheForTests();
   process.env.GEMINI_API_KEY = "x";
+  // A steady uptrend so the AI-picked geometry demonstrably clears the 70%
+  // hit-rate floor — without candles the floor is unverifiable and the plan
+  // (correctly) refuses to enter, which would hide the invariant under test.
+  const planCandles = Array.from({ length: 400 }, (_, i) => {
+    const price = 1000 + i * 10 + Math.sin(i / 7) * 3;
+    return {
+      time: new Date(Date.UTC(2025, 0, 1) + i * 86400000).toISOString(),
+      open: price, high: price + 8, low: price - 8, close: price, volume: 1000,
+    };
+  });
   const planInput = {
     symbol: "XAUUSD",
     direction: "long" as const,
@@ -130,6 +140,7 @@ async function main() {
     narrative: "n",
     knownGaps: [],
     gradeForcesWait: false,
+    candles: planCandles,
   };
   const reply = (obj: unknown) => ({
     status: 200,

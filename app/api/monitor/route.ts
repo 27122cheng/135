@@ -26,29 +26,30 @@ import type { SignalRow, TradePlan } from "@/types/signal";
  * paper position opens where the analysis was standing.
  */
 function shadowPlan(signal: SignalRow): TradePlan | null {
-  const zone = signal.entry_zone;
-  const stop = signal.stop_loss?.price;
-  const target = signal.take_profits?.[0]?.price;
-  if (!zone || !Number.isFinite(stop) || !Number.isFinite(target)) return null;
-  const entry = (zone.low + zone.high) / 2;
-  if (!(entry > 0)) return null;
+  // Only the vetted reference plan is paper-tracked — the levels that passed
+  // the 55% hit-rate floor and the 1:1.5 payoff floor. The raw computed
+  // levels used to be tracked here, which measured geometry no rule had
+  // approved; a win rate for levels nobody vetted answers a question nobody
+  // asked.
+  const ref = signal.reference_plan;
+  if (!ref) return null;
+  const { entry, stop_loss: stop, take_profit: target } = ref;
+  if (![entry, stop, target].every(Number.isFinite) || !(entry > 0)) return null;
   // The same geometry check the real plans get: a stop on the winning side or
   // a target on the losing side is a broken row, not a trade to track.
   const ok =
-    signal.direction === "long"
-      ? stop! < entry && target! > entry
-      : stop! > entry && target! < entry;
+    signal.direction === "long" ? stop < entry && target > entry : stop > entry && target < entry;
   if (!ok) return null;
 
   return {
     stance: "enter",
     entry,
-    stop_loss: stop!,
-    take_profit: target!,
-    entry_reason: "參考價位（分析當下價格）",
-    stop_loss_reason: signal.stop_loss.structure,
-    take_profit_reason: signal.take_profits[0].structure,
-    risk_reward: null,
+    stop_loss: stop,
+    take_profit: target,
+    entry_reason: ref.entry_reason,
+    stop_loss_reason: ref.stop_reason,
+    take_profit_reason: ref.target_reason,
+    risk_reward: ref.risk_reward,
     confidence: "low",
     summary: "參考價位紙上追蹤，非建議進場。",
     add_ons: [],
@@ -176,16 +177,34 @@ export async function GET(request: Request) {
         memory,
       });
 
-      await store.saveMonitorState({
-        symbol: stateKey,
-        // latest_signal ids are the symbol, not a uuid; the column is typed
-        // uuid, so a non-uuid id is stored as null and identity lives in
-        // `tracked.generatedAt` instead.
-        signalId: /^[0-9a-f-]{36}$/i.test(latest.id) ? latest.id : null,
-        lastPrice: quote.price,
-        tracked,
-        ...next,
-      });
+      // No memory, no mouth. If this state cannot be persisted, the next
+      // sweep will believe nothing happened and fire the identical events
+      // again — the duplicate 已觸及進場 pushes were exactly this loop. An
+      // event that cannot be remembered is not announced and not journalled;
+      // the error is reported instead, once, here.
+      try {
+        await store.saveMonitorState({
+          symbol: stateKey,
+          // latest_signal ids are the symbol, not a uuid; the column is typed
+          // uuid, so a non-uuid id is stored as null and identity lives in
+          // `tracked.generatedAt` instead.
+          signalId: /^[0-9a-f-]{36}$/i.test(latest.id) ? latest.id : null,
+          lastPrice: quote.price,
+          tracked,
+          ...next,
+        });
+      } catch (err) {
+        return {
+          symbol: meta.symbol,
+          paper,
+          price: quote.price,
+          state: next.state,
+          events: events.map((e) => e.kind),
+          notified: [],
+          review: null,
+          saveError: `監控狀態寫入失敗，本輪事件不通知不記錄（否則每輪重播）：${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
 
       let notified: string[] = [];
       if (events.length > 0 && !paper) {

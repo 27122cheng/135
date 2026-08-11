@@ -65,19 +65,21 @@ async function main() {
       ],
     };
 
-    // Without ATR the screens cannot run — a ratio alone cannot tell a stop
-    // inside the noise from a sane one, and that is stated rather than assumed.
+    // A choppy market with no drift: nothing here backtests near the 70%
+    // floor, so the operator's rule turns the whole menu into a wait — and
+    // the refusal itself must carry the screens and the floor, so the reader
+    // sees why rather than just "觀望".
     const blind = await buildTradePlan(menu, gaps);
-    check("with no ATR the tight stop is still reachable",
-      blind.stop_loss === 53160, blind.stop_loss);
+    check("below the floor the menu waits, ATR or not",
+      blind.stance === "wait", blind.summary);
 
     const screened = await buildTradePlan({ ...menu, atr: 500 }, gaps);
     check("a stop inside the noise is rejected", screened.stop_loss !== 53160,
       [screened.stop_loss, screened.risk_reward]);
     check("and a target beyond the horizon too", screened.take_profit !== 54744,
       screened.take_profit);
-    check("the risk/reward comes back to something takeable",
-      (screened.risk_reward ?? 99) < 5, screened.risk_reward);
+    check("the refusal names the 70% floor",
+      screened.stance === "wait" && screened.summary.includes("70%"), screened.summary);
     check("the summary says what was excluded",
       screened.summary.includes("已排除"), screened.summary);
     check("naming the ATR screens",
@@ -86,8 +88,9 @@ async function main() {
 
   // ── the hit-rate floor ──────────────────────────────────────────
   {
-    // Both combinations are sized sanely; one resolves often, the other almost
-    // never. Ranking on expectancy alone used to take the second.
+    // In the choppy fixture nothing reaches 70%, so both targets refuse; in a
+    // steady trend the near target demonstrates the floor and enters. The
+    // floor has to be passable, or 70% is not a floor but a shutdown.
     const menu = {
       ...base,
       atr: 500,
@@ -98,11 +101,32 @@ async function main() {
         { price: 54900, label: "很遠的前高" },
       ],
     };
-    const plan = await buildTradePlan(menu, gaps);
-    check("the followable target wins", plan.take_profit === 53800,
-      [plan.take_profit, plan.risk_reward]);
+    const chop = await buildTradePlan(menu, gaps);
+    check("a choppy market clears nothing and waits", chop.stance === "wait", chop.summary);
+    check("and the floor is stated in the refusal",
+      chop.summary.includes("勝率"), chop.summary);
+
+    const trend = Array.from({ length: 400 }, (_, i) => {
+      const p = 53000 + i * 40 + Math.sin(i / 7) * 150;
+      return {
+        time: new Date(Date.UTC(2025, 0, 1 + i)).toISOString(),
+        open: p, high: p + 260, low: p - 260, close: p, volume: 1000,
+      };
+    });
+    const last = trend[trend.length - 1].close;
+    const trending = await buildTradePlan(
+      {
+        ...menu,
+        candles: trend,
+        entryCandidates: [{ price: last, label: "現價" }],
+        slCandidates: [{ price: last - 400, label: "結構外" }],
+        tpCandidates: [{ price: last + 600, label: "前高" }],
+      },
+      gaps,
+    );
+    check("a demonstrated floor still enters", trending.stance === "enter", trending.summary);
     check("and the floor is stated in the summary",
-      plan.summary.includes("勝率 ≥"), plan.summary);
+      trending.summary.includes("勝率 ≥"), trending.summary);
   }
 
   // ── a withdrawn trade is announced ──────────────────────────────

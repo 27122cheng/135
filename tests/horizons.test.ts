@@ -20,9 +20,10 @@ import type { Candle } from "@/lib/data-sources/ohlcv";
  * plan, not a second monitored trade.
  */
 
-// A trending market with real range, so far targets actually resolve.
+// A steady trend with real range: near targets demonstrate the 70% day
+// floor, far ones the 30% swing floor, so both horizons genuinely qualify.
 const candles: Candle[] = Array.from({ length: 400 }, (_, i) => {
-  const p = 53000 + i * 6 + Math.sin(i / 7) * 400;
+  const p = 53000 + i * 40 + Math.sin(i / 7) * 150;
   return {
     time: new Date(Date.UTC(2025, 0, 1 + i)).toISOString(),
     open: p,
@@ -32,6 +33,7 @@ const candles: Candle[] = Array.from({ length: 400 }, (_, i) => {
     volume: 1000,
   };
 });
+const LAST = candles[candles.length - 1].close;
 
 const base = {
   symbol: "US30",
@@ -66,21 +68,23 @@ async function main() {
   {
     const menu = {
       ...base,
-      entryCandidates: [{ price: 55400, label: "現價" }],
-      slCandidates: [{ price: 55000, label: "結構外" }],
+      entryCandidates: [{ price: LAST, label: "現價" }],
+      slCandidates: [{ price: LAST - 400, label: "結構外" }],
       tpCandidates: [
-        { price: 56200, label: "近的前高" }, // 1.6×ATR — day territory
-        { price: 57300, label: "遠的前高" }, // 3.8×ATR — swing only
+        { price: LAST + 600, label: "近的前高" }, // 1.2×ATR — day territory
+        { price: LAST + 1200, label: "遠的前高" }, // 2.4×ATR — swing only
       ],
     };
     const day = await buildTradePlan(menu, []);
-    check("the day plan stays inside its horizon", day.take_profit === 56200, day.take_profit);
+    check("the day plan stays inside its horizon",
+      day.stance === "enter" && Math.abs((day.take_profit ?? 0) - (LAST + 600)) < 0.01,
+      [day.stance, day.take_profit]);
 
     const swing = selectSwingVariant(menu);
     check("a swing variant exists", swing !== null, swing);
-    check("its screens allowed the far target",
-      swing !== null && !swing.summary.includes("改用未篩選的組合"), swing?.summary);
-    check("it carries its own hit rate", swing?.hit_rate !== undefined, swing);
+    check("it reaches the target the day plan excluded",
+      Math.abs((swing?.take_profit ?? 0) - (LAST + 1200)) < 0.01, swing?.take_profit);
+    check("it carries its own hit rate", swing?.hit_rate != null, swing);
     check("and names the 30% floor", swing?.summary.includes("30%") === true, swing?.summary);
   }
 

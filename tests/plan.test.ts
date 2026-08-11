@@ -20,19 +20,16 @@ async function main() {
   const gaps: string[] = [];
   delete process.env.ANTHROPIC_API_KEY;
 
-  // 1. Healthy grade, good R:R -> enter.
+  // 1. Healthy grade, good payoff — but no candles, so the 70% floor cannot
+  // be demonstrated. 未達門檻一律觀望 applies to "unverifiable" too: a 70%
+  // that cannot be measured is not 70%.
   const p1 = await buildTradePlan(
     { ...base, grade: "A", bias_score: 6, entry_structure_score: 5, total_score: 11, gradeForcesWait: false },
     gaps,
   );
-  console.log("1 stance:", p1.stance, p1.entry, p1.stop_loss, p1.take_profit, "RR", p1.risk_reward);
-  // 5, not 2. The fallback used to take entryCandidates[0] — the current price
-  // — giving 80/40. It now searches every combination, and the pullback entry
-  // at 4100 against the same stop is 100/20. Both are real structures the
-  // analysis produced; the old rule simply never looked at the better one.
-  check("1 picks the best available payoff", p1.stance === "enter" && p1.risk_reward === 5,
-    p1.risk_reward);
-  check("1 uses the pullback entry that earned it", p1.entry === 4100, p1.entry);
+  console.log("1 stance:", p1.stance, "|", p1.summary.slice(0, 60));
+  check("1 an unverifiable floor waits", p1.stance === "wait" && p1.entry === null, p1.summary);
+  check("1 and names the 70% rule", p1.summary.includes("70%"), p1.summary);
 
   // 2. no-trade grade -> must be wait, with a wait_for.
   const p2 = await buildTradePlan(
@@ -56,15 +53,11 @@ async function main() {
     gaps,
   );
   console.log("3 stance:", p3.stance, "|", p3.summary.slice(0, 40));
-  // This used to be a wait, and that was the bug rather than the feature:
-  // entering at the current price gives 5/40, but the pullback entry at 4100
-  // against the same stop gives 25/20 = 1.25, which clears the floor. The old
-  // fallback refused a workable plan because it only ever examined one of the
-  // three combinations — and `decideStance`, which does check them all, was
-  // meanwhile saying "enter". The two now agree.
-  check("3 finds the combination that clears 1:1", p3.stance === "enter", p3.summary);
-  check("3 uses the pullback entry", p3.entry === 4100, p3.entry);
-  check("3 reports the real ratio", p3.risk_reward === 1.25, p3.risk_reward);
+  // The best combination here is the pullback entry at 1.25R — which used to
+  // clear the old 1:1 floor. The operator's floor is now 1:1.5, so this whole
+  // menu is a refusal, and the summary says which floor refused it.
+  check("3 a 1.25R best is below the 1.5R floor", p3.stance === "wait", p3.summary);
+  check("3 and the floor is named", p3.summary.includes("1.5"), p3.summary);
 
   // A menu where *nothing* clears the floor must still refuse.
   const p4 = await buildTradePlan(
@@ -80,7 +73,7 @@ async function main() {
     },
     gaps,
   );
-  check("4 refuses when no combination clears 1:1", p4.stance === "wait" && p4.entry === null,
+  check("4 refuses when no combination clears 1:1.5", p4.stance === "wait" && p4.entry === null,
     p4.summary);
 
   // ── geometry is chosen on expectancy, not on the ratio ───────────
@@ -120,17 +113,49 @@ async function main() {
     };
 
     const blind = await buildTradePlan(menu, gaps);
-    check("without history it still takes the best ratio", blind.risk_reward === 12.5,
-      blind.risk_reward);
-    check("and says that is why", blind.summary.includes("K 棒不足"), blind.summary);
+    check("without history the floor is unverifiable, so it waits",
+      blind.stance === "wait", blind.summary);
 
+    // With history the oscillation resolves plenty of samples, but nothing
+    // near 70% — the menu waits and the summary carries the measured number.
     const informed = await buildTradePlan({ ...menu, candles }, gaps);
-    check("with history it refuses the unreachable target", informed.take_profit === 4180,
-      [informed.take_profit, informed.risk_reward]);
-    check("the summary reports the win rate it chose on",
+    check("a measurable market below the floor also waits",
+      informed.stance === "wait", informed.summary);
+    check("with the measured hit rate in the refusal",
       informed.summary.includes("勝率"), informed.summary);
-    check("and names the ratio it passed over",
-      informed.summary.includes("賠率最高的一組是 1:12.5"), informed.summary);
+  }
+
+  // ── the floor is passable, not decorative ────────────────────────
+  //
+  // A steady trend where the near target genuinely resolves first almost
+  // every time: the same rules that refuse everything above must let this
+  // one through, or 70% is not a floor but a shutdown.
+  {
+    const trend = Array.from({ length: 400 }, (_, i) => {
+      const p = 53000 + i * 40 + Math.sin(i / 7) * 150;
+      return {
+        time: new Date(Date.UTC(2025, 0, 1 + i)).toISOString(),
+        open: p, high: p + 260, low: p - 260, close: p, volume: 1000,
+      };
+    });
+    const last = trend[trend.length - 1].close;
+    const p = await buildTradePlan(
+      {
+        ...base,
+        grade: "A" as const,
+        bias_score: 6, entry_structure_score: 5, total_score: 11,
+        gradeForcesWait: false,
+        entryCandidates: [{ price: last, label: "現價" }],
+        slCandidates: [{ price: last - 400, label: "結構外" }],
+        tpCandidates: [{ price: last + 600, label: "前高" }],
+        candles: trend,
+        atr: 500,
+      },
+      gaps,
+    );
+    check("a demonstrated 70%+ geometry still enters", p.stance === "enter", p.summary);
+    check("at the operator's minimum payoff or better", (p.risk_reward ?? 0) >= 1.5,
+      p.risk_reward);
   }
 
   // ── the fallback says why the AI was skipped ─────────────────────
