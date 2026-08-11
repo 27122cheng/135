@@ -1,6 +1,7 @@
 import { completeAI, jsonSchema } from "@/lib/ai";
 import type { BiasItem, NewsDigest, NewsKeyPoint, NewsSource } from "@/types/signal";
 import { fetchGdeltNews } from "../data-sources/gdelt";
+import { fetchGoogleNews } from "../data-sources/google-news";
 import { fetchFinnhubMarketNews } from "../data-sources/finnhub";
 import { scoreHeadlines } from "./news-lexicon";
 
@@ -204,7 +205,8 @@ function lexiconResult(articles: Article[], gaps: string[]): NewsAnalysisResult 
   };
 }
 
-/** 新聞面：抓近 48h 新聞（GDELT + Finnhub），交給 AI 評 -1~+1 情緒分並摘要，附來源連結。*/
+/** 新聞面：抓近 48h 新聞（GDELT，失敗時退到 Google News RSS，加上 Finnhub），
+ *  交給 AI 評 -1~+1 情緒分並摘要，附來源連結。*/
 export async function analyzeNews(
   gdeltQuery: string,
   finnhubKeywords: string[],
@@ -218,6 +220,20 @@ export async function analyzeNews(
     ...(gdelt ?? []).map((a) => ({ headline: a.headline, source: a.source, url: a.url, datetime: a.datetime })),
     ...(finnhub ?? []).map((a) => ({ headline: a.headline, source: a.source, url: a.url, datetime: a.datetime })),
   ];
+
+  // GDELT down (the live failure: "連線失敗 fetch failed") used to black out
+  // the whole 新聞面 dimension, because it was the only keyless headline
+  // source. Google News RSS is a different company on different
+  // infrastructure — asked only when the primary path came back empty, so a
+  // working GDELT costs nothing extra.
+  if (articles.length === 0) {
+    const term = gdeltQuery.split(/\s+OR\s+/i)[0].replace(/"/g, "").trim();
+    const backup = await fetchGoogleNews(term, gaps);
+    for (const a of backup ?? []) {
+      articles.push({ headline: a.headline, source: a.source, url: a.url, datetime: a.datetime });
+    }
+  }
+
   if (articles.length === 0) {
     // No gap pushed here on purpose. fetchGdeltNews has already said either
     // "取得失敗" or "查無相關新聞", and Finnhub is optional — adding a generic

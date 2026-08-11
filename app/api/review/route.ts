@@ -1,4 +1,5 @@
 import { getSignalStore } from "@/lib/db";
+import { buildRiskAdvice } from "@/lib/journal/advice";
 import { computeReviewStats, computeTrackRecord } from "@/lib/journal/stats";
 import { summariseTags, triggeredTags } from "@/lib/journal/interventions";
 import { json } from "@/lib/json-response";
@@ -25,11 +26,13 @@ export async function GET(request: Request) {
     // Which tags are currently tightening new signals, so the page can show
     // the live consequence of the history above it.
     const tagStats = summariseTags(entries);
+    const active = triggeredTags(tagStats);
     return json({
       ...stats,
       trackRecord: computeTrackRecord(entries),
-      activeInterventions: triggeredTags(tagStats),
+      activeInterventions: active,
       recentTagStats: tagStats,
+      riskAdvice: buildRiskAdvice(tagStats, active),
     });
   } catch (err) {
     return json(

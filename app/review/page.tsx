@@ -8,11 +8,13 @@ import type { GradePerformance, ReviewStats, TagDistribution, TrackRecord } from
 import type { TagStat } from "@/types/journal";
 import { SeverityTrend, StopReasonDonut, TAG_COLORS } from "@/components/review-charts";
 import { JournalForm } from "@/components/journal-form";
+import type { RiskAdvice } from "@/lib/journal/advice";
 
 interface ReviewResponse extends ReviewStats {
   trackRecord?: TrackRecord;
   activeInterventions: TagStat[];
   recentTagStats: TagStat[];
+  riskAdvice?: RiskAdvice[];
   error?: string;
 }
 
@@ -45,7 +47,7 @@ export default function ReviewPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 py-5">
       <header className="mb-4 flex items-baseline justify-between gap-3">
-        <h1 className="text-base font-bold text-neutral-100">停損復盤</h1>
+        <h1 className="text-base font-bold text-neutral-100">交易建議復盤</h1>
         <nav className="flex shrink-0 gap-3 text-sm text-neutral-500">
           <Link href="/" className="hover:text-neutral-200">
             訊號
@@ -99,35 +101,54 @@ export default function ReviewPage() {
 
       {stats && !loading && (
         <div className="flex flex-col gap-4">
+          {/* The headline: how the system's own recommendations actually did.
+              This page reviews the signals, not the reader's personal book —
+              every 進場 recommendation is auto-settled by the 5-minute monitor
+              and lands here without anyone typing anything. */}
+          <Section title="交易建議的實際命中率（監控自動結算）">
+            {stats.trackRecord ? (
+              <TrackRecordTable record={stats.trackRecord} />
+            ) : (
+              <p className="text-xs text-neutral-600">
+                每筆建議進場的訊號由 5 分鐘監控自動追蹤到停損或停利，結算後自動記錄在這裡 —
+                不需要手動輸入。目前還沒有結算完成的建議。
+              </p>
+            )}
+          </Section>
+
+          {stats.riskAdvice && stats.riskAdvice.length > 0 && (
+            <Section title="風控與停損建議">
+              <RiskAdviceList items={stats.riskAdvice} />
+            </Section>
+          )}
+
+          {stats.activeInterventions.length > 0 && (
+            <section className="rounded-xl border border-red-500/40 bg-red-500/5 p-4">
+              <h2 className="mb-2 text-sm font-medium text-red-300">
+                已從止損原因學到、正在套用的調整
+              </h2>
+              <p className="mb-2 text-[11px] text-neutral-500">
+                近 30 筆中出現 ≥3 次且平均 severity ≥3 的原因，會自動加嚴之後每一筆交易建議的門檻
+                — 只會收緊，不會放寬。
+              </p>
+              <ul className="space-y-1">
+                {stats.activeInterventions.map((t) => (
+                  <li key={t.tag} className="text-[11px] text-neutral-300">
+                    <span className="font-mono text-red-400">{t.tag}</span>{" "}
+                    {STOP_REASON_LABELS[t.tag]} — {t.count} 次，平均 severity {t.avgSeverity}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {stats.totalEntries === 0 ? (
             <p className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-6 text-center text-sm text-neutral-500">
-              還沒有交易紀錄。在下方記一筆平倉的交易就會開始統計。
+              還沒有已結算的交易建議。監控結算第一筆（停損或停利）之後，
+              停損原因分布與各等級表現會開始累積。
             </p>
           ) : (
             <>
-              {stats.activeInterventions.length > 0 && (
-                <section className="rounded-xl border border-red-500/40 bg-red-500/5 p-4">
-                  <h2 className="mb-2 text-sm font-medium text-red-300">目前生效中的干涉</h2>
-                  <p className="mb-2 text-[11px] text-neutral-500">
-                    近 30 筆中出現 ≥3 次且平均 severity ≥3 的 tag，會自動加嚴新訊號的門檻。
-                  </p>
-                  <ul className="space-y-1">
-                    {stats.activeInterventions.map((t) => (
-                      <li key={t.tag} className="text-[11px] text-neutral-300">
-                        <span className="font-mono text-red-400">{t.tag}</span>{" "}
-                        {STOP_REASON_LABELS[t.tag]} — {t.count} 次，平均 severity {t.avgSeverity}
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-
-              {stats.trackRecord && (
-                <Section title="實際命中率（系統自己追蹤的結果）">
-                  <TrackRecordTable record={stats.trackRecord} />
-                </Section>
-              )}
-
               <Section title="停損原因分布">
                 <StopReasonDonut data={stats.tagDistribution} />
               </Section>
@@ -146,9 +167,16 @@ export default function ReviewPage() {
             </>
           )}
 
-          <Section title="記錄一筆平倉交易">
-            <JournalForm defaultSymbol={symbol || "XAUUSD"} onSaved={load} />
-          </Section>
+          {/* Manual entry stays available for trades taken outside the system,
+              but collapsed — the recommendations record themselves. */}
+          <details className="rounded-xl border border-neutral-800 bg-neutral-900/40">
+            <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-neutral-400">
+              手動補記一筆自己的交易（選填 — 系統的建議會自動記錄，不用填這裡）
+            </summary>
+            <div className="px-4 pb-4">
+              <JournalForm defaultSymbol={symbol || "XAUUSD"} onSaved={load} />
+            </div>
+          </details>
         </div>
       )}
     </main>
@@ -195,6 +223,41 @@ function SetupButton({ onDone }: { onDone: () => void }) {
       </p>
       {detail && <p className="mt-1 text-[11px] text-red-300">{detail}</p>}
     </div>
+  );
+}
+
+/**
+ * 風控與停損建議 — each line pairs what the reader should do with what the
+ * engine already enforces automatically, so "the system learned from this"
+ * is a checkable claim instead of a vibe. Advice for causes that never
+ * happened is not shown; the baseline rules always are.
+ */
+function RiskAdviceList({ items }: { items: RiskAdvice[] }) {
+  return (
+    <ul className="flex flex-col gap-2.5">
+      {items.map((a, i) => (
+        <li key={i} className="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-xs font-medium text-neutral-200">{a.title}</p>
+            {a.active && a.tag && (
+              <span className="shrink-0 rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] font-medium text-red-400">
+                干涉生效中
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-neutral-400">{a.detail}</p>
+          {a.basedOn && (
+            <p className="mt-1 text-[10px] text-neutral-600">依據：{a.basedOn}</p>
+          )}
+          {a.automated && (
+            <p className="mt-1 text-[10px] leading-relaxed text-emerald-500/70">
+              系統已自動化：{a.automated}
+              {a.tag && !a.active && "（此原因尚未達到觸發門檻，達標後自動生效）"}
+            </p>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 
