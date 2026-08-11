@@ -83,15 +83,21 @@ type YahooChartResult = NonNullable<NonNullable<YahooChartResponse["chart"]>["re
  * for days. Whether that is a poisoned edge cache or per-host rate shaping,
  * asking the second hostname is nearly free and answers it either way.
  *
- * A host's answer is accepted immediately when its newest bar is younger than
- * four days (any weekend plus slack — same threshold ohlcv.ts uses to call the
- * proxy frozen). Otherwise the next host is tried, and the freshest of the
- * frozen answers is returned as a last resort rather than nothing.
+ * A host's answer is accepted immediately only while it is *actually fresh*
+ * for its purpose — `freshEnoughMs` is the caller's, because "fresh" means
+ * 30 minutes for a live quote and a few hours for an H4 series. The first
+ * cut used one four-day threshold (the frozen-proxy bound), which meant a
+ * host serving six-hour-old prices was accepted without ever asking the
+ * second host — and six hours of quote lag is exactly what kept open markets
+ * reading 休市中. Below the threshold the other host is asked too and the
+ * freshest answer wins.
  */
 const YAHOO_HOSTS = ["query1", "query2"] as const;
-const YAHOO_FRESH_MS = 4 * 24 * 60 * 60 * 1000;
 
-async function fetchYahooChart(pathAndQuery: string): Promise<YahooChartResult | null> {
+async function fetchYahooChart(
+  pathAndQuery: string,
+  freshEnoughMs: number,
+): Promise<YahooChartResult | null> {
   let best: { res: YahooChartResult; newest: number } | null = null;
   for (const host of YAHOO_HOSTS) {
     const data = await fetchJson<YahooChartResponse>(
@@ -103,7 +109,7 @@ async function fetchYahooChart(pathAndQuery: string): Promise<YahooChartResult |
     const ts = res?.timestamp;
     if (!res || !Array.isArray(ts) || ts.length === 0) continue;
     const newest = ts[ts.length - 1] * 1000;
-    if (Date.now() - newest <= YAHOO_FRESH_MS) return res;
+    if (Date.now() - newest <= freshEnoughMs) return res;
     if (!best || newest > best.newest) best = { res, newest };
   }
   return best?.res ?? null;
@@ -181,7 +187,12 @@ export async function fetchLatestPrice(
     // already moved. Expire it quickly instead.
     staleMs: 10 * 60 * 1000,
     fn: async () => {
-      const res = await fetchYahooChart(`${encodeURIComponent(ticker)}?interval=5m&range=1d`);
+      // A quote is fresh for half an hour; staler than that and the second
+      // host gets a chance to beat it before the staleness gate fires.
+      const res = await fetchYahooChart(
+        `${encodeURIComponent(ticker)}?interval=5m&range=1d`,
+        30 * 60 * 1000,
+      );
       if (!res || !Array.isArray(res.timestamp)) return null;
       const closes = res.indicators?.quote?.[0]?.close ?? [];
 
@@ -355,8 +366,11 @@ export async function fetchViaProxy(
     limit: YAHOO_LIMIT,
     gaps,
     fn: async () => {
+      // Candles are fresh for five hours (an H4 bucket plus slack); beyond
+      // that the second host is asked and the freshest series wins.
       const res = await fetchYahooChart(
         `${encodeURIComponent(ticker)}?interval=${cfg.interval}&range=${cfg.range}`,
+        5 * 60 * 60 * 1000,
       );
       if (!res || !Array.isArray(res.timestamp)) return null;
 

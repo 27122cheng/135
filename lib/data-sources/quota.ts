@@ -36,7 +36,17 @@ interface SourceState {
 const states = new Map<string, SourceState>();
 
 const BACKOFF_BASE_MS = 2000;
-const BACKOFF_MAX_MS = 5 * 60 * 1000;
+/**
+ * Was 5 minutes — long enough that one flaky source could blind a whole
+ * sweep. A browser rescan walks nine symbols in a couple of minutes; stooq
+ * failing on the first two symbols (quote + two candle timeframes each)
+ * reached 8 consecutive failures, and the remaining seven symbols all read
+ * "暫時停止重試" — no second witness, both feeds "stale", 休市中 across the
+ * board on an open Tuesday. The breaker's real job is stopping a hammering
+ * loop measured in seconds; one minute does that, and an hourly sweep always
+ * gets a fresh probe.
+ */
+const BACKOFF_MAX_MS = 60 * 1000;
 /** Beyond this the delay is already capped, so stop growing the exponent. */
 const MAX_TRACKED_FAILURES = 8;
 
@@ -125,7 +135,7 @@ export function recordSuccess(source: string): void {
   s.blockedUntil = 0;
 }
 
-/** Doubles the wait before this source is tried again, capped at 5 minutes. */
+/** Doubles the wait before this source is tried again, capped at one minute. */
 export function recordFailure(source: string): void {
   const s = stateFor(source);
   s.failures = Math.min(s.failures + 1, MAX_TRACKED_FAILURES);
