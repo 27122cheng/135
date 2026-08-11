@@ -1,5 +1,5 @@
 import { completeAI, jsonSchema, type AiUnavailable } from "@/lib/ai";
-import type { BiasItem, Grade, TradePlan, TradeSignal } from "@/types/signal";
+import type { BiasItem, Grade, SwingVariant, TradePlan, TradeSignal } from "@/types/signal";
 import { MIN_ENTRY_GRADE, gradeAllowsEntry } from "@/lib/scoring";
 import { backtestPlanGeometry } from "./backtest";
 import { isNearEntry } from "./proximity";
@@ -196,34 +196,31 @@ const EXPECTANCY_EPSILON = 0.05;
 const MIN_STOP_ATR = 0.6;
 
 /**
- * A target beyond this many ATR is not a short-horizon trade.
+ * A trading horizon: how far a target may sit and how often it must hit.
  *
- * Was 4 — a multi-day swing at best. The standing request is 當日短線: trades
- * that resolve within roughly a session or two, at a higher hit rate, even at
- * the cost of payoff. Two D1 ATR is about what a market covers in one to two
- * active days; anything beyond it is a position, not a day trade, and its
- * backtest sample inside the 20-bar horizon is too thin to trust anyway.
- * A target 11R away with a stop inside the noise is a lottery ticket priced
- * as a plan.
+ * Two are kept, per the standing request that both survive — 當沖 and 波段
+ * are different trades on the same analysis, not one replacing the other.
+ *
+ *  - **當沖** targets within 2×D1 ATR — about what a market covers in one to
+ *    two active days — and demands a 45% backtested hit rate. Nearer targets
+ *    resolve more often, so demanding they *hit* more often is affordable:
+ *    45% at its 1:1.22 breakeven is a real bar, not a long-shot payoff.
+ *    (80–90% stays unbuyable at sane risk/reward: breakevenRr(0.8) = 0.25 is
+ *    risking four to make one.)
+ *  - **波段** may reach 5×ATR — a multi-day structure trade — and accepts a
+ *    30% floor, because a swing pays through its payoff, not its frequency.
+ *    An edge you cannot sit through is still not an edge you will capture,
+ *    which is why the floor exists at all; combinations below it are only
+ *    used when nothing clears it, and the summary says so.
  */
-const MAX_TARGET_ATR = 2;
+export interface HorizonProfile {
+  label: string;
+  maxTargetAtr: number;
+  minHitRate: number;
+}
 
-/**
- * The hit rate below which a plan is not followable, whatever its expectancy.
- *
- * This is a judgement, stated as one. An edge you cannot sit through is not an
- * edge you will capture: eight consecutive stop-outs is where a person stops
- * taking the signal, and a system that produces them is a system that gets
- * turned off. Combinations below this are only used when nothing clears it, and
- * the summary says so rather than hiding it.
- *
- * Raised from 0.3 with the day-trade tuning: nearer targets resolve more
- * often, so demanding they *hit* more often is affordable now — 45% at the
- * 1:1.22 breakeven means the geometry has to clear a real bar, not scrape by
- * on a long-shot payoff. (80–90% remains unbuyable at sane risk/reward:
- * breakevenRr(0.8) = 0.25 is risking four to make one.)
- */
-const MIN_HIT_RATE = 0.45;
+export const DAY_PROFILE: HorizonProfile = { label: "當沖", maxTargetAtr: 2, minHitRate: 0.45 };
+export const SWING_PROFILE: HorizonProfile = { label: "波段", maxTargetAtr: 5, minHitRate: 0.3 };
 
 /**
  * The risk/reward a given hit rate needs just to break even.
@@ -270,7 +267,7 @@ interface ComboScreen {
  * inside a day's noise or the target is a month away — and both of those are
  * exactly the questions that decide whether the plan is takeable.
  */
-function viableCombos(input: TradePlanInput): ComboScreen {
+function viableCombos(input: TradePlanInput, profile: HorizonProfile): ComboScreen {
   const out: Combo[] = [];
   const atr = input.atr && input.atr > 0 ? input.atr : null;
   let tooTight = 0;
@@ -290,7 +287,7 @@ function viableCombos(input: TradePlanInput): ComboScreen {
             tooTight++;
             continue;
           }
-          if (Math.abs(tp.price - entry.price) > atr * MAX_TARGET_ATR) {
+          if (Math.abs(tp.price - entry.price) > atr * profile.maxTargetAtr) {
             tooFar++;
             continue;
           }
@@ -302,7 +299,8 @@ function viableCombos(input: TradePlanInput): ComboScreen {
 
   const rejected: string[] = [];
   if (tooTight > 0) rejected.push(`${tooTight} 組停損距離不足 ${MIN_STOP_ATR}×ATR（在雜訊內）`);
-  if (tooFar > 0) rejected.push(`${tooFar} 組停利超過 ${MAX_TARGET_ATR}×ATR（20 根內走不到）`);
+  if (tooFar > 0)
+    rejected.push(`${tooFar} 組停利超過 ${profile.maxTargetAtr}×ATR（超出${profile.label}的範圍）`);
   if (badRr > 0) rejected.push(`${badRr} 組風報比低於 1:${MIN_RISK_REWARD}`);
 
   // Nothing survived the ATR screens but something cleared the ratio floor:
@@ -353,8 +351,11 @@ function viableCombos(input: TradePlanInput): ComboScreen {
  *    that resolves in your favour more often is the one a person can actually
  *    follow.
  */
-function chooseGeometry(input: TradePlanInput): { combo: Combo; basis: string } | null {
-  const { combos, rejected } = viableCombos(input);
+function chooseGeometry(
+  input: TradePlanInput,
+  profile: HorizonProfile = DAY_PROFILE,
+): { combo: Combo; basis: string } | null {
+  const { combos, rejected } = viableCombos(input, profile);
   if (combos.length === 0) return null;
   const screen = rejected.length > 0 ? `（已排除：${rejected.join("、")}）` : "";
 
@@ -401,7 +402,7 @@ function chooseGeometry(input: TradePlanInput): { combo: Combo; basis: string } 
   // one nobody sits through. Combinations that clear the hit-rate floor are
   // ranked among themselves; only if none does are the rest considered, and
   // then the summary says the hit rate is low rather than quietly shipping it.
-  const followable = rankable.filter((c) => (c.backtest!.hitRate ?? 0) >= MIN_HIT_RATE);
+  const followable = rankable.filter((c) => (c.backtest!.hitRate ?? 0) >= profile.minHitRate);
   const pool = followable.length > 0 ? followable : rankable;
   const lowHitRate = followable.length === 0;
 
@@ -420,14 +421,14 @@ function chooseGeometry(input: TradePlanInput): { combo: Combo; basis: string } 
       ? ""
       : `（賠率最高的一組是 1:${byRatio.rr}，但${lowHitRate ? "勝率或" : ""}本地回測期望值較低，未採用）`;
   const warn = lowHitRate
-    ? `⚠ 沒有任何組合的回測勝率達到 ${Math.round(MIN_HIT_RATE * 100)}%，本組已是可選中最高，` +
+    ? `⚠ 沒有任何組合的回測勝率達到 ${Math.round(profile.minHitRate * 100)}%，本組已是可選中最高，` +
       `期望值為正但會經常停損，部位要放小。` +
       `（以 ${hitPct}% 勝率計，只要風報比高於 1:${breakevenRr(bt.hitRate ?? 0)} 就是正期望值）`
     : "";
   return {
     combo: chosen,
     basis:
-      `在 ${combos.length} 組真實結構組合中，先要求回測勝率 ≥ ${Math.round(MIN_HIT_RATE * 100)}%，` +
+      `在 ${combos.length} 組真實結構組合中，先要求回測勝率 ≥ ${Math.round(profile.minHitRate * 100)}%，` +
       `再取期望值最高者：${bt.resolved} 次中 ${bt.wins} 勝（勝率 ${hitPct}%），` +
       `每單位風險期望 ${bt.expectancyR}R，風報比 1:${chosen.rr}${note}${screen}${warn}`,
   };
@@ -476,6 +477,31 @@ export function selectReferenceGeometry(input: TradePlanInput): ReferenceGeometr
     targetReason: tp.label,
     basis: picked.basis,
     backtest,
+  };
+}
+
+/**
+ * The same analysis at the larger horizon — 波段, offered beside 當沖.
+ *
+ * Runs the identical screens and ranking with SWING_PROFILE: targets out to
+ * 5×ATR, followability floor at 30%. Deliberately *not* a second monitored
+ * trade — one position at a time is the standing rule — so it ships as levels
+ * with their own backtest numbers, for the reader who holds longer than a
+ * session. The caller gates it on the larger timeframe actually agreeing with
+ * the direction; a swing against the D1 trend is a countertrend hold, which
+ * is the trade this system does not make.
+ */
+export function selectSwingVariant(input: TradePlanInput): SwingVariant | null {
+  const picked = chooseGeometry(input, SWING_PROFILE);
+  if (!picked) return null;
+  const { entry, sl, tp, rr, backtest } = picked.combo;
+  return {
+    entry: round(entry.price),
+    stop_loss: round(sl.price),
+    take_profit: round(tp.price),
+    risk_reward: rr,
+    hit_rate: backtest?.hitRate ?? null,
+    summary: `${picked.basis}`,
   };
 }
 

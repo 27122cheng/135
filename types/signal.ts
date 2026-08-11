@@ -228,6 +228,25 @@ export interface TradePlan {
    * that was never the problem.
    */
   fallback_reason?: string | null;
+  /**
+   * 波段變體 — the same analysis at the larger horizon, offered beside the
+   * 當沖 plan rather than replacing it. Levels with their own backtest, not a
+   * second monitored trade; absent when the larger timeframe's trend does not
+   * agree with the direction, or when it would pick the identical geometry.
+   */
+  swing?: SwingVariant | null;
+}
+
+/** The 波段 plan's levels. See TradePlan.swing. */
+export interface SwingVariant {
+  entry: number;
+  stop_loss: number;
+  take_profit: number;
+  risk_reward: number;
+  /** Local backtest hit rate for this geometry; null when unmeasurable. */
+  hit_rate: number | null;
+  /** The same how-it-was-chosen sentence the day plan carries. */
+  summary: string;
 }
 
 /**

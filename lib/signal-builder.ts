@@ -16,7 +16,12 @@ import { analyzeFundFlow } from "./analysis/fundflow";
 import { analyzeOpenInterest } from "./analysis/open-interest";
 import { backtestPlanGeometry } from "./analysis/backtest";
 import { generateNarrative, ruleNarrative } from "./analysis/ai-narrative";
-import { buildTradePlan, collectCandidates, selectReferenceGeometry } from "./analysis/trade-plan";
+import {
+  buildTradePlan,
+  collectCandidates,
+  selectReferenceGeometry,
+  selectSwingVariant,
+} from "./analysis/trade-plan";
 import { buildAddOns } from "./analysis/add-on";
 import { CONFIDENT_ENTRY_MIN, clearsEntryBar, planConfidence } from "./analysis/confidence";
 import { gradeAllowsEntry, scoreSignal } from "./scoring";
@@ -608,6 +613,45 @@ async function buildSignalForSymbol(
     tradePlan.add_ons = addOns.levels;
     if (addOns.skipped) {
       gaps.push(`本次不提供加倉點：${addOns.skipped}`);
+    }
+
+    // 波段變體 — the same candidate lists at the larger horizon, offered
+    // beside the 當沖 plan. Gated on the larger timeframe actually agreeing:
+    // holding for days against the D1 trend is the countertrend trade this
+    // system does not make, so without a weight-2 technical item pointing the
+    // signal's way there is no swing on offer, and the card says why.
+    const trendAgrees = biasItems.some(
+      (b) => b.dimension === "技術面" && b.direction === direction && b.weight >= 2,
+    );
+    if (trendAgrees) {
+      const swing = selectSwingVariant({
+        symbol: meta.symbol,
+        direction,
+        grade,
+        bias_score: score.biasScore,
+        entry_structure_score: score.entryStructureScore,
+        total_score: score.totalScore,
+        bias_items: biasItems,
+        entryCandidates,
+        slCandidates,
+        tpCandidates,
+        narrative,
+        knownGaps: [],
+        gradeForcesWait: false,
+        candles: d1?.candles,
+        atr: atrD1,
+      });
+      // The identical geometry twice is one plan wearing two labels.
+      if (
+        swing &&
+        (swing.take_profit !== tradePlan.take_profit || swing.stop_loss !== tradePlan.stop_loss)
+      ) {
+        tradePlan.swing = swing;
+      }
+    } else {
+      gaps.push(
+        "本次不提供波段變體：D1 趨勢結構與訊號方向未同向（波段持倉需較大時間框架的趨勢支持）",
+      );
     }
   }
 

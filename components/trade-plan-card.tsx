@@ -144,6 +144,33 @@ export function TradePlanCard({
 
       {plan.add_ons.length > 0 && <AddOns levels={plan.add_ons} />}
 
+      {plan.swing && (
+        <details className="mt-3 border-t border-neutral-800 pt-3">
+          <summary className="cursor-pointer text-xs text-neutral-400 hover:text-neutral-200">
+            波段變體（較大時間框架）
+            <span className="ml-2 font-mono text-neutral-300">
+              1:{plan.swing.risk_reward}
+            </span>
+            {plan.swing.hit_rate !== null && (
+              <span className="ml-2 text-neutral-500">
+                回測勝率 {(plan.swing.hit_rate * 100).toFixed(0)}%
+              </span>
+            )}
+          </summary>
+          <p className="mt-2 text-[11px] leading-relaxed text-neutral-600">
+            上方主計畫是當沖（目標 ≤2×ATR、勝率門檻 45%）；這裡是同一套分析放到波段的選擇
+            —— 目標可到 5×ATR、勝率門檻 30%，靠賠率而不是頻率賺錢，只在 D1 趨勢與方向同向時提供。
+            監控與自動復盤只追蹤主計畫，一次一單。
+          </p>
+          <div className="mt-2 flex gap-3">
+            <Leg label="進場" price={plan.swing.entry} reason="" tone="entry" />
+            <Leg label="停損" price={plan.swing.stop_loss} reason="" tone="sl" />
+            <Leg label="停利" price={plan.swing.take_profit} reason="" tone="tp" />
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">{plan.swing.summary}</p>
+        </details>
+      )}
+
       {backtest && backtest.hitRate !== null && (
         <details className="mt-3 border-t border-neutral-800 pt-3">
           <summary className="cursor-pointer list-none text-xs text-neutral-400">

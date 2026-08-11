@@ -257,9 +257,23 @@ export function formatAlert(signal: TradeSignal, reason: string, appUrl?: string
 
   const lines = [
     `<b>${signal.symbol} ${dir} ${signal.grade}</b>`,
-    `進場 <b>${fmt(plan.entry)}</b>`,
+    `當沖：進場 <b>${fmt(plan.entry)}</b>`,
     `停損 ${fmt(plan.stop_loss)}　停利 ${fmt(plan.take_profit)}`,
     plan.risk_reward !== null ? `風報比 1:${plan.risk_reward}` : null,
+    // The swing variant rides along as levels, never as a second monitored
+    // trade — one position at a time is the monitor's rule, so the message
+    // says which plan the tracking follows.
+    ...(plan.swing
+      ? [
+          "",
+          `波段（同方向，較大時間框架）：進場 ${fmt(plan.swing.entry)}`,
+          `停損 ${fmt(plan.swing.stop_loss)}　停利 ${fmt(plan.swing.take_profit)}　風報比 1:${plan.swing.risk_reward}` +
+            (plan.swing.hit_rate !== null
+              ? `（回測勝率 ${Math.round(plan.swing.hit_rate * 100)}%）`
+              : ""),
+          `監控與復盤只追蹤當沖主計畫`,
+        ]
+      : []),
     "",
     plan.summary,
   ];

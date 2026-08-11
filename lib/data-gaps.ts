@@ -66,7 +66,9 @@ function isPermanent(gap: string): boolean {
  * "gaps" of which two were behaviour notes.
  */
 const INFORMATIONAL_PATTERNS = [
-  /本次不提供加倉點/,
+  // Covers 加倉點, 波段變體, and whatever the next "declined by rule, with
+  // the reason attached" note is — the prefix is the contract.
+  /本次不提供/,
   /已改用預設規則/,
   // Legacy rows written before dedupe notes stopped being filed as gaps.
   /已合併為一票/,
