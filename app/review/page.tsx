@@ -4,12 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { COMMODITIES } from "@/types/signal";
 import { STOP_REASON_LABELS } from "@/types/journal";
-import type { GradePerformance, ReviewStats, TagDistribution } from "@/lib/journal/stats";
+import type { GradePerformance, ReviewStats, TagDistribution, TrackRecord } from "@/lib/journal/stats";
 import type { TagStat } from "@/types/journal";
 import { SeverityTrend, StopReasonDonut, TAG_COLORS } from "@/components/review-charts";
 import { JournalForm } from "@/components/journal-form";
 
 interface ReviewResponse extends ReviewStats {
+  trackRecord?: TrackRecord;
   activeInterventions: TagStat[];
   recentTagStats: TagStat[];
   error?: string;
@@ -119,6 +120,12 @@ export default function ReviewPage() {
                     ))}
                   </ul>
                 </section>
+              )}
+
+              {stats.trackRecord && (
+                <Section title="實際命中率（系統自己追蹤的結果）">
+                  <TrackRecordTable record={stats.trackRecord} />
+                </Section>
               )}
 
               <Section title="停損原因分布">
@@ -231,6 +238,67 @@ function LossRanking({ data }: { data: TagDistribution[] }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * 正式訊號 vs 參考價位, side by side — the comparison the paper tracking
+ * exists to make.
+ *
+ * If the paper bucket beats the real one over a real sample, the entry gate is
+ * throwing away winners and its thresholds deserve another look; if it loses,
+ * the gate is earning its keep. Either answer is useful, which is why both
+ * numbers sit on one row. Paper fills are assumed perfect — stated here, so
+ * its win rate is read as a ceiling rather than a promise.
+ */
+function TrackRecordTable({ record }: { record: TrackRecord }) {
+  const rows = [record.real, record.paper, record.manual].filter((b) => b.trades > 0);
+  if (rows.length === 0) {
+    return (
+      <p className="text-xs text-neutral-600">
+        監控結算的交易會自動記到這裡（正式訊號與參考價位分開統計），目前還沒有結算的紀錄。
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-left text-[10px] text-neutral-600">
+            <th className="py-1 font-normal">來源</th>
+            <th className="py-1 text-right font-normal">筆數</th>
+            <th className="py-1 text-right font-normal">勝/敗</th>
+            <th className="py-1 text-right font-normal">勝率</th>
+            <th className="py-1 text-right font-normal">平均損益%</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((b) => (
+            <tr key={b.label} className="border-t border-neutral-800">
+              <td className="py-1.5 text-neutral-300">{b.label}</td>
+              <td className="py-1.5 text-right font-mono text-neutral-400">{b.trades}</td>
+              <td className="py-1.5 text-right font-mono text-neutral-400">
+                {b.wins}/{b.losses}
+              </td>
+              <td className="py-1.5 text-right font-mono text-neutral-200">
+                {b.winRate === null ? "—" : `${b.winRate}%`}
+              </td>
+              <td
+                className={`py-1.5 text-right font-mono ${
+                  (b.avgPnlPct ?? 0) > 0 ? "text-emerald-400" : (b.avgPnlPct ?? 0) < 0 ? "text-red-400" : "text-neutral-400"
+                }`}
+              >
+                {b.avgPnlPct === null ? "—" : b.avgPnlPct}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-[10px] leading-relaxed text-neutral-600">
+        紙上追蹤假設在價位上完美成交、無滑價點差，勝率讀作上限。若紙上長期贏過正式訊號，
+        代表進場門檻把贏家擋掉了，值得回頭調整；若輸，代表門檻有在賺它的位置。
+      </p>
+    </div>
   );
 }
 

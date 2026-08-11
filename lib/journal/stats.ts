@@ -128,3 +128,73 @@ export function computeReviewStats(entries: JournalEntry[]): ReviewStats {
     gradePerformance,
   };
 }
+
+
+/**
+ * 實際命中率 — the system's own trades, marked to market by the monitor.
+ *
+ * Split three ways because the three streams answer different questions and
+ * mixing them flatters all of them:
+ *
+ *  - **正式訊號（自動追蹤）**: plans the system recommended and the monitor
+ *    watched to resolution. The number that decides whether to trust it.
+ *  - **參考價位（紙上追蹤）**: plans the rules stood aside from, tracked on
+ *    paper anyway. If this bucket beats the real one over a real sample, the
+ *    entry gate is costing money and the thresholds deserve another look; if
+ *    it loses, the gate is earning its keep. Fills are assumed perfect, so it
+ *    reads optimistically — stated wherever shown.
+ *  - **人工記錄**: hand-entered trades, whatever their story.
+ */
+export interface TrackBucket {
+  label: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  winRate: number | null;
+  avgPnlPct: number | null;
+  /** Newest first, capped — enough to eyeball the streak. */
+  recent: Array<{ symbol: string; result: string; pnlPct: number; closedAt: string }>;
+}
+
+export interface TrackRecord {
+  real: TrackBucket;
+  paper: TrackBucket;
+  manual: TrackBucket;
+}
+
+const AUTO = "[自動追蹤]";
+const PAPER = "[參考價位紙上追蹤]";
+
+function bucketOf(label: string, entries: JournalEntry[]): TrackBucket {
+  const wins = entries.filter((e) => e.result === "win").length;
+  const losses = entries.filter((e) => e.result === "loss").length;
+  const resolved = wins + losses;
+  return {
+    label,
+    trades: entries.length,
+    wins,
+    losses,
+    winRate: resolved > 0 ? Math.round((wins / resolved) * 1000) / 10 : null,
+    avgPnlPct:
+      entries.length > 0
+        ? Math.round((entries.reduce((s, e) => s + e.pnl_pct, 0) / entries.length) * 100) / 100
+        : null,
+    recent: entries.slice(0, 8).map((e) => ({
+      symbol: e.symbol,
+      result: e.result,
+      pnlPct: e.pnl_pct,
+      closedAt: e.closed_at.slice(0, 10),
+    })),
+  };
+}
+
+export function computeTrackRecord(entries: JournalEntry[]): TrackRecord {
+  const paper = entries.filter((e) => e.review_note?.includes(PAPER));
+  const real = entries.filter((e) => e.review_note?.includes(AUTO) && !e.review_note?.includes(PAPER));
+  const manual = entries.filter((e) => !e.review_note?.includes(AUTO));
+  return {
+    real: bucketOf("正式訊號（自動追蹤）", real),
+    paper: bucketOf("參考價位（紙上追蹤，假設完美成交）", paper),
+    manual: bucketOf("人工記錄", manual),
+  };
+}

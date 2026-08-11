@@ -108,10 +108,13 @@ export function dedupeBiasItems(items: BiasItem[]): DedupeResult {
         `${lead.evidence}｜同源：` + others.map((i) => `${i.dimension} ${i.evidence}`).join("、"),
     });
 
+    const dims = [...new Set(group.map((i) => i.dimension))];
     notes.push(
       disagree
         ? `「${k}」有 ${group.length} 組讀數且方向相反（${group.map((i) => `${i.dimension}:${i.direction}`).join("、")}），合併後視為中性`
-        : `「${k}」被 ${group.length} 個面向重複計入（${group.map((i) => i.dimension).join("、")}），已合併為一票`,
+        : dims.length > 1
+          ? `「${k}」被 ${dims.length} 個面向重複計入（${dims.join("、")}），已合併為一票`
+          : `「${k}」在${dims[0]}內重複產生 ${group.length} 筆同源讀數，已合併為一票`,
     );
   }
 

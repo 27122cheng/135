@@ -1,5 +1,5 @@
 import { getSignalStore } from "@/lib/db";
-import { computeReviewStats } from "@/lib/journal/stats";
+import { computeReviewStats, computeTrackRecord } from "@/lib/journal/stats";
 import { summariseTags, triggeredTags } from "@/lib/journal/interventions";
 import { json } from "@/lib/json-response";
 
@@ -27,6 +27,7 @@ export async function GET(request: Request) {
     const tagStats = summariseTags(entries);
     return json({
       ...stats,
+      trackRecord: computeTrackRecord(entries),
       activeInterventions: triggeredTags(tagStats),
       recentTagStats: tagStats,
     });

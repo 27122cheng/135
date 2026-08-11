@@ -332,8 +332,13 @@ async function buildSignalForSymbol(
 
   // 一個事實，一票。基本面與資金流都在讀同一個 VIX/DXY，兩邊各記一票，
   // bias_score 就憑空多出最多 2 分——A 的門檻才 6 分。
+  // The merge notes are deliberately NOT pushed into data_gaps. They landed
+  // there first, and the card then counted "usd-dxy-trend 已合併為一票" as a
+  // *data gap* and the confidence score billed it −3 — a penalty for the
+  // dedupe working. A merge is bookkeeping, not missing evidence, and the
+  // merged item's own factor text already says 已合併為一票 where the reader
+  // looks for it.
   const deduped = dedupeBiasItems(rawBiasItems);
-  gaps.push(...deduped.notes);
   const biasItems = deduped.items;
 
   const { direction, tie } = pickDirection(biasItems);

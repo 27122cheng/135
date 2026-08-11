@@ -111,10 +111,16 @@ async function main() {
   // nothing, and the site — correctly showing the newer row — had nothing to
   // show. Nobody was wrong and nobody was told.
   {
+    const consensusItems = [
+      { dimension: "技術面", factor: "f", direction: "long", weight: 2, evidence: "e", source: "s" },
+      { dimension: "基本面", factor: "f", direction: "long", weight: 1, evidence: "e", source: "s" },
+      { dimension: "資金流", factor: "f", direction: "long", weight: 1, evidence: "e", source: "s" },
+    ];
     const entered = {
       symbol: "US30",
       grade: "A+",
       direction: "long",
+      bias_items: consensusItems,
       trade_plan: { stance: "enter", entry: 53289, stop_loss: 53160, take_profit: 54744 },
     } as unknown as SignalRow;
 

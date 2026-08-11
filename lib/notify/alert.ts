@@ -1,3 +1,4 @@
+import { breadthOf } from "@/lib/analysis/evidence";
 import type { Grade, SignalRow, TradeSignal } from "@/types/signal";
 import { getSetting } from "@/lib/settings";
 
@@ -53,6 +54,16 @@ export interface AlertDecision {
   reason: string;
 }
 
+/**
+ * How many dimensions must point the signal's way before it interrupts a phone.
+ *
+ * Three of six. One dimension alone is an indicator, not a case; two can be a
+ * single macro story told twice. Three independent kinds of evidence agreeing
+ * is where a setup stops being a reading and starts being a confluence — and
+ * confluence is what a push notification should mean.
+ */
+export const MIN_CONSENSUS_DIMENSIONS = 3;
+
 export function shouldAlert(
   current: TradeSignal,
   previous: SignalRow | null,
@@ -73,6 +84,10 @@ export function shouldAlert(
   }
 
   if (plan.stance !== "enter") {
+    // A withdrawal only makes sense for a trade that was announced, and
+    // announcement now requires consensus — so the withdrawal checks the same
+    // bar against the *previous* signal's own evidence. Without this, muting a
+    // narrow trade would still let its disappearance ping the phone.
     // The trade you were told about, disappearing.
     //
     // Silence here is what made "telegram 有交易但網站沒有" a real complaint
@@ -85,7 +100,9 @@ export function shouldAlert(
     if (
       prev?.stance === "enter" &&
       previous !== null &&
-      rank(previous.grade) >= rank(minGrade)
+      rank(previous.grade) >= rank(minGrade) &&
+      breadthOf(previous.direction, previous.bias_items ?? []).agreeing.length >=
+        MIN_CONSENSUS_DIMENSIONS
     ) {
       return { alert: true, reason: "先前的進場訊號已失效" };
     }
@@ -94,6 +111,23 @@ export function shouldAlert(
   if (rank(current.grade) < rank(minGrade)) {
     return { alert: false, reason: `評等 ${current.grade} 低於門檻 ${minGrade}` };
   }
+  // 一致性門檻。The grade measures how much evidence there is; this measures
+  // how many independent dimensions it came from, and a phone interruption is
+  // reserved for trades where at least three agree. Narrower trades still
+  // exist, still store, still show on the site — the site is where you go
+  // looking, the push is what comes looking for you, and those deserve
+  // different bars. This is why the board can show a trade the phone never
+  // mentioned: that is the design, not a missed message.
+  const consensus = breadthOf(current.direction, current.bias_items ?? []);
+  if (consensus.agreeing.length < MIN_CONSENSUS_DIMENSIONS) {
+    return {
+      alert: false,
+      reason:
+        `同向面向僅 ${consensus.agreeing.length} 個（推播需 ≥ ${MIN_CONSENSUS_DIMENSIONS}），` +
+        `訊號僅顯示於網站`,
+    };
+  }
+
   if (plan.entry === null || plan.stop_loss === null || plan.take_profit === null) {
     // A grade that says "enter" without a full set of levels is a bug
     // elsewhere; alerting on it would push an unusable recommendation.
@@ -187,6 +221,10 @@ export function formatAlert(signal: TradeSignal, reason: string, appUrl?: string
   // you the thing you were told about is off — and printing 進場 — 停損 — over
   // it would read as a plan with missing numbers.
   if (plan.stance !== "enter") {
+    // A withdrawal only makes sense for a trade that was announced, and
+    // announcement now requires consensus — so the withdrawal checks the same
+    // bar against the *previous* signal's own evidence. Without this, muting a
+    // narrow trade would still let its disappearance ping the phone.
     const withdrawal = [
       `<b>${signal.symbol} 先前的進場訊號已失效</b>`,
       `本次掃描結果：${signal.grade}，${plan.wait_for ? "觀望" : "不進場"}`,

@@ -1,6 +1,6 @@
 import { check, report } from "./_harness";
 import { clearSettingsCache, isSecretSetting, isSettableKey } from "@/lib/settings";
-import { formatAlert, shouldAlert } from "@/lib/notify/alert";
+import { formatAlert, MIN_CONSENSUS_DIMENSIONS, shouldAlert } from "@/lib/notify/alert";
 import { notifyStatus } from "@/lib/notify";
 import type { SignalRow, TradeSignal, Grade } from "@/types/signal";
 
@@ -21,7 +21,14 @@ function signal(over: Partial<TradeSignal> = {}): TradeSignal {
     entry_zone: { low: 1990, high: 2010, reason: "r" },
     stop_loss: { price: 1980, structure: "s", reason: "r", invalidation: "i" },
     take_profits: [],
-    bias_items: [],
+    // Three dimensions agreeing — the consensus the push threshold requires.
+    // The old fixtures had no bias_items at all, which now correctly reads as
+    // "an indicator, not a case" and stays off the phone.
+    bias_items: [
+      { dimension: "技術面", factor: "f", direction: "long", weight: 2, evidence: "e", source: "s" },
+      { dimension: "基本面", factor: "f", direction: "long", weight: 1, evidence: "e", source: "s" },
+      { dimension: "籌碼面", factor: "f", direction: "long", weight: 1, evidence: "e", source: "s" },
+    ],
     entry_structures: [],
     path_obstacles: [],
     news_digest: null,
@@ -95,8 +102,17 @@ function stored(s: TradeSignal): SignalRow {
       trade_plan: { ...first.trade_plan, stance: "wait" },
     }))).alert);
 
+  // The flipped signal's evidence must flip with it — a short whose factors
+  // all point long is exactly what the consensus gate exists to keep quiet.
   check("a direction flip alerts",
-    shouldAlert(signal({ direction: "short" }), prev).alert);
+    shouldAlert(signal({
+      direction: "short",
+      bias_items: [
+        { dimension: "技術面", factor: "f", direction: "short", weight: 2, evidence: "e", source: "s" },
+        { dimension: "基本面", factor: "f", direction: "short", weight: 1, evidence: "e", source: "s" },
+        { dimension: "籌碼面", factor: "f", direction: "short", weight: 1, evidence: "e", source: "s" },
+      ],
+    }), prev).alert);
 
   check("a grade upgrade alerts",
     shouldAlert(signal({ grade: "A+" }), prev).alert);

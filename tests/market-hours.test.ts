@@ -103,6 +103,11 @@ const at = (iso: string) => new Date(iso);
     interventions: [],
     data_gaps: [],
     news_digest: null,
+    bias_items: [
+      { dimension: "技術面", factor: "f", direction: "long", weight: 2, evidence: "e", source: "s" },
+      { dimension: "基本面", factor: "f", direction: "long", weight: 1, evidence: "e", source: "s" },
+      { dimension: "籌碼面", factor: "f", direction: "long", weight: 1, evidence: "e", source: "s" },
+    ],
     market_closed: true,
     market_closed_reason: "週末休市（週五 21:00 UTC 收盤，週日 22:00 UTC 開盤），不發送進場通知",
     trade_plan: {

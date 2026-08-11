@@ -79,7 +79,13 @@ interface QueryOutcome {
  */
 async function queryGdelt(query: string): Promise<QueryOutcome> {
   const url =
-    `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}` +
+    // English sources only. The unfiltered feed answered a gold query with 25
+    // Indonesian and Thai local-news headlines (kupang.tribunnews.com,
+    // sanook.com) — real articles, unreadable to the keyword scorer and
+    // unread by the market, so the card reported a data gap over news that was
+    // never going to move a price. The AI path loses nothing either: the
+    // market-moving story always exists in English.
+    `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(`${query} sourcelang:english`)}` +
     `&mode=artlist&maxrecords=25&format=json&timespan=48h&sort=hybridrel`;
 
   let failure: HttpFailure | null = null;

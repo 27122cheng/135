@@ -111,6 +111,8 @@ export interface LatestPrice {
   at: string;
   /** How stale it is right now, in minutes. */
   ageMinutes: number;
+  /** Which feed answered — the direct quote, or the candle proxy's newest bar. */
+  source?: "yahoo-direct" | "proxy-bar";
 }
 
 /**
@@ -173,9 +175,32 @@ export async function fetchLatestPrice(
     },
   });
 
-  if (!result) return null;
-  const ageMinutes = (Date.now() - new Date(result.value.at).getTime()) / 60000;
-  return { price: result.value.price, at: result.value.at, ageMinutes };
+  const direct = result
+    ? {
+        price: result.value.price,
+        at: result.value.at,
+        ageMinutes: (Date.now() - new Date(result.value.at).getTime()) / 60000,
+        source: "yahoo-direct" as const,
+      }
+    : null;
+  if (direct && direct.ageMinutes <= 3 * 60) return direct;
+
+  // Second source, different route. The direct endpoint served this deployment
+  // quotes whose last trade was 104 hours old — for days — while the candle
+  // proxy stayed minutes fresh. One feed is not redundancy: when the direct
+  // quote is missing or older than three hours, the proxy's newest hourly bar
+  // answers instead, with its own honest timestamp. The older direct answer is
+  // still returned if the proxy also fails, because a labelled old price beats
+  // none.
+  const proxied = await fetchViaProxy(ticker, "H4", gaps).catch(() => null);
+  const bar = proxied?.candles.at(-1);
+  if (bar) {
+    const barAge = (Date.now() - new Date(bar.time).getTime()) / 60000;
+    if (!direct || barAge < direct.ageMinutes) {
+      return { price: bar.close, at: bar.time, ageMinutes: Math.max(0, barAge), source: "proxy-bar" };
+    }
+  }
+  return direct;
 }
 
 export interface ProxyResult {
