@@ -16,6 +16,17 @@ import { parseUserKeyHeader } from "@/lib/api-keys";
   check("a missing table names the fix", missing.message.includes("supabase/schema.sql"), missing.message);
   check("the original error is preserved", missing.message.includes("does not exist"));
 
+  // Postgres phrases a missing column as `column "x" of relation "y" does not
+  // exist`, which *contains* `relation "y" does not exist` — and the relation
+  // branch was rewriting schema drift into "the tables don't exist", sending a
+  // user whose tables existed into a loop with a setup call that said so.
+  const drift = explain(
+    new Error('column "tracked" of relation "plan_monitor" does not exist'),
+  );
+  check("a missing column is schema drift, not missing tables",
+    drift.message.includes("結構過舊") && !drift.message.includes("資料表尚未建立"),
+    drift.message);
+
   const auth = explain(new Error("password authentication failed for user \"neondb_owner\""));
   check("an auth failure points at DATABASE_URL", auth.message.includes("DATABASE_URL"), auth.message);
 

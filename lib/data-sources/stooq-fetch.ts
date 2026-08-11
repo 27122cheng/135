@@ -19,7 +19,7 @@ const STOOQ_HOSTS = ["https://stooq.com", "https://stooq.pl"];
  */
 export async function fetchStooqText(
   pathAndQuery: string,
-  timeoutMs = 12000,
+  timeoutMs = 8000,
 ): Promise<string | null> {
   for (const host of STOOQ_HOSTS) {
     const text = await fetchText(

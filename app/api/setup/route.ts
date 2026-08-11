@@ -76,28 +76,16 @@ export async function POST(request: Request) {
   }
 
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    if (request.headers.get("authorization") !== `Bearer ${cronSecret}`) {
-      return json({ error: "Unauthorized" }, { status: 401 });
-    }
-  } else {
-    // No secret configured: allow the bootstrap exactly once, then refuse.
-    try {
-      const found = await existingTables(url);
-      if (REQUIRED_TABLES.every((t) => found.includes(t))) {
-        return json(
-          {
-            error:
-              "資料表已存在，不再重複執行。要重新套用結構請設定 CRON_SECRET 並帶上 Authorization 標頭。",
-          },
-          { status: 409 },
-        );
-      }
-    } catch {
-      // Can't check — fall through and let the statements themselves fail
-      // with a real error rather than blocking on an inconclusive probe.
-    }
+  if (cronSecret && request.headers.get("authorization") !== `Bearer ${cronSecret}`) {
+    return json({ error: "Unauthorized" }, { status: 401 });
   }
+  // No once-only lock anymore. The old rule refused to run once every table
+  // existed, which was built before the schema carried `alter table … add
+  // column if not exists` migrations — and it produced the worst loop this
+  // app has shipped: a page saying "the schema is old, press 建立資料表" and
+  // this route answering "已存在，不再重複執行". Every statement is
+  // idempotent, so the worst an unauthenticated stranger can do is run a
+  // no-op; the worst the lock did was make migrations unreachable.
 
   const sql = neon(url);
   const statements = schemaStatements();

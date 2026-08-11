@@ -81,7 +81,7 @@ export async function fetchGoogleNews(term: string, gaps: string[]): Promise<Gde
       const xml = await fetchText(
         url,
         { headers: { "user-agent": "Mozilla/5.0", accept: "application/rss+xml,application/xml,text/xml,*/*" } },
-        15000,
+        10000,
       );
       if (!xml) return null;
       const articles = parseGoogleNewsRss(xml).slice(0, 25);

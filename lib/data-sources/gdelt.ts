@@ -99,7 +99,7 @@ async function queryGdelt(query: string): Promise<QueryOutcome> {
         accept: "application/json,text/plain,*/*",
       },
     },
-    25000,
+    15000,
     (f) => {
       failure = f;
     },

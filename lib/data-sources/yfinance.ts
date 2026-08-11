@@ -97,7 +97,7 @@ async function fetchYahooChart(pathAndQuery: string): Promise<YahooChartResult |
     const data = await fetchJson<YahooChartResponse>(
       `https://${host}.finance.yahoo.com/v8/finance/chart/${pathAndQuery}`,
       { headers: { "User-Agent": "Mozilla/5.0" } },
-      12000,
+      8000,
     );
     const res = data?.chart?.result?.[0];
     const ts = res?.timestamp;
@@ -301,7 +301,7 @@ async function fetchStooqQuote(stooqTicker: string, gaps: string[]): Promise<Lat
     fn: async () => {
       const text = await fetchStooqText(
         `/q/l/?s=${encodeURIComponent(stooqTicker)}&f=sd2t2ohlcv&h&e=csv`,
-        10000,
+        6000,
       );
       if (!text) return null;
       const line = text.trim().split("\n")[1];

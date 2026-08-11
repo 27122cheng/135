@@ -33,6 +33,17 @@ import type { PlanState } from "@/lib/monitor/plan-state";
  */
 export function explain(err: unknown): Error {
   const message = err instanceof Error ? err.message : String(err);
+  // Checked before the relation case, because Postgres phrases a missing
+  // column as `column "x" of relation "y" does not exist` — which *contains*
+  // `relation "y" does not exist`, and the relation branch was rewriting a
+  // schema-drift error into "the tables don't exist". The user, whose tables
+  // very much existed, was then sent in a loop between a page telling them to
+  // create tables and a setup call telling them the tables were already there.
+  if (/column ".*".* does not exist/i.test(message)) {
+    return new Error(
+      `資料表結構過舊（缺少新欄位）—— 到 /setup 按一次「建立資料表」即可補上，不會動到既有資料。原始錯誤：${message}`,
+    );
+  }
   if (/relation ".*" does not exist/i.test(message)) {
     return new Error(
       `資料表尚未建立 —— 請先對這個資料庫執行 supabase/schema.sql（純 SQL，Neon 與 Supabase 都適用）。原始錯誤：${message}`,
