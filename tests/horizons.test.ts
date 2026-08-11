@@ -20,8 +20,8 @@ import type { Candle } from "@/lib/data-sources/ohlcv";
  * plan, not a second monitored trade.
  */
 
-// A steady trend with real range: near targets demonstrate the 70% day
-// floor, far ones the 30% swing floor, so both horizons genuinely qualify.
+// A steady trend with real range: near and far targets both demonstrate the
+// operator's 70% floor, so both horizons genuinely qualify.
 const candles: Candle[] = Array.from({ length: 400 }, (_, i) => {
   const p = 53000 + i * 40 + Math.sin(i / 7) * 150;
   return {
@@ -58,9 +58,11 @@ async function main() {
 
   // ── the profiles themselves ─────────────────────────────────────
   {
-    check("the day horizon is the strict one",
-      DAY_PROFILE.maxTargetAtr < SWING_PROFILE.maxTargetAtr &&
-        DAY_PROFILE.minHitRate > SWING_PROFILE.minHitRate,
+    check("the day horizon reaches less far",
+      DAY_PROFILE.maxTargetAtr < SWING_PROFILE.maxTargetAtr,
+      { DAY_PROFILE, SWING_PROFILE });
+    check("both horizons carry the operator's 70% floor",
+      DAY_PROFILE.minHitRate === 0.7 && SWING_PROFILE.minHitRate === 0.7,
       { DAY_PROFILE, SWING_PROFILE });
   }
 
@@ -85,7 +87,7 @@ async function main() {
     check("it reaches the target the day plan excluded",
       Math.abs((swing?.take_profit ?? 0) - (LAST + 1200)) < 0.01, swing?.take_profit);
     check("it carries its own hit rate", swing?.hit_rate != null, swing);
-    check("and names the 30% floor", swing?.summary.includes("30%") === true, swing?.summary);
+    check("and names the 70% floor", swing?.summary.includes("70%") === true, swing?.summary);
   }
 
   // ── the alert carries both, and says which one is tracked ───────

@@ -208,11 +208,11 @@ const MIN_STOP_ATR = 0.6;
  *    45% at its 1:1.22 breakeven is a real bar, not a long-shot payoff.
  *    (80–90% stays unbuyable at sane risk/reward: breakevenRr(0.8) = 0.25 is
  *    risking four to make one.)
- *  - **波段** may reach 5×ATR — a multi-day structure trade — and accepts a
- *    30% floor, because a swing pays through its payoff, not its frequency.
- *    An edge you cannot sit through is still not an edge you will capture,
- *    which is why the floor exists at all; combinations below it are only
- *    used when nothing clears it, and the summary says so.
+ *  - **波段** may reach 5×ATR — a multi-day structure trade — at the same
+ *    70% floor, per the operator. An edge you cannot sit through is still
+ *    not an edge you will capture, which is why the floor exists at all;
+ *    combinations below it are only used when nothing clears it, and the
+ *    summary says so.
  */
 export interface HorizonProfile {
   label: string;
@@ -230,7 +230,11 @@ export interface HorizonProfile {
  * history to backtest — also reads as unmet: an unverifiable 70% is not 70%.
  */
 export const DAY_PROFILE: HorizonProfile = { label: "當沖", maxTargetAtr: 2, minHitRate: 0.7 };
-export const SWING_PROFILE: HorizonProfile = { label: "波段", maxTargetAtr: 5, minHitRate: 0.3 };
+// The swing floor was 30% (paying through payoff, not frequency); the operator
+// set both horizons to 70% — 「當沖及大時間框架的交易勝率都要70」. A swing
+// that demonstrates 70% to a 5×ATR target is rare by construction; most scans
+// will simply not offer one, which is the instruction.
+export const SWING_PROFILE: HorizonProfile = { label: "波段", maxTargetAtr: 5, minHitRate: 0.7 };
 export const REFERENCE_PROFILE: HorizonProfile = {
   label: "參考價位",
   maxTargetAtr: 2,

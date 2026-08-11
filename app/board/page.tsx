@@ -448,22 +448,35 @@ export default function BoardPage() {
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-5">
-      <div className="mb-3 flex items-baseline justify-between gap-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
         <h1 className="text-base font-bold text-neutral-100">交易總覽</h1>
-        <nav className="flex shrink-0 gap-3 text-sm text-neutral-500">
-          <Link href="/" className="hover:text-neutral-200">
-            詳細分析
-          </Link>
-          <Link href="/history" className="hover:text-neutral-200">
-            歷史
-          </Link>
-          <Link href="/review" className="hover:text-neutral-200">
-            復盤
-          </Link>
-          <Link href="/setup" className="hover:text-neutral-200">
-            通知
-          </Link>
-        </nav>
+        <div className="flex shrink-0 items-center gap-3">
+          <nav className="flex gap-3 text-sm text-neutral-500">
+            <Link href="/" className="hover:text-neutral-200">
+              詳細分析
+            </Link>
+            <Link href="/history" className="hover:text-neutral-200">
+              歷史
+            </Link>
+            <Link href="/review" className="hover:text-neutral-200">
+              復盤
+            </Link>
+            <Link href="/setup" className="hover:text-neutral-200">
+              通知
+            </Link>
+          </nav>
+          {/* 右上角的重整：全部九個商品重新掃描並更新 — the same worker pool
+              the status-row button used, promoted to where a refresh control
+              is expected to live. */}
+          <button
+            type="button"
+            onClick={() => void rescan(rows)}
+            disabled={rescanning.size > 0}
+            className="rounded-lg border border-neutral-700 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-800 disabled:opacity-40"
+          >
+            {rescanning.size > 0 ? `重整中… 剩 ${rescanning.size}` : "↻ 重整"}
+          </button>
+        </div>
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500">
@@ -493,14 +506,6 @@ export default function BoardPage() {
           />
           每 4 小時自動掃描
         </label>
-        <button
-          type="button"
-          onClick={() => void rescan(rows)}
-          disabled={rescanning.size > 0}
-          className="shrink-0 rounded-lg border border-neutral-700 px-2.5 py-1 text-[11px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-        >
-          {rescanning.size > 0 ? `掃描中… 剩 ${rescanning.size}` : "立即全部掃描"}
-        </button>
       </div>
 
       {error && (
