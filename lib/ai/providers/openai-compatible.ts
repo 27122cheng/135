@@ -1,6 +1,7 @@
 import { getKey } from "@/lib/api-keys";
 import type { UserSettableKey } from "@/lib/api-key-names";
 import { postJson } from "../http";
+import { isModelError, modelCandidates, rememberModel } from "../model-fallback";
 import { AIProviderError, type AIProvider, type CompleteOptions, type ResponseSchema } from "../provider";
 
 /**
@@ -19,7 +20,12 @@ export interface OpenAICompatibleConfig {
   baseUrl: string;
   apiKeyName: UserSettableKey;
   modelKeyName: UserSettableKey;
-  defaultModel: string;
+  /**
+   * In preference order. Groq decommissions Llama versions with a 400 and a
+   * sentence; OpenRouter rotates which ids carry `:free`. One dead id must
+   * cost a hop to the next, not the provider.
+   */
+  defaultModels: string[];
   /** Extra headers — OpenRouter asks callers to identify themselves. */
   extraHeaders?: Record<string, string>;
 }
@@ -36,26 +42,42 @@ export function openAICompatibleProvider(config: OpenAICompatibleConfig): AIProv
     ): Promise<T> {
       const apiKey = getKey(config.apiKeyName);
       if (!apiKey) throw new AIProviderError(config.name, `未設定 ${config.apiKeyName}`);
-      const model = getKey(config.modelKeyName) ?? config.defaultModel;
+      const models = modelCandidates(config.name, getKey(config.modelKeyName), config.defaultModels);
 
-      const res = await postJson(
-        `${config.baseUrl}/chat/completions`,
-        { authorization: `Bearer ${apiKey}`, ...config.extraHeaders },
-        {
-          model,
-          messages: [{ role: "user", content: `${prompt}\n\n${schema.instruction}` }],
-          max_tokens: options.maxTokens ?? 900,
-          temperature: options.temperature ?? 0.2,
-        },
-        options.timeoutMs ?? 25000,
-      );
+      let body: ChatResponse | null = null;
+      let lastModelError: string | null = null;
+      for (const model of models) {
+        const res = await postJson(
+          `${config.baseUrl}/chat/completions`,
+          { authorization: `Bearer ${apiKey}`, ...config.extraHeaders },
+          {
+            model,
+            messages: [{ role: "user", content: `${prompt}\n\n${schema.instruction}` }],
+            max_tokens: options.maxTokens ?? 900,
+            temperature: options.temperature ?? 0.2,
+          },
+          options.timeoutMs ?? 25000,
+        );
 
-      if (!res.ok) {
-        const detail = (res.json as ChatResponse | null)?.error?.message ?? res.detail;
-        throw new AIProviderError(config.name, `HTTP ${res.status} ${detail}`);
+        if (!res.ok) {
+          const detail = (res.json as ChatResponse | null)?.error?.message ?? res.detail;
+          if (isModelError(res.status, detail ?? "")) {
+            lastModelError = `${model}: HTTP ${res.status} ${detail}`;
+            continue;
+          }
+          throw new AIProviderError(config.name, `HTTP ${res.status} ${detail}`);
+        }
+
+        rememberModel(config.name, model);
+        body = res.json as ChatResponse | null;
+        break;
       }
-
-      const body = res.json as ChatResponse | null;
+      if (body === null) {
+        throw new AIProviderError(
+          config.name,
+          `可用模型皆已下架或改名（${lastModelError ?? "無回應"}），可在設定頁以 ${config.modelKeyName} 指定新型號`,
+        );
+      }
       const text = body?.choices?.[0]?.message?.content ?? "";
       const parsed = schema.parse(text);
       if (parsed === null) {

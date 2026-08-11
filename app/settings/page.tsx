@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { loadUserKeys, saveUserKeys, type UserKeys } from "@/lib/user-keys-client";
+import { loadUserKeys, saveUserKeys, userKeyHeaders, type UserKeys } from "@/lib/user-keys-client";
 import type { UserSettableKey } from "@/lib/api-key-names";
 
 interface KeyInfo {
@@ -339,6 +339,94 @@ export default function SettingsPage() {
           全部清除
         </button>
       </div>
+
+      <AiTestPanel />
     </main>
+  );
+}
+
+interface AiTestRow {
+  name: string;
+  tier: string;
+  configured: boolean;
+  ok: boolean;
+  detail: string | null;
+}
+
+/**
+ * 「AI 供應商一直呼叫失敗」cannot be answered by a summary line. This asks
+ * each provider one live question with the same keys a real scan would use,
+ * and prints the verbatim failure — a bad key, a spent quota, and a retired
+ * model id all read differently here, and each has a different fix.
+ */
+function AiTestPanel() {
+  const [rows, setRows] = useState<AiTestRow[] | null>(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    setRunning(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/ai-test", { method: "POST", headers: userKeyHeaders() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setRows(data.results as AiTestRow[]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setRows(null);
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className="mt-5 rounded-xl border border-neutral-800 bg-neutral-900/40 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-neutral-200">測試 AI 供應商</p>
+          <p className="mt-0.5 text-[11px] text-neutral-500">
+            用目前的金鑰實際各問一次，直接顯示每一家的原始錯誤 —— 金鑰無效、額度用盡、模型下架，看得出是哪一種。
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={run}
+          disabled={running}
+          className="shrink-0 rounded-lg bg-neutral-800 px-4 py-2 text-sm text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
+        >
+          {running ? "測試中…" : "立即測試"}
+        </button>
+      </div>
+      {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
+      {rows && (
+        <ul className="mt-3 space-y-2">
+          {rows.map((r) => (
+            <li key={r.name} className="rounded-lg border border-neutral-800 bg-neutral-950/50 p-2.5 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-neutral-200">{r.name}</span>
+                <span className="text-[10px] text-neutral-600">{r.tier === "free" ? "免費" : "付費"}</span>
+                <span
+                  className={
+                    r.ok
+                      ? "ml-auto rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400"
+                      : r.configured
+                        ? "ml-auto rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] font-medium text-red-400"
+                        : "ml-auto rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-500"
+                  }
+                >
+                  {r.ok ? "正常" : r.configured ? "失敗" : "未設定"}
+                </span>
+              </div>
+              {r.detail && !r.ok && (
+                <p className="mt-1 break-all font-mono text-[10px] leading-relaxed text-neutral-500">
+                  {r.detail}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

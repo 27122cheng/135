@@ -1,6 +1,12 @@
 import { getKey } from "@/lib/api-keys";
 import { recordFailure, recordSuccess, tryConsume, type QuotaLimit } from "@/lib/data-sources/quota";
-import { AIProviderError, type AIProvider, type CompleteOptions, type ResponseSchema } from "./provider";
+import {
+  AIProviderError,
+  textSchema,
+  type AIProvider,
+  type CompleteOptions,
+  type ResponseSchema,
+} from "./provider";
 import { geminiProvider } from "./providers/gemini";
 import { openAICompatibleProvider } from "./providers/openai-compatible";
 import { anthropicProvider } from "./providers/anthropic";
@@ -55,16 +61,19 @@ function buildRegistry(): Map<string, AIProvider> {
       baseUrl: "https://api.groq.com/openai/v1",
       apiKeyName: "GROQ_API_KEY",
       modelKeyName: "GROQ_MODEL",
-      defaultModel: "llama-3.3-70b-versatile",
+      defaultModels: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
     }),
     openAICompatibleProvider({
       name: "openrouter",
       baseUrl: "https://openrouter.ai/api/v1",
       apiKeyName: "OPENROUTER_API_KEY",
       modelKeyName: "OPENROUTER_MODEL",
-      // A `:free` model, per the spec. OpenRouter retires these periodically —
-      // override with OPENROUTER_MODEL if this id stops resolving.
-      defaultModel: "meta-llama/llama-3.3-70b-instruct:free",
+      // `:free` models, per the spec. OpenRouter retires these periodically —
+      // the list absorbs one retirement, OPENROUTER_MODEL overrides the rest.
+      defaultModels: [
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "meta-llama/llama-3.1-8b-instruct:free",
+      ],
       extraHeaders: { "x-title": "multi-commodity-signal" },
     }),
     anthropicProvider(),
@@ -239,4 +248,42 @@ export function aiProviderStatus(): Array<{ name: string; tier: string; configur
     tier: p.tier,
     configured: p.isConfigured(),
   }));
+}
+
+export interface AiProviderTest {
+  name: string;
+  tier: string;
+  configured: boolean;
+  ok: boolean;
+  /** The provider's verbatim failure, because "呼叫失敗" diagnoses nothing. */
+  detail: string | null;
+}
+
+/**
+ * One live round-trip per configured provider — the settings page's 測試
+ * button. "AI 供應商一直呼叫失敗" is unanswerable from a summary line; this
+ * returns each provider's actual error (bad key, spent quota, retired model)
+ * so the fix is readable instead of guessable. Bypasses the quota ledger and
+ * the answer cache on purpose: a diagnostic that gets throttled or replayed
+ * measures the ledger, not the provider.
+ */
+export async function testAIProviders(): Promise<AiProviderTest[]> {
+  const schema = textSchema("只回覆「OK」兩個字。");
+  return Promise.all(
+    orderedProviders().map(async (p): Promise<AiProviderTest> => {
+      const base = { name: p.name, tier: p.tier };
+      if (!p.isConfigured()) return { ...base, configured: false, ok: false, detail: "未設定金鑰" };
+      try {
+        await p.complete("連線測試。", schema, { maxTokens: 30, timeoutMs: 15000 });
+        return { ...base, configured: true, ok: true, detail: null };
+      } catch (err) {
+        return {
+          ...base,
+          configured: true,
+          ok: false,
+          detail: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }),
+  );
 }
