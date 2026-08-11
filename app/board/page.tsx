@@ -454,6 +454,12 @@ export default function BoardPage() {
           <Link href="/" className="hover:text-neutral-200">
             詳細分析
           </Link>
+          <Link href="/history" className="hover:text-neutral-200">
+            歷史
+          </Link>
+          <Link href="/review" className="hover:text-neutral-200">
+            復盤
+          </Link>
           <Link href="/setup" className="hover:text-neutral-200">
             通知
           </Link>

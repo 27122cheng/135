@@ -133,8 +133,27 @@ export function analyzeTechnical(
       gaps.push("D1 K棒不足 200 根，無法計算 EMA200 排列");
     }
 
-    // 3) RSI(14) divergence vs. the last two swing highs/lows.
+    // 3) RSI(14): the current reading always, divergence when present.
+    //
+    // The reading itself is deliberately weight 0: RSI being at 62 is not a
+    // trade thesis, and overbought-means-short is exactly the reflex that
+    // fights every strong trend. But the number was being computed and then
+    // shown to nobody unless a divergence happened to exist — the card said
+    // "技術面" and could not answer "so what's the RSI?". Now it always
+    // testifies; it just doesn't vote.
     const rsiSeries = rsi(closes, 14);
+    const lastRsi = rsiSeries.at(-1);
+    if (lastRsi != null) {
+      const zone = lastRsi >= 70 ? "超買區（≥70）" : lastRsi <= 30 ? "超賣區（≤30）" : "中性區";
+      biasItems.push({
+        dimension: "技術面",
+        factor: `D1 RSI(14) = ${round(lastRsi)}，位於${zone}`,
+        direction: "neutral",
+        weight: 0,
+        evidence: `RSI(14)=${round(lastRsi)}`,
+        source: "Twelve Data/yfinance D1 收盤價",
+      });
+    }
     const rsiAligned = alignToCandles(d1.length, rsiSeries, closes.length - rsiSeries.length);
     if (highs.length >= 2) {
       const [h1, h2] = highs.slice(-2);

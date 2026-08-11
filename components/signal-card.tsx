@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { NewsDigest, TradeSignal } from "@/types/signal";
+import type { BiasItem, NewsDigest, TradeSignal } from "@/types/signal";
 import type { AppliedIntervention } from "@/types/journal";
 import { Card, CardContent } from "@/components/ui/card";
 import { GradeBadge } from "@/components/grade-badge";
@@ -657,6 +657,77 @@ function ReferencePlan({ signal }: { signal: TradeSignal }) {
   );
 }
 
+/**
+ * 技術指標明細 — every technical reading with its number and its verdict.
+ *
+ * The values were always computed (EMA20/50/200, RSI, MACD histogram, the
+ * swing structure) and always stored in the bias items' evidence — but they
+ * only surfaced inside the collapsed 全部因子 list, mixed with five other
+ * dimensions. The question the card kept failing to answer was the simplest
+ * one: "所以 RSI 現在多少？" This section answers it, always visible, one row
+ * per indicator: the verdict as a chip, the reading as the headline, and the
+ * raw numbers underneath so the verdict can be checked.
+ *
+ * Weight-0 rows are readings that testify without voting (an RSI of 55 is a
+ * fact, not a thesis) — shown dimmer, and labelled as such rather than hidden,
+ * because "the indicator is neutral" and "the indicator wasn't computed" must
+ * never look the same.
+ */
+function TechnicalDetails({ items }: { items: BiasItem[] }) {
+  const tech = items.filter((b) => b.dimension === "技術面");
+  if (tech.length === 0) return null;
+  const verdict = (b: BiasItem) =>
+    b.direction === "long"
+      ? { label: b.weight > 0 ? `偏多 ×${b.weight}` : "偏多", cls: "bg-emerald-500/15 text-emerald-400" }
+      : b.direction === "short"
+        ? { label: b.weight > 0 ? `偏空 ×${b.weight}` : "偏空", cls: "bg-red-500/15 text-red-400" }
+        : { label: "中性", cls: "bg-neutral-700/60 text-neutral-400" };
+  return (
+    <Card>
+      <CardContent className="p-4 pt-4">
+        <div className="mb-1 flex items-baseline justify-between gap-2">
+          <p className="text-sm font-medium text-neutral-300">技術指標明細</p>
+          <span className="text-[11px] text-neutral-600">{tech.length} 項讀數</span>
+        </div>
+        <p className="mb-3 text-[11px] leading-relaxed text-neutral-600">
+          每項指標的當前數據與結論。標「中性」且無權重的是純讀數 — 有算、有看，只是不構成方向依據。
+        </p>
+        <ul className="flex flex-col gap-2">
+          {tech.map((b, i) => {
+            const v = verdict(b);
+            const quiet = b.weight === 0;
+            return (
+              <li
+                key={i}
+                className={cn(
+                  "rounded-lg border border-neutral-800 bg-neutral-950/50 p-2.5",
+                  quiet && "opacity-75",
+                )}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <p className="min-w-0 text-xs leading-relaxed text-neutral-200">{b.factor}</p>
+                  <span
+                    className={cn(
+                      "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+                      v.cls,
+                    )}
+                  >
+                    {v.label}
+                  </span>
+                </div>
+                <p className="mt-1 font-mono text-[11px] leading-relaxed text-neutral-500">
+                  {b.evidence}
+                </p>
+                <p className="mt-0.5 text-[10px] text-neutral-700">{b.source}</p>
+              </li>
+            );
+          })}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
 function Section({
   title,
   children,
@@ -824,6 +895,8 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
       </Section>
 
       <ChartPatterns patterns={signal.chart_patterns ?? []} />
+
+      <TechnicalDetails items={signal.bias_items} />
 
       {/* Six dimensions — the main "why", so it stays open. */}
       <Card>
