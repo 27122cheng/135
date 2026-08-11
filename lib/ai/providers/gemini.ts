@@ -44,8 +44,8 @@ export function geminiProvider(): AIProvider {
 
       let body: GeminiResponse | null = null;
       let lastModelError: string | null = null;
-      for (const model of models) {
-        const res = await postJson(
+      const ask = (model: string, withThinking: boolean) =>
+        postJson(
           `${ENDPOINT}/${encodeURIComponent(model)}:generateContent`,
           { "x-goog-api-key": apiKey },
           {
@@ -56,11 +56,23 @@ export function geminiProvider(): AIProvider {
               // 2.5 Flash is a thinking model: left on, reasoning tokens eat the
               // output budget and the reply can come back with an empty text
               // part. Nothing here needs chain-of-thought, so it is switched off.
-              thinkingConfig: { thinkingBudget: 0 },
+              ...(withThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
             },
           },
           options.timeoutMs ?? 25000,
         );
+      for (const model of models) {
+        let res = await ask(model, true);
+        // Not every Flash generation accepts thinkingConfig; the ones that
+        // don't answer "HTTP 400 Request contains an invalid argument" — seen
+        // live on the settings page's test button — and that must cost a
+        // retry without the field, not the whole provider.
+        {
+          const detail = (res.json as GeminiResponse | null)?.error?.message ?? res.detail ?? "";
+          if (!res.ok && res.status === 400 && /invalid argument|INVALID_ARGUMENT|thinking/i.test(detail)) {
+            res = await ask(model, false);
+          }
+        }
 
         if (!res.ok) {
           const detail = (res.json as GeminiResponse | null)?.error?.message ?? res.detail;

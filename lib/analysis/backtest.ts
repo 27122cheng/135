@@ -1,4 +1,5 @@
 import type { Candle } from "../data-sources/ohlcv";
+import { ema, macd, rsi } from "./indicators";
 
 /**
  * Empirical check on a plan's stop/target geometry, computed locally from the
@@ -18,23 +19,36 @@ import type { Candle } from "../data-sources/ohlcv";
  * drawn from downtrends, and a hit rate computed that way is close to
  * meaningless as an answer to "will this target get hit from here".
  *
- * It now samples only bars in a regime matching the signal's direction: above
- * the 50-bar EMA for a long, below it for a short. That turns the question from
- * "how often does this instrument travel this far in 20 bars, ever" into "how
- * often does it travel this far when it is trending the way we think it is" —
- * which is the question the number is actually being read as.
+ * It now samples in **tiers of setup similarity**, strongest first, and uses
+ * the strongest tier that still yields a real sample:
  *
- * The filter is deliberately crude. A finer regime definition (volatility
- * buckets, the signal's own six-dimension state) would shrink the sample below
- * the point where a hit rate means anything, and this already selects the plan's
- * geometry, so a noisy estimate here does real damage. When the conditioned
- * sample is too small the walk falls back to unconditional and `basis` says so.
+ *  - T1: EMA50 side + MACD histogram sign + RSI side all agreeing with the
+ *    signal's direction — bars that looked like *this* setup;
+ *  - T2: EMA50 side + MACD sign;
+ *  - T3: EMA50 side (the old conditioning);
+ *  - T4: every bar (the old fallback).
+ *
+ * The tiering exists because the single-condition sample answered the wrong
+ * question at the operator's 70% floor. The signals only fire when the
+ * technical state agrees; sampling every same-side-of-EMA bar mixes in the
+ * chop and the exhaustion days, drags the measured hit rate toward the
+ * random-walk baseline (stop/(stop+target) ≈ 40% at 1:1.5), and fails
+ * geometry that genuinely wins 70% of the time *under the conditions the
+ * signal actually fires in*. Conditioning on more of the setup measures
+ * P(win | setup), which is the number the floor is comparing against.
+ *
+ * Each tier still needs {@link MIN_CONDITIONED_RESOLVED} resolved samples —
+ * a precise answer about the right question beats nothing, but a noisy answer
+ * does not beat a solid broader one — and `basis` always says which tier
+ * produced the number.
  *
  * ## What it still does NOT answer
  *
- * Whether this particular signal is good. It is not conditioned on the setup —
- * only on the trend — so read it as a feasibility check on the risk/reward
- * under the current regime, not as a win rate for the strategy.
+ * Whether this particular signal is good. Fundamentals and positioning are
+ * weekly/monthly series and cannot be conditioned per-bar; they gate the
+ * direction upstream (scoring, consensus) rather than the sample here. Read
+ * the number as "this geometry, in this technical regime", not as the
+ * strategy's win rate.
  */
 
 export interface PlanBacktest {
@@ -70,14 +84,77 @@ export interface PlanBacktest {
  */
 const MIN_CONDITIONED_RESOLVED = 30;
 
-/** 50-bar EMA of closes, aligned to the candle array. */
-function trendLine(candles: Candle[], period = 50): number[] {
-  const k = 2 / (period + 1);
-  const out: number[] = [candles[0]?.close ?? 0];
-  for (let i = 1; i < candles.length; i++) {
-    out.push(candles[i].close * k + out[i - 1] * (1 - k));
-  }
-  return out;
+/**
+ * Per-bar technical state, aligned to the candle array. Computed once per
+ * candles array (WeakMap) because the geometry search backtests dozens of
+ * combinations against the same history.
+ */
+interface RegimeSeries {
+  ema50: number[];
+  /** null where the series hasn't warmed up. */
+  hist: (number | null)[];
+  rsi14: (number | null)[];
+}
+
+const regimeCache = new WeakMap<Candle[], RegimeSeries>();
+
+function regimeOf(candles: Candle[]): RegimeSeries {
+  const cached = regimeCache.get(candles);
+  if (cached) return cached;
+  const closes = candles.map((c) => c.close);
+  const align = <T>(series: T[]): (T | null)[] => {
+    const out: (T | null)[] = new Array(closes.length).fill(null);
+    const offset = closes.length - series.length;
+    for (let i = 0; i < series.length; i++) out[offset + i] = series[i];
+    return out;
+  };
+  const built: RegimeSeries = {
+    ema50: ema(closes, 50),
+    hist: align(macd(closes).histogram),
+    rsi14: align(rsi(closes, 14)),
+  };
+  regimeCache.set(candles, built);
+  return built;
+}
+
+/** The similarity tiers, strongest first. `null` predicate = unconditional. */
+interface Tier {
+  label: string;
+  conditioned: boolean;
+  accept: ((i: number, close: number) => boolean) | null;
+}
+
+function tiersFor(direction: "long" | "short", candles: Candle[]): Tier[] {
+  const r = regimeOf(candles);
+  const emaSide = (i: number, close: number) =>
+    direction === "long" ? close > r.ema50[i] : close < r.ema50[i];
+  const macdSide = (i: number) => {
+    const h = r.hist[i];
+    return h !== null && (direction === "long" ? h > 0 : h < 0);
+  };
+  const rsiSide = (i: number) => {
+    const v = r.rsi14[i];
+    return v !== null && (direction === "long" ? v > 50 : v < 50);
+  };
+  const side = direction === "long" ? "多頭" : "空頭";
+  return [
+    {
+      label: `EMA50 ${side}側＋MACD 同向＋RSI 同側（與當前訊號同條件的日子）`,
+      conditioned: true,
+      accept: (i, c) => emaSide(i, c) && macdSide(i) && rsiSide(i),
+    },
+    {
+      label: `EMA50 ${side}側＋MACD 同向`,
+      conditioned: true,
+      accept: (i, c) => emaSide(i, c) && macdSide(i),
+    },
+    {
+      label: `EMA50 ${side}側`,
+      conditioned: true,
+      accept: (i, c) => emaSide(i, c),
+    },
+    { label: "全部 K 棒，不分格局", conditioned: false, accept: null },
+  ];
 }
 
 export function backtestPlanGeometry(
@@ -89,18 +166,22 @@ export function backtestPlanGeometry(
   riskReward: number,
   horizonBars = 20,
 ): PlanBacktest | null {
-  const conditioned = walk(direction, entry, stopLoss, takeProfit, candles, riskReward, horizonBars, true);
-  if (conditioned && conditioned.resolved >= MIN_CONDITIONED_RESOLVED) return conditioned;
-  const all = walk(direction, entry, stopLoss, takeProfit, candles, riskReward, horizonBars, false);
-  if (!all) return conditioned;
-  return {
-    ...all,
-    basis:
-      conditioned === null
-        ? all.basis
-        : `僅取${direction === "long" ? "多頭" : "空頭"}格局的樣本只有 ${conditioned.resolved} 筆，` +
-          `不足 ${MIN_CONDITIONED_RESOLVED} 筆，改用全部 ${all.resolved} 筆（含反向格局，估計偏保守）`,
-  };
+  const tiers = tiersFor(direction, candles);
+  const skipped: string[] = [];
+  let last: PlanBacktest | null = null;
+  for (const tier of tiers) {
+    const result = walk(direction, entry, stopLoss, takeProfit, candles, riskReward, horizonBars, tier);
+    if (!result) continue;
+    last = result;
+    if (result.resolved >= MIN_CONDITIONED_RESOLVED) {
+      if (skipped.length > 0) {
+        result.basis = `${result.basis}（更嚴的條件層樣本不足：${skipped.join("、")}）`;
+      }
+      return result;
+    }
+    skipped.push(`「${tier.label}」僅 ${result.resolved} 筆`);
+  }
+  return last;
 }
 
 function walk(
@@ -111,7 +192,7 @@ function walk(
   candles: Candle[],
   riskReward: number,
   horizonBars: number,
-  conditioned: boolean,
+  tier: Tier,
 ): PlanBacktest | null {
   if (entry <= 0 || candles.length < horizonBars + 20) return null;
 
@@ -125,18 +206,16 @@ function walk(
   let hadAmbiguousBars = false;
   let sampled = 0;
 
-  const ema = conditioned ? trendLine(candles) : null;
   const lastStart = candles.length - horizonBars - 1;
   for (let i = 0; i <= lastStart; i++) {
     const e = candles[i].close;
     if (!(e > 0)) continue;
-    if (ema) {
-      // Only bars whose trend agrees with the plan. The first `period` bars of
-      // an EMA are still converging from the seed, so they are skipped rather
-      // than classified on a number that is mostly the first close.
+    if (tier.accept) {
+      // The first bars of every indicator are still converging from their
+      // seeds, so they are skipped rather than classified on numbers that are
+      // mostly the first close.
       if (i < 50) continue;
-      const trending = direction === "long" ? e > ema[i] : e < ema[i];
-      if (!trending) continue;
+      if (!tier.accept(i, e)) continue;
     }
     sampled++;
     const slLevel = direction === "long" ? e * (1 - slPct) : e * (1 + slPct);
@@ -186,10 +265,7 @@ function walk(
     horizonBars,
     lookbackBars: sampled,
     hadAmbiguousBars,
-    conditioned,
-    basis: conditioned
-      ? `只取價格在 EMA50 ${direction === "long" ? "之上" : "之下"}的 ${sampled} 根 K 棒為進場點，` +
-        `即與訊號同向的格局`
-      : `取全部 ${sampled} 根 K 棒為進場點，不分格局`,
+    conditioned: tier.conditioned,
+    basis: `只取「${tier.label}」的 ${sampled} 根 K 棒為進場點`,
   };
 }
