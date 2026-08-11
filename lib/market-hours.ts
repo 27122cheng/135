@@ -42,6 +42,17 @@ const SUNDAY_OPEN_UTC_HOUR = 22;
  */
 export const STALE_QUOTE_HOURS = 3;
 
+/**
+ * How old the newest H4 candle may be while still counting as trading.
+ *
+ * Looser than the quote threshold because a bar's timestamp is its *bucket
+ * start*: an in-progress 4-hour bar opened at 00:00 is legitimately almost four
+ * hours "old" at 03:50 while the market trades every second of it. Five hours
+ * is one full bucket plus slack, and still far below the shortest real closure
+ * this needs to catch (a US cash index's overnight gap runs ~13 hours).
+ */
+export const BAR_EVIDENCE_HOURS = 5;
+
 export interface MarketStatus {
   /** True when a trade should not be announced. The analysis still runs. */
   closed: boolean;
@@ -66,14 +77,26 @@ export function isWeekendClosed(now: Date): boolean {
 }
 
 /**
- * The verdict, from the clock and the feed together.
+ * The verdict, from the clock and *every* feed together.
  *
- * `quoteAgeMinutes` null means no quote was available at all, which is not the
- * same as a closed market and is deliberately not treated as one — the analysis
- * already reports a missing quote as a data gap, and stacking a second
- * interpretation on top would obscure it.
+ * The quote alone turned out to be a witness that lies in both directions.
+ * Yahoo's direct chart endpoint served this deployment data whose last trade
+ * was 104 hours old on a Tuesday morning — with markets open and the candle
+ * proxy (a different route) returning bars minutes old — so nine instruments
+ * spent a trading day labelled 休市中 on the word of one broken feed. Candles
+ * are independent evidence of trading, and either witness saying "the market
+ * printed recently" is proof it did: prices do not print on a closed market.
+ *
+ * `null` for an age means that feed produced nothing, which is a data gap, not
+ * a closed market — it is already reported as a gap, and stacking a second
+ * interpretation on top would obscure it. Both feeds missing therefore reads
+ * as open-with-gaps, never as closed.
  */
-export function marketStatus(now: Date, quoteAgeMinutes: number | null): MarketStatus {
+export function marketStatus(
+  now: Date,
+  quoteAgeMinutes: number | null,
+  barAgeMinutes: number | null = null,
+): MarketStatus {
   if (isWeekendClosed(now)) {
     return {
       closed: true,
@@ -81,15 +104,21 @@ export function marketStatus(now: Date, quoteAgeMinutes: number | null): MarketS
       basis: "weekend",
     };
   }
-  if (quoteAgeMinutes !== null && quoteAgeMinutes > STALE_QUOTE_HOURS * 60) {
-    const hours = Math.round((quoteAgeMinutes / 60) * 10) / 10;
-    return {
-      closed: true,
-      reason:
-        `最後成交距今 ${hours} 小時（超過 ${STALE_QUOTE_HOURS} 小時），` +
-        `市場可能休市或報價來源停更，不發送進場通知`,
-      basis: "stale-quote",
-    };
+
+  const quoteFresh = quoteAgeMinutes !== null && quoteAgeMinutes <= STALE_QUOTE_HOURS * 60;
+  const barFresh = barAgeMinutes !== null && barAgeMinutes <= BAR_EVIDENCE_HOURS * 60;
+  if (quoteFresh || barFresh) return { closed: false, reason: null, basis: "open" };
+  if (quoteAgeMinutes === null && barAgeMinutes === null) {
+    return { closed: false, reason: null, basis: "open" };
   }
-  return { closed: false, reason: null, basis: "open" };
+
+  const ages = [quoteAgeMinutes, barAgeMinutes].filter((a): a is number => a !== null);
+  const hours = Math.round((Math.min(...ages) / 60) * 10) / 10;
+  return {
+    closed: true,
+    reason:
+      `最後成交距今 ${hours} 小時（報價與 K 棒都沒有更新的跡象），` +
+      `市場休市中或所有價格來源停更，不發送進場通知`,
+    basis: "stale-quote",
+  };
 }

@@ -235,24 +235,57 @@ async function buildSignalForSymbol(
   // entirely. Same feed, one call, and now a rescan two minutes later genuinely
   // sees a new price.
   const quote = await fetchLatestPrice(meta.yfinanceSymbol, gaps);
-  const lastClose = d1?.candles.at(-1)?.close ?? h4?.candles.at(-1)?.close ?? w1?.candles.at(-1)?.close;
-  if (quote && quote.ageMinutes > 60 && quote.ageMinutes <= 180) {
+
+  // The candles are a second, independent witness to both questions the quote
+  // was answering alone: what the price is, and when the market last traded.
+  //
+  // That independence turned out to matter. Yahoo's direct chart endpoint
+  // served this deployment quotes whose last trade was 104 hours old on a
+  // Tuesday morning — while the candle proxy, a different route, had bars
+  // minutes old. Under `quote?.price ?? lastClose`, existing beat fresh: the
+  // four-day-old quote won because it merely *existed*, the entry zone was
+  // built 1% away from the market, and the staleness gate — correctly reading
+  // a 104-hour age — kept nine open instruments labelled 休市中 all day.
+  //
+  // So the rule is freshness, not precedence: whichever witness printed most
+  // recently supplies the price, and the market-hours check hears both.
+  const lastBar = h4?.candles.at(-1) ?? d1?.candles.at(-1) ?? w1?.candles.at(-1);
+  const lastClose = lastBar?.close;
+  const barAgeMinutes = lastBar
+    ? Math.max(0, (Date.now() - new Date(lastBar.time).getTime()) / 60000)
+    : null;
+  const quoteBeatsBar =
+    quote !== null &&
+    (barAgeMinutes === null || quote.ageMinutes <= barAgeMinutes + 60);
+
+  if (quote && quoteBeatsBar && quote.ageMinutes > 60 && quote.ageMinutes <= 180) {
     gaps.push(
       `即時報價已延遲 ${Math.round(quote.ageMinutes)} 分鐘（${quote.at.slice(11, 16)} UTC），進場區間以此價位計算`,
+    );
+  }
+  if (quote && !quoteBeatsBar) {
+    gaps.push(
+      `即時報價來源已 ${Math.round((quote.ageMinutes / 60) * 10) / 10} 小時未更新，` +
+        `K 棒較新，進場區間改用最新 K 棒收盤價計算`,
     );
   }
   if (!quote && lastClose != null) {
     gaps.push("取不到即時報價，進場區間改用最後一根 K 棒收盤價計算，可能與市價有落差");
   }
-  // The clock and the feed, together. Neither stops the analysis; either stops
-  // the notification.
-  const market = marketStatus(new Date(), quote ? quote.ageMinutes : null);
+  // The clock and both feeds, together. Nothing here stops the analysis;
+  // a closed verdict stops the notification.
+  const market = marketStatus(new Date(), quote ? quote.ageMinutes : null, barAgeMinutes);
   if (market.closed && market.reason) gaps.push(market.reason);
 
-  const currentPrice = quote?.price ?? lastClose;
-  const priceBasis = quote
-    ? `即時報價 ${round(quote.price)}（${Math.round(quote.ageMinutes)} 分鐘前）`
-    : `最後收盤價 ${lastClose == null ? "—" : round(lastClose)}（取不到即時報價）`;
+  const currentPrice = quote && quoteBeatsBar ? quote.price : (lastClose ?? quote?.price);
+  const priceBasis =
+    quote && quoteBeatsBar
+      ? `即時報價 ${round(quote.price)}（${Math.round(quote.ageMinutes)} 分鐘前）`
+      : lastClose != null
+        ? `最新 K 棒收盤價 ${round(lastClose)}` +
+          (barAgeMinutes !== null ? `（K 棒起點 ${Math.round(barAgeMinutes)} 分鐘前）` : "") +
+          (quote ? "，即時報價來源停更未採用" : "，取不到即時報價")
+        : `即時報價 ${quote ? round(quote.price) : "—"}（K 棒不可得）`;
   if (currentPrice == null) {
     // Without a price there is no entry, no structure and no valid signal — but
     // the other five dimensions may still have produced real findings, so return

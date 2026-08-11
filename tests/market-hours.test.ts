@@ -64,6 +64,36 @@ const at = (iso: string) => new Date(iso);
   check("a missing quote is not a closed market", !noQuote.closed, noQuote);
 }
 
+// ── the candles are a second witness ──────────────────────────────
+//
+// The Tuesday incident: Yahoo's direct endpoint served quotes whose last trade
+// was 104 hours old while the candle proxy had bars minutes old, and nine open
+// instruments spent a trading day labelled 休市中 on the word of the one
+// broken feed. Prices do not print on a closed market, so either witness
+// saying "it printed recently" is proof the market is open.
+{
+  const tue = at("2026-08-11T05:00:00Z");
+  const brokenQuote = marketStatus(tue, 104 * 60, 45);
+  check("a fresh bar overrides a four-day-old quote", !brokenQuote.closed, brokenQuote);
+
+  const brokenBars = marketStatus(tue, 20, 30 * 60);
+  check("and a fresh quote overrides stale bars", !brokenBars.closed, brokenBars);
+
+  // An in-progress H4 bar is legitimately almost four hours "old" at its
+  // bucket's end while the market trades every second of it.
+  const bucketEnd = marketStatus(tue, null, 230);
+  check("a bar at its bucket's end still counts as trading", !bucketEnd.closed, bucketEnd);
+
+  // Both witnesses stale is the real overnight close of a cash index.
+  const overnight = marketStatus(tue, 350, 350);
+  check("both feeds stale reads as closed", overnight.closed, overnight);
+  check("and the reason names both", overnight.reason?.includes("K 棒") === true,
+    overnight.reason);
+
+  const nothing = marketStatus(tue, null, null);
+  check("no evidence at all is still not a closed market", !nothing.closed);
+}
+
 // ── and it stops the notification, not the analysis ───────────────
 {
   const tradeable = {
