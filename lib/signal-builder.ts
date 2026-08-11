@@ -304,7 +304,12 @@ async function buildSignalForSymbol(
   }
   // The clock and both feeds, together. Nothing here stops the analysis;
   // a closed verdict stops the notification.
-  const market = marketStatus(new Date(), quote ? quote.ageMinutes : null, barAgeMinutes);
+  const market = marketStatus(
+    new Date(),
+    quote ? quote.ageMinutes : null,
+    barAgeMinutes,
+    meta.category,
+  );
   if (market.closed && market.reason) gaps.push(market.reason);
 
   const currentPrice = quote && quoteBeatsBar ? quote.price : (lastClose ?? quote?.price);

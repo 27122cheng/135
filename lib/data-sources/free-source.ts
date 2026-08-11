@@ -151,15 +151,31 @@ export async function fetchFree<T>(opts: FreeFetchOptions<T>): Promise<FreeFetch
   // answer clearly labelled as old is still better than none.
   const forced = isForced();
 
+  // Forcing means "no stale junk", not "refetch what was fetched twenty
+  // seconds ago". A full-board 重整 is nine forced scans sharing the same
+  // macro series — DXY, CPI, payrolls, the news queries — and refetching
+  // each of them nine times in one burst is how the sweep blew through its
+  // own per-minute budgets and finished the last symbols on stale caches and
+  // eighteen gap lines ("每分鐘額度已用盡…改用 0 分鐘 前的快取" — a
+  // zero-minute-old cache IS the fresh answer). Anything younger than this
+  // is treated as the fresh fetch it just was, force or no force.
+  const FORCE_ACCEPT_MS = 2 * 60 * 1000;
+
   const fresh = forced ? undefined : getCached<T>(key);
   if (fresh !== undefined) return { value: fresh, stale: false, ageMs: 0 };
+  if (forced) {
+    const recent = getStale<T>(key);
+    if (recent && recent.ageMs <= FORCE_ACCEPT_MS) {
+      return { value: recent.value, stale: false, ageMs: recent.ageMs };
+    }
+  }
 
   // Second look, in the database. On a serverless platform the in-memory cache
   // above is almost always empty — the process that filled it served one
   // request and was gone — so without this the whole caching layer was
   // decorative and every source hiccup became "無資料".
   const persisted = await readPersisted<T>(key, ttlMs, staleMs);
-  if (persisted?.fresh && !forced) {
+  if (persisted?.fresh && (!forced || persisted.ageMs <= FORCE_ACCEPT_MS)) {
     setCached(key, persisted.value, ttlMs - persisted.ageMs, staleMs - persisted.ageMs);
     return { value: persisted.value, stale: false, ageMs: persisted.ageMs };
   }

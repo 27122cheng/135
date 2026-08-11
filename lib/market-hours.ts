@@ -96,6 +96,8 @@ export function marketStatus(
   now: Date,
   quoteAgeMinutes: number | null,
   barAgeMinutes: number | null = null,
+  /** The instrument's category — forex gets the 24/5 rule below. */
+  category?: string,
 ): MarketStatus {
   if (isWeekendClosed(now)) {
     return {
@@ -104,6 +106,15 @@ export function marketStatus(
       basis: "weekend",
     };
   }
+
+  // FX is open 24/5 as a fact about the market, not about any feed: between
+  // the Sunday open and the Friday close there is no hour in which EURUSD
+  // does not trade somewhere. A midweek "closed" verdict on a currency pair
+  // is therefore always a false positive — it was our feeds lagging (Yahoo
+  // hours behind, Stooq breaker tripped, ER-API's daily fix) being read as
+  // the market stopping. Staleness on FX stays visible as gap lines and the
+  // price-basis note; it just can't call the market shut.
+  if (category === "forex") return { closed: false, reason: null, basis: "open" };
 
   const quoteFresh = quoteAgeMinutes !== null && quoteAgeMinutes <= STALE_QUOTE_HOURS * 60;
   const barFresh = barAgeMinutes !== null && barAgeMinutes <= BAR_EVIDENCE_HOURS * 60;

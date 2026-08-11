@@ -96,6 +96,24 @@ const at = (iso: string) => new Date(iso);
   check("no evidence at all is still not a closed market", !nothing.closed);
 }
 
+// ── FX is open 24/5 as a fact about the market ────────────────────
+//
+// Between the Sunday open and the Friday close there is no hour in which a
+// major pair does not trade somewhere, so a midweek "closed" on forex is
+// always our feeds lagging, never the market stopping. The weekend clock is
+// unaffected — it outranks everything.
+{
+  const tue = at("2026-08-11T19:00:00Z");
+  const laggingFeeds = marketStatus(tue, 6 * 60, 7 * 60, "forex");
+  check("stale feeds cannot close a currency pair midweek", !laggingFeeds.closed, laggingFeeds);
+
+  const sameForIndex = marketStatus(tue, 6 * 60, 7 * 60, "index");
+  check("an index with the same staleness still reads closed", sameForIndex.closed);
+
+  const weekend = marketStatus(at("2026-08-09T00:36:00Z"), 5, 5, "forex");
+  check("the weekend clock still outranks the forex rule", weekend.closed, weekend);
+}
+
 // ── the bar witness is the freshest bar, not the first that exists ──
 //
 // The second half of the Tuesday incident: the quote was cured of

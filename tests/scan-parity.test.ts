@@ -117,7 +117,14 @@ const shared = read("lib/scan.ts");
   // 2. Even with a live quote, every source sat behind a fresh-cache tier, so a
   //    rescan inside the TTL returned byte-identical inputs.
   check("a forced fetch skips the memory cache", freeSource.includes("forced ? undefined : getCached"));
-  check("and the persisted fresh tier", freeSource.includes("persisted?.fresh && !forced"));
+  // …except for answers younger than the force-accept window: nine forced
+  // scans share the same macro series, and refetching DXY nine times in one
+  // burst is how the sweep blew through its own per-minute budgets. "Fresh"
+  // means no stale junk, not refetching what was fetched twenty seconds ago.
+  check("and the persisted fresh tier, unless the answer is seconds old",
+    freeSource.includes("persisted?.fresh && (!forced || persisted.ageMs <= FORCE_ACCEPT_MS)"));
+  check("the force-accept window is minutes, not hours",
+    freeSource.includes("FORCE_ACCEPT_MS = 2 * 60 * 1000"));
   // Forcing is permission to try, not permission to invent: the stale tier must
   // stay reachable so a failed live call still answers with something labelled.
   check("but the stale tier is still reachable", freeSource.includes("serveStale("));
