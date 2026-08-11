@@ -5,6 +5,7 @@ import { fetchOHLCV } from "./data-sources/ohlcv";
 import { fetchLatestPrice } from "./data-sources/yfinance";
 import { atr as computeAtr } from "./analysis/indicators";
 import { analyzeTechnical } from "./analysis/technical";
+import { analyzeTiming } from "./analysis/timing";
 import { detectAllPatterns, patternContributions } from "./analysis/patterns";
 import { dedupeBiasItems } from "./analysis/evidence";
 import { describeProximity, isNearEntry } from "./analysis/proximity";
@@ -349,6 +350,10 @@ async function buildSignalForSymbol(
   // it runs here rather than inside fundFlow — pure computation, no fetching.
   const openInterestItems = analyzeOpenInterest(meta, positioning.reports, d1?.candles ?? null, gaps);
 
+  // 時間與事件因子 — session windows, NFP day, weekend gap risk, month-end.
+  // Weight-0 readings from the clock alone; they inform, never vote.
+  const timing = analyzeTiming(new Date());
+
   const rawBiasItems: BiasItem[] = [
     ...technical.biasItems,
     ...patternParts.biasItems,
@@ -357,6 +362,7 @@ async function buildSignalForSymbol(
     ...news.biasItems,
     ...fundFlowItems,
     ...openInterestItems,
+    ...timing.items,
   ];
 
   // 一個事實，一票。基本面與資金流都在讀同一個 VIX/DXY，兩邊各記一票，
@@ -464,8 +470,14 @@ async function buildSignalForSymbol(
     }
   }
 
+  // The calendar check used to be blind without a Finnhub key. The clock-
+  // derived NFP flag makes the S4 downgrade able to fire on the one release
+  // whose schedule is pure arithmetic, key or no key.
   const eventCheck = effects.downgradeOnHighImpactEvent
-    ? await highImpactWithin24h(gaps)
+    ? await highImpactWithin24h(gaps).then((c) => ({
+        available: c.available || timing.highImpactWithin24h,
+        present: c.present || timing.highImpactWithin24h,
+      }))
     : { available: false, present: false };
 
   const penalties = applyGradePenalties(grade, effects, {

@@ -1,0 +1,74 @@
+import { check, report } from "./_harness";
+import { analyzeTiming, lastBusinessDay, nfpTimeFor } from "@/lib/analysis/timing";
+
+/**
+ * 時間與事件因子 — deterministic calendar effects, derived from the clock
+ * with no API and no key. The invariants: NFP is the first Friday's 12:30
+ * UTC; the readings never vote (weight 0); the high-impact flag rises only
+ * in the pre/post window; and nothing here guesses at dates that are not
+ * derivable (FOMC, CPI) — those belong to the calendar source.
+ */
+
+const at = (iso: string) => new Date(iso);
+
+// ── NFP arithmetic ─────────────────────────────────────────────────
+{
+  // 2026-08-01 is a Saturday, so the first Friday is the 7th.
+  const aug = nfpTimeFor(2026, 7);
+  check("August 2026's NFP is Friday the 7th", aug.toISOString() === "2026-08-07T12:30:00.000Z",
+    aug.toISOString());
+  // 2026-05-01 is a Friday itself.
+  const may = nfpTimeFor(2026, 4);
+  check("a month starting on Friday uses day 1", may.getUTCDate() === 1, may.toISOString());
+}
+
+// ── the pre-release window raises the flag ─────────────────────────
+{
+  const before = analyzeTiming(at("2026-08-07T02:00:00Z"));
+  check("inside 24h before NFP the flag rises", before.highImpactWithin24h);
+  check("and the reading says when", before.items.some((i) => i.factor.includes("NFP")),
+    before.items.map((i) => i.factor));
+
+  const after = analyzeTiming(at("2026-08-07T13:30:00Z"));
+  check("the first two hours after are still hot", after.highImpactWithin24h);
+
+  const midMonth = analyzeTiming(at("2026-08-18T10:00:00Z"));
+  check("an ordinary day raises nothing", !midMonth.highImpactWithin24h);
+  check("readings never vote",
+    midMonth.items.every((i) => i.weight === 0 && i.direction === "neutral"),
+    midMonth.items);
+}
+
+// ── session windows ────────────────────────────────────────────────
+{
+  const overlap = analyzeTiming(at("2026-08-18T14:00:00Z"));
+  check("14:00 UTC reads as the NY/Europe overlap",
+    overlap.items.some((i) => i.factor.includes("紐約")), overlap.items.map((i) => i.factor));
+
+  const thin = analyzeTiming(at("2026-08-18T21:30:00Z"));
+  check("21:30 UTC reads as the thin maintenance hour",
+    thin.items.some((i) => i.factor.includes("維護時段")), thin.items.map((i) => i.factor));
+}
+
+// ── weekend gap risk, Fridays only ─────────────────────────────────
+{
+  const lateFriday = analyzeTiming(at("2026-08-14T19:00:00Z"));
+  check("late Friday warns about the weekend gap",
+    lateFriday.items.some((i) => i.factor.includes("週末")), lateFriday.items.map((i) => i.factor));
+  const lateThursday = analyzeTiming(at("2026-08-13T19:00:00Z"));
+  check("late Thursday does not",
+    !lateThursday.items.some((i) => i.factor.includes("週末")));
+}
+
+// ── month-end ──────────────────────────────────────────────────────
+{
+  // 2026-08-31 is a Monday.
+  check("August 2026's last business day is the 31st", lastBusinessDay(2026, 7) === 31);
+  // 2026-05-31 is a Sunday → the 29th (Friday).
+  check("a weekend month-end walks back to Friday", lastBusinessDay(2026, 4) === 29);
+  const monthEnd = analyzeTiming(at("2026-08-31T10:00:00Z"));
+  check("the last business day carries the rebalancing note",
+    monthEnd.items.some((i) => i.factor.includes("月底")), monthEnd.items.map((i) => i.factor));
+}
+
+report("timing factors");
