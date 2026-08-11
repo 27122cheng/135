@@ -66,6 +66,22 @@ async function loadInterventions(
   }
 }
 
+/**
+ * The most recently printed bar among whatever timeframes answered.
+ * Exported for tests: this replaced an `??` chain whose first-that-exists
+ * semantics let a frozen H4 series hide a fresh Stooq D1 bar, and it is the
+ * kind of one-liner a tidy-up would happily fold back into `??`.
+ */
+export function freshestBar<T extends { time: string }>(
+  ...bars: (T | undefined)[]
+): T | undefined {
+  return bars.reduce<T | undefined>((best, bar) => {
+    if (!bar) return best;
+    if (!best) return bar;
+    return new Date(bar.time).getTime() > new Date(best.time).getTime() ? bar : best;
+  }, undefined);
+}
+
 /** Net weighted direction of one dimension's items; null when they cancel out. */
 function netDirection(items: BiasItem[]): "long" | "short" | null {
   const net = items.reduce((sum, item) => {
@@ -249,7 +265,15 @@ async function buildSignalForSymbol(
   //
   // So the rule is freshness, not precedence: whichever witness printed most
   // recently supplies the price, and the market-hours check hears both.
-  const lastBar = h4?.candles.at(-1) ?? d1?.candles.at(-1) ?? w1?.candles.at(-1);
+  // Freshest bar across timeframes, not first-that-exists. The `??` chain
+  // this replaces had the same existence-beats-freshness disease the quote
+  // was cured of: H4 has no Stooq fallback, so a Yahoo freeze leaves H4
+  // holding week-old last-resort bars while D1 — which *does* fall through to
+  // Stooq — has yesterday's. H4 merely existing then aged the bar witness by
+  // days, and the symbols whose Stooq quote also failed stayed 休市中 while
+  // their D1 candles quietly disproved it. Intraday nothing changes: a live
+  // H4 bucket is always newer than today's D1 bucket.
+  const lastBar = freshestBar(h4?.candles.at(-1), d1?.candles.at(-1), w1?.candles.at(-1));
   const lastClose = lastBar?.close;
   const barAgeMinutes = lastBar
     ? Math.max(0, (Date.now() - new Date(lastBar.time).getTime()) / 60000)

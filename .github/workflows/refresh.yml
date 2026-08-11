@@ -1,11 +1,19 @@
 name: Refresh signals
 
-# Every 4 hours. This lives here rather than in vercel.json because Vercel's
-# Hobby plan only permits one cron run per day — GitHub Actions has no such
-# limit, so the schedule moved and the app just exposes /api/refresh.
+# Hourly. This lives here rather than in vercel.json because Vercel's Hobby
+# plan only permits one cron run per day — GitHub Actions has no such limit,
+# so the schedule moved and the app just exposes /api/refresh.
+#
+# Budget check for the hourly cadence: one full sweep is 9 symbols × 3
+# timeframes ≈ 27 Yahoo calls plus one news/macro call per symbol, so a day
+# costs ~650 Yahoo requests against the self-imposed 2000/day and ~216 GDELT
+# requests against 2000/day. The OHLCV cache TTL is 30 minutes, so hourly
+# sweeps genuinely refetch rather than replaying the cache. GitHub delays
+# scheduled crons under load — the real cadence lands between 60 and ~90
+# minutes, which is why this does not try to run finer than hourly.
 on:
   schedule:
-    - cron: "0 */4 * * *"
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 concurrency:

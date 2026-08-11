@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
 import { check, report } from "./_harness";
 import { isWeekendClosed, marketStatus, STALE_QUOTE_HOURS } from "@/lib/market-hours";
+import { freshestBar } from "@/lib/signal-builder";
 import { shouldAlert } from "@/lib/notify/alert";
 import type { SignalRow, TradeSignal } from "@/types/signal";
 
@@ -92,6 +94,36 @@ const at = (iso: string) => new Date(iso);
 
   const nothing = marketStatus(tue, null, null);
   check("no evidence at all is still not a closed market", !nothing.closed);
+}
+
+// ── the bar witness is the freshest bar, not the first that exists ──
+//
+// The second half of the Tuesday incident: the quote was cured of
+// existence-beats-freshness, but the bar witness still read
+// `h4 ?? d1 ?? w1`. H4 has no Stooq fallback, so a Yahoo freeze left H4
+// holding week-old last-resort bars — which *existed*, and therefore hid the
+// fresh Stooq D1 bar behind them. Symbols whose Stooq quote also failed
+// stayed 休市中 while their own D1 candles disproved it.
+{
+  const frozenH4 = { time: "2026-08-06T16:00:00.000Z", close: 23100 };
+  const stooqD1 = { time: "2026-08-10T00:00:00.000Z", close: 23750 };
+  const oldW1 = { time: "2026-08-04T00:00:00.000Z", close: 22900 };
+  check("a fresh D1 bar outranks a frozen H4 one",
+    freshestBar(frozenH4, stooqD1, oldW1) === stooqD1);
+
+  const liveH4 = { time: "2026-08-11T04:00:00.000Z", close: 23800 };
+  check("intraday the live H4 bucket still wins",
+    freshestBar(liveH4, stooqD1, oldW1) === liveH4);
+
+  check("missing feeds are skipped", freshestBar(undefined, stooqD1) === stooqD1);
+  check("no bars at all is still no bar", freshestBar(undefined, undefined) === undefined);
+
+  // And the builder actually uses it — the `??` chain must not come back.
+  const builder = readFileSync("lib/signal-builder.ts", "utf8");
+  check("the builder picks its bar witness by freshness",
+    builder.includes("freshestBar(h4?.candles.at(-1)"), undefined);
+  check("and the existence-beats-freshness chain is gone",
+    !builder.includes("h4?.candles.at(-1) ?? d1?.candles.at(-1)"), undefined);
 }
 
 // ── and it stops the notification, not the analysis ───────────────
