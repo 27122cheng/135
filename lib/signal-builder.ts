@@ -234,7 +234,7 @@ async function buildSignalForSymbol(
   // that produces the levels the monitor watches was using something else
   // entirely. Same feed, one call, and now a rescan two minutes later genuinely
   // sees a new price.
-  const quote = await fetchLatestPrice(meta.yfinanceSymbol, gaps, meta.stooqSymbol);
+  const quote = await fetchLatestPrice(meta.yfinanceSymbol, gaps, meta.stooqSymbol, meta.symbol);
 
   // The candles are a second, independent witness to both questions the quote
   // was answering alone: what the price is, and when the market last traded.

@@ -129,7 +129,7 @@ export async function GET(request: Request) {
           : INITIAL_MEMORY;
 
       const gaps: string[] = [];
-      const quote = await fetchLatestPrice(meta.yfinanceSymbol, gaps, meta.stooqSymbol);
+      const quote = await fetchLatestPrice(meta.yfinanceSymbol, gaps, meta.stooqSymbol, meta.symbol);
       if (!quote) return { symbol: meta.symbol, skipped: "取不到即時報價", notes: gaps };
 
       const { memory: next, events } = advancePlan({

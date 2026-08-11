@@ -1,6 +1,8 @@
 import type { Timeframe } from "@/types/signal";
+import { fetchBackupPrice } from "./backup-price";
 import { fetchFree } from "./free-source";
-import { fetchJson, fetchText } from "./http";
+import { fetchJson } from "./http";
+import { fetchStooqText } from "./stooq-fetch";
 
 /**
  * The self-hosted yfinance proxy's engine.
@@ -72,6 +74,41 @@ interface YahooChartResponse {
   };
 }
 
+type YahooChartResult = NonNullable<NonNullable<YahooChartResponse["chart"]>["result"]>[number];
+
+/**
+ * Yahoo serves the chart API from more than one hostname, and the freeze that
+ * put nine open instruments on 休市中 was host-shaped: query1 served this
+ * deployment perfectly valid 200s whose data stopped at the previous Thursday,
+ * for days. Whether that is a poisoned edge cache or per-host rate shaping,
+ * asking the second hostname is nearly free and answers it either way.
+ *
+ * A host's answer is accepted immediately when its newest bar is younger than
+ * four days (any weekend plus slack — same threshold ohlcv.ts uses to call the
+ * proxy frozen). Otherwise the next host is tried, and the freshest of the
+ * frozen answers is returned as a last resort rather than nothing.
+ */
+const YAHOO_HOSTS = ["query1", "query2"] as const;
+const YAHOO_FRESH_MS = 4 * 24 * 60 * 60 * 1000;
+
+async function fetchYahooChart(pathAndQuery: string): Promise<YahooChartResult | null> {
+  let best: { res: YahooChartResult; newest: number } | null = null;
+  for (const host of YAHOO_HOSTS) {
+    const data = await fetchJson<YahooChartResponse>(
+      `https://${host}.finance.yahoo.com/v8/finance/chart/${pathAndQuery}`,
+      { headers: { "User-Agent": "Mozilla/5.0" } },
+      12000,
+    );
+    const res = data?.chart?.result?.[0];
+    const ts = res?.timestamp;
+    if (!res || !Array.isArray(ts) || ts.length === 0) continue;
+    const newest = ts[ts.length - 1] * 1000;
+    if (Date.now() - newest <= YAHOO_FRESH_MS) return res;
+    if (!best || newest > best.newest) best = { res, newest };
+  }
+  return best?.res ?? null;
+}
+
 /** Groups chronologically-ordered hourly candles into 4h buckets aligned to UTC 0/4/8/12/16/20. */
 export function resampleTo4h(hourly: Candle[]): Candle[] {
   const buckets = new Map<number, Candle[]>();
@@ -111,8 +148,8 @@ export interface LatestPrice {
   at: string;
   /** How stale it is right now, in minutes. */
   ageMinutes: number;
-  /** Which feed answered — direct quote, Stooq, or the candle proxy's newest bar. */
-  source?: "yahoo-direct" | "stooq" | "proxy-bar";
+  /** Which feed answered — direct quote, Stooq, a third-witness source, or the candle proxy's newest bar. */
+  source?: "yahoo-direct" | "stooq" | "proxy-bar" | "fred" | "er-api" | "gold-api";
 }
 
 /**
@@ -129,6 +166,8 @@ export async function fetchLatestPrice(
   gaps: string[],
   /** Stooq's symbol for the same instrument — enables the independent fallback. */
   stooqTicker?: string,
+  /** Our symbol — enables the third-witness backup sources (FRED / ER-API / gold-api). */
+  symbol?: string,
 ): Promise<LatestPrice | null> {
   const result = await fetchFree<{ price: number; at: string }>({
     source: "yahoo",
@@ -142,15 +181,7 @@ export async function fetchLatestPrice(
     // already moved. Expire it quickly instead.
     staleMs: 10 * 60 * 1000,
     fn: async () => {
-      const url =
-        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}` +
-        `?interval=5m&range=1d`;
-      const data = await fetchJson<YahooChartResponse>(
-        url,
-        { headers: { "User-Agent": "Mozilla/5.0" } },
-        12000,
-      );
-      const res = data?.chart?.result?.[0];
+      const res = await fetchYahooChart(`${encodeURIComponent(ticker)}?interval=5m&range=1d`);
       if (!res || !Array.isArray(res.timestamp)) return null;
       const closes = res.indicators?.quote?.[0]?.close ?? [];
 
@@ -203,17 +234,39 @@ export async function fetchLatestPrice(
     if (stooq && (!direct || stooq.ageMinutes < direct.ageMinutes)) return stooq;
   }
 
-  // Last resorts, same upstream as the direct quote: the proxy's newest hourly
-  // bar, then the labelled old direct answer — an old price beats none.
+  // Third witness, third company. FRED publishes the US index closes and the
+  // WTI settle, ER-API publishes daily FX fixes, gold-api the spot gold price —
+  // all keyless and none of them Yahoo or Stooq. Daily data, so it never wins
+  // while anything live is answering; it exists for the day both quote sources
+  // are dark, when yesterday's real close beats last Thursday's frozen one.
+  const candidates: LatestPrice[] = direct ? [direct] : [];
+  if (symbol) {
+    const backup = await fetchBackupPrice(symbol, gaps).catch(() => null);
+    if (backup) {
+      candidates.push({
+        ...backup,
+        ageMinutes: Math.max(0, (Date.now() - new Date(backup.at).getTime()) / 60000),
+      });
+    }
+  }
+
+  // The proxy's newest hourly bar — same upstream as the direct quote, but the
+  // chart endpoint sometimes answers when the 5m one doesn't.
   const proxied = await fetchViaProxy(ticker, "H4", gaps).catch(() => null);
   const bar = proxied?.candles.at(-1);
   if (bar) {
-    const barAge = (Date.now() - new Date(bar.time).getTime()) / 60000;
-    if (!direct || barAge < direct.ageMinutes) {
-      return { price: bar.close, at: bar.time, ageMinutes: Math.max(0, barAge), source: "proxy-bar" };
-    }
+    candidates.push({
+      price: bar.close,
+      at: bar.time,
+      ageMinutes: Math.max(0, (Date.now() - new Date(bar.time).getTime()) / 60000),
+      source: "proxy-bar",
+    });
   }
-  return direct;
+
+  // Whoever printed most recently is the least-wrong answer; an old price
+  // beats none, and its age is always carried along, never flattered.
+  if (candidates.length === 0) return null;
+  return candidates.reduce((best, c) => (c.ageMinutes < best.ageMinutes ? c : best));
 }
 
 /**
@@ -230,8 +283,10 @@ async function fetchStooqQuote(stooqTicker: string, gaps: string[]): Promise<Lat
     gaps,
     staleMs: 10 * 60 * 1000,
     fn: async () => {
-      const url = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqTicker)}&f=sd2t2ohlcv&h&e=csv`;
-      const text = await fetchText(url, undefined, 10000);
+      const text = await fetchStooqText(
+        `/q/l/?s=${encodeURIComponent(stooqTicker)}&f=sd2t2ohlcv&h&e=csv`,
+        10000,
+      );
       if (!text) return null;
       const line = text.trim().split("\n")[1];
       if (!line) return null;
@@ -284,15 +339,9 @@ export async function fetchViaProxy(
     limit: YAHOO_LIMIT,
     gaps,
     fn: async () => {
-      const url =
-        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}` +
-        `?interval=${cfg.interval}&range=${cfg.range}`;
-      const data = await fetchJson<YahooChartResponse>(
-        url,
-        { headers: { "User-Agent": "Mozilla/5.0" } },
-        12000,
+      const res = await fetchYahooChart(
+        `${encodeURIComponent(ticker)}?interval=${cfg.interval}&range=${cfg.range}`,
       );
-      const res = data?.chart?.result?.[0];
       if (!res || !Array.isArray(res.timestamp)) return null;
 
       const quote = res.indicators?.quote?.[0] ?? {};

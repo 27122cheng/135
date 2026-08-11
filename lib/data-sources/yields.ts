@@ -1,6 +1,7 @@
 import type { YieldLegSource } from "@/config/rate-spreads";
 import { fetchFree } from "./free-source";
 import { fetchText } from "./http";
+import { fetchStooqText } from "./stooq-fetch";
 import { fetchFredSeries } from "./fred";
 
 /**
@@ -59,10 +60,9 @@ async function fromStooq(code: string, label: string, gaps: string[]): Promise<Y
     limit: STOOQ_LIMIT,
     gaps,
     fn: async () => {
-      const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(code)}&i=d`;
-      const csv = await fetchText(url, { headers: { "User-Agent": "Mozilla/5.0" } }, 12000);
-      // An HTML body is an error page; an unknown ticker yields no rows.
-      if (!csv || csv.trim().startsWith("<")) return null;
+      const csv = await fetchStooqText(`/q/d/l/?s=${encodeURIComponent(code)}&i=d`);
+      // An unknown ticker yields no rows; error pages are filtered upstream.
+      if (!csv) return null;
       const points = parseStooqCsv(csv);
       return points.length > 0 ? points : null;
     },

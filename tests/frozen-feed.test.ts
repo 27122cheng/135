@@ -126,6 +126,89 @@ async function main() {
     check("and a believable age", (price?.ageMinutes ?? 999) < 60, price?.ageMinutes);
   }
 
+  // ── one transient network error does not lose the scan ──────────
+  {
+    const { fetchText } = await import("@/lib/data-sources/http");
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("fetch failed");
+      return {
+        ok: true,
+        status: 200,
+        text: async () => "hello",
+        json: async () => ({}),
+      } as unknown as Response;
+    }) as typeof fetch;
+    const text = await fetchText("https://example.com/x");
+    check("a connection-level failure is retried once", text === "hello" && calls === 2,
+      { text, calls });
+  }
+
+  // ── stooq.pl is the spare key to stooq.com ──────────────────────
+  {
+    __resetCacheForTests();
+    __resetQuotaForTests();
+    const at = new Date(now - 5 * 60 * 1000);
+    const quoteCsv =
+      "Symbol,Date,Time,Open,High,Low,Close,Volume\n" +
+      `XAUUSD,${at.toISOString().slice(0, 10)},${at.toISOString().slice(11, 19)},4340,4350,4330,4343.88,0\n`;
+    stubFetch((url) => {
+      // The live failure mode: stooq.com unreachable at the connection level.
+      if (url.includes("stooq.com")) throw new Error("fetch failed");
+      if (url.includes("stooq.pl/q/l/")) return { status: 200, body: quoteCsv };
+      if (url.includes("finance.yahoo.com"))
+        return { status: 200, json: chartJson(now - 5 * DAY, 30, 4300.7) };
+      return { status: 500, body: "no" };
+    });
+    const gaps: string[] = [];
+    const price = await fetchLatestPrice(gold.yfinanceSymbol, gaps, gold.stooqSymbol);
+    check("stooq.pl answers when stooq.com is unreachable",
+      price?.source === "stooq" && price.price === 4343.88, price);
+  }
+
+  // ── query2 rescues a frozen query1 ──────────────────────────────
+  {
+    __resetCacheForTests();
+    __resetQuotaForTests();
+    stubFetch((url) =>
+      url.includes("query2.finance")
+        ? { status: 200, json: chartJson(now - 6 * 60 * 60 * 1000, 30, 4351.2) }
+        : url.includes("query1.finance")
+          ? { status: 200, json: chartJson(now - 10 * DAY, 30, 4300.7) }
+          : { status: 500, body: "no" },
+    );
+    const gaps: string[] = [];
+    const r = await fetchOHLCV(gold, "D1", gaps);
+    check("the second Yahoo host rescues a frozen first one",
+      r?.source === "yfinance-proxy", r?.source);
+    check("with the fresh host's data", r?.candles.at(-1)?.close === 4351.2,
+      r?.candles.at(-1));
+  }
+
+  // ── the third witness answers when both quote sources are dark ──
+  {
+    __resetCacheForTests();
+    __resetQuotaForTests();
+    delete process.env.FRED_API_KEY;
+    const nas = COMMODITIES.find((c) => c.symbol === "NAS100")!;
+    const yesterday = new Date(now - DAY).toISOString().slice(0, 10);
+    stubFetch((url) => {
+      if (url.includes("stooq")) throw new Error("fetch failed");
+      if (url.includes("finance.yahoo.com"))
+        return { status: 200, json: chartJson(now - 5 * DAY, 30, 23100.2) };
+      if (url.includes("fred.stlouisfed.org"))
+        return { status: 200, body: `DATE,NASDAQ100\n${yesterday},23750.5\n` };
+      return { status: 500, body: "no" };
+    });
+    const gaps: string[] = [];
+    const price = await fetchLatestPrice(nas.yfinanceSymbol, gaps, nas.stooqSymbol, nas.symbol);
+    check("FRED's close beats the frozen quote", price?.source === "fred", price);
+    check("yesterday's real close, not last Thursday's",
+      price?.price === 23750.5, price?.price);
+    check("with its honest age", (price?.ageMinutes ?? 0) > 12 * 60, price?.ageMinutes);
+  }
+
   // ── Stooq saying "no data" is not a price ───────────────────────
   {
     __resetCacheForTests();

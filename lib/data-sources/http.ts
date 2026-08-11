@@ -65,23 +65,38 @@ export async function fetchText(
   timeoutMs = 6000,
   onFailure?: Sink,
 ): Promise<string | null> {
-  const controller = new AbortController();
-  let aborted = false;
-  const timeout = setTimeout(() => {
-    aborted = true;
-    controller.abort();
-  }, timeoutMs);
-  try {
-    const res = await fetch(url, { ...init, signal: controller.signal });
-    if (!res.ok) {
-      onFailure?.({ kind: "http", status: res.status });
+  // A connection-level failure ("fetch failed": a DNS miss, a reset, a broken
+  // TLS handshake) gets one immediate retry. It is the only kind worth
+  // retrying here: an HTTP status is the server's actual answer, a timeout has
+  // already cost its full budget, and a parse error will parse the same way
+  // twice. Live deployments showed GDELT and Stooq failing on exactly this
+  // kind — transient egress hiccups where the second attempt succeeds — and a
+  // single retry inside the call is far cheaper than losing the whole
+  // four-hour scan cycle to it.
+  for (let attempt = 0; ; attempt++) {
+    const controller = new AbortController();
+    let aborted = false;
+    const timeout = setTimeout(() => {
+      aborted = true;
+      controller.abort();
+    }, timeoutMs);
+    try {
+      const res = await fetch(url, { ...init, signal: controller.signal });
+      if (!res.ok) {
+        onFailure?.({ kind: "http", status: res.status });
+        return null;
+      }
+      return await res.text();
+    } catch (error) {
+      const failure = classify(error, timeoutMs, aborted);
+      if (failure.kind === "network" && attempt === 0) {
+        await new Promise((r) => setTimeout(r, 300));
+        continue;
+      }
+      onFailure?.(failure);
       return null;
+    } finally {
+      clearTimeout(timeout);
     }
-    return await res.text();
-  } catch (error) {
-    onFailure?.(classify(error, timeoutMs, aborted));
-    return null;
-  } finally {
-    clearTimeout(timeout);
   }
 }

@@ -1,7 +1,8 @@
 import { getKey } from "../api-keys";
 import type { CommodityMeta, Timeframe } from "@/types/signal";
 import { fetchFree } from "./free-source";
-import { fetchJson, fetchText } from "./http";
+import { fetchJson } from "./http";
+import { fetchStooqText } from "./stooq-fetch";
 import { fetchViaProxy, OHLCV_TTL_MS, type Candle } from "./yfinance";
 
 export type { Candle } from "./yfinance";
@@ -110,10 +111,10 @@ async function fetchStooqOHLCV(
     limit: { perMinute: 30, perDay: 1000 },
     gaps,
     fn: async () => {
-      const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(meta.stooqSymbol)}&i=${interval}`;
-      const csv = await fetchText(url, { headers: { "User-Agent": "Mozilla/5.0" } }, 12000);
-      // An HTML body means an error page, not data.
-      if (!csv || csv.trim().startsWith("<")) return null;
+      const csv = await fetchStooqText(
+        `/q/d/l/?s=${encodeURIComponent(meta.stooqSymbol)}&i=${interval}`,
+      );
+      if (!csv) return null;
       const candles: Candle[] = [];
       for (const line of csv.trim().split(/\r?\n/).slice(1)) {
         const [date, open, high, low, close, volume] = line.split(",");
