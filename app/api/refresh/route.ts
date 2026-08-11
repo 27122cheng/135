@@ -1,4 +1,5 @@
 import { COMMODITIES } from "@/types/signal";
+import { groupDataGaps } from "@/lib/data-gaps";
 import { getSignalStore } from "@/lib/db";
 import { notifyAll } from "@/lib/notify";
 import type { IngestedRelease } from "@/lib/analysis/data-release";
@@ -90,10 +91,17 @@ export async function GET(request: Request) {
         const results = await notifyAll(formatAlert(signal, decision.reason, appUrl));
         notified = results.filter((r) => r.ok).map((r) => r.channel);
       }
+      // The gap *lines*, not just a count. "gaps: 7" in a workflow log is
+      // undiagnosable — the only way to check every symbol without a database
+      // console is for the sweep to say exactly what each symbol is missing.
+      const grouped = groupDataGaps(signal.data_gaps);
       return {
         grade: signal.grade,
         storeError: latestError,
         gaps: signal.data_gaps.length,
+        actionable: grouped.keyRelated.length + grouped.other.length,
+        gapLines: [...grouped.keyRelated, ...grouped.other],
+        noteLines: [...grouped.informational, ...grouped.permanent],
         alerted: decision.alert,
         alertReason: decision.reason,
         notified,

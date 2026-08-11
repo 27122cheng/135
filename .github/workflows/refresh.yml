@@ -70,7 +70,9 @@ jobs:
 
             if [ "$status" = "200" ]; then
               echo "ok"
-              head -c 400 "/tmp/$symbol.json"
+              # Enough to include the per-symbol gap lines — the whole point
+              # of logging them is that this log is the diagnosis.
+              head -c 4000 "/tmp/$symbol.json"
             elif [ "$status" = "501" ]; then
               # No database configured yet. A setup gap, not a failure — the
               # same treatment the monitor already gives it, so an unfinished
