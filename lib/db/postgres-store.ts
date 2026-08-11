@@ -199,23 +199,40 @@ export function postgresStore(connectionString: string): SignalStore {
     },
 
     async saveMonitorState(row: MonitorRow): Promise<void> {
+      // Upsert: one row per symbol, always describing the newest plan.
+      const upsert = () => sql`
+        insert into plan_monitor (symbol, signal_id, state, add_ons_filled, active_stop, last_price, tracked, updated_at)
+        values (${row.symbol}, ${row.signalId}, ${row.state}, ${row.addOnsFilled},
+                ${row.activeStop}, ${row.lastPrice},
+                ${row.tracked ? JSON.stringify(row.tracked) : null}, now())
+        on conflict (symbol) do update set
+          signal_id = excluded.signal_id,
+          state = excluded.state,
+          add_ons_filled = excluded.add_ons_filled,
+          active_stop = excluded.active_stop,
+          last_price = excluded.last_price,
+          tracked = excluded.tracked,
+          updated_at = now()
+      `;
       try {
-        // Upsert: one row per symbol, always describing the newest plan.
-        await sql`
-          insert into plan_monitor (symbol, signal_id, state, add_ons_filled, active_stop, last_price, tracked, updated_at)
-          values (${row.symbol}, ${row.signalId}, ${row.state}, ${row.addOnsFilled},
-                  ${row.activeStop}, ${row.lastPrice},
-                  ${row.tracked ? JSON.stringify(row.tracked) : null}, now())
-          on conflict (symbol) do update set
-            signal_id = excluded.signal_id,
-            state = excluded.state,
-            add_ons_filled = excluded.add_ons_filled,
-            active_stop = excluded.active_stop,
-            last_price = excluded.last_price,
-            tracked = excluded.tracked,
-            updated_at = now()
-        `;
+        await upsert();
       } catch (err) {
+        // Self-healing migration. `tracked` shipped after the table did, and
+        // /api/setup locks itself once the tables exist (its bootstrap rule
+        // predates column migrations) — so a deployment that never re-runs the
+        // schema would crash the monitor on every sweep forever. DATABASE_URL
+        // owns its schema; adding the column here is the same idempotent
+        // statement schema.sql carries.
+        const message = err instanceof Error ? err.message : String(err);
+        if (/tracked/.test(message) && /column|欄位/i.test(message)) {
+          try {
+            await sql`alter table public.plan_monitor add column if not exists tracked jsonb`;
+            await upsert();
+            return;
+          } catch (retryErr) {
+            throw explain(retryErr);
+          }
+        }
         throw explain(err);
       }
     },

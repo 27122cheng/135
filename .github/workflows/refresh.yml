@@ -41,6 +41,16 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -uo pipefail
+          # Schema first, every run. The statements are all idempotent
+          # (create/alter ... if not exists), so this is a no-op except the
+          # one run after a migration lands — like plan_monitor.tracked —
+          # where it applies the change without anyone pressing a button.
+          # Failures are logged but never block the sweep.
+          curl --silent --show-error --location --max-time 60 \
+            --request POST \
+            --header "Authorization: Bearer ${CRON_SECRET:-}" \
+            "$APP_URL/api/setup" || echo "::warning::schema setup call failed (non-fatal)"
+
           # One request per symbol: the whole set does not fit inside Vercel
           # Hobby's 60s function ceiling, and a per-symbol failure then costs
           # only that symbol.

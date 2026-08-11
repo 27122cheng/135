@@ -178,20 +178,33 @@ export function supabaseStore(): SignalStore | null {
     async saveMonitorState(row: MonitorRow): Promise<void> {
       const client = getSupabaseServerClient();
       if (!client) throw new Error("缺少 SUPABASE_SERVICE_ROLE_KEY，無法寫入 plan_monitor");
-      const { error } = await client.from("plan_monitor").upsert(
-        {
-          symbol: row.symbol,
-          signal_id: row.signalId,
-          state: row.state,
-          add_ons_filled: row.addOnsFilled,
-          active_stop: row.activeStop,
-          last_price: row.lastPrice,
-          tracked: row.tracked ?? null,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "symbol" },
-      );
-      if (error) throw new Error(error.message);
+      const payload = {
+        symbol: row.symbol,
+        signal_id: row.signalId,
+        state: row.state,
+        add_ons_filled: row.addOnsFilled,
+        active_stop: row.activeStop,
+        last_price: row.lastPrice,
+        tracked: row.tracked ?? null,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await client.from("plan_monitor").upsert(payload, { onConflict: "symbol" });
+      if (error) {
+        // PostgREST can't run DDL, so a project that hasn't re-run
+        // supabase/schema.sql since the `tracked` column landed would crash
+        // the monitor on every sweep. Degrade instead: save the state without
+        // the snapshot (sticky tracking off until the schema is updated) —
+        // a monitor with short memory beats a monitor that's down.
+        if (/tracked/.test(error.message)) {
+          const { tracked: _omitted, ...withoutTracked } = payload;
+          void _omitted;
+          const retry = await client
+            .from("plan_monitor")
+            .upsert(withoutTracked, { onConflict: "symbol" });
+          if (!retry.error) return;
+        }
+        throw new Error(error.message);
+      }
     },
 
     async recordRelease(row: ReleaseRow): Promise<{ isNew: boolean }> {
