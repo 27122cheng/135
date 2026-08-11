@@ -171,6 +171,7 @@ export function supabaseStore(): SignalStore | null {
         addOnsFilled: data.add_ons_filled,
         activeStop: data.active_stop,
         lastPrice: data.last_price,
+        tracked: data.tracked ?? null,
       };
     },
 
@@ -185,6 +186,7 @@ export function supabaseStore(): SignalStore | null {
           add_ons_filled: row.addOnsFilled,
           active_stop: row.activeStop,
           last_price: row.lastPrice,
+          tracked: row.tracked ?? null,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "symbol" },

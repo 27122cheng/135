@@ -180,6 +180,7 @@ export function postgresStore(connectionString: string): SignalStore {
           add_ons_filled: number;
           active_stop: number | null;
           last_price: number | null;
+          tracked?: MonitorRow["tracked"];
         }>;
         const row = rows[0];
         if (!row) return null;
@@ -190,6 +191,7 @@ export function postgresStore(connectionString: string): SignalStore {
           addOnsFilled: row.add_ons_filled,
           activeStop: row.active_stop,
           lastPrice: row.last_price,
+          tracked: row.tracked ?? null,
         };
       } catch (err) {
         throw explain(err);
@@ -200,15 +202,17 @@ export function postgresStore(connectionString: string): SignalStore {
       try {
         // Upsert: one row per symbol, always describing the newest plan.
         await sql`
-          insert into plan_monitor (symbol, signal_id, state, add_ons_filled, active_stop, last_price, updated_at)
+          insert into plan_monitor (symbol, signal_id, state, add_ons_filled, active_stop, last_price, tracked, updated_at)
           values (${row.symbol}, ${row.signalId}, ${row.state}, ${row.addOnsFilled},
-                  ${row.activeStop}, ${row.lastPrice}, now())
+                  ${row.activeStop}, ${row.lastPrice},
+                  ${row.tracked ? JSON.stringify(row.tracked) : null}, now())
           on conflict (symbol) do update set
             signal_id = excluded.signal_id,
             state = excluded.state,
             add_ons_filled = excluded.add_ons_filled,
             active_stop = excluded.active_stop,
             last_price = excluded.last_price,
+            tracked = excluded.tracked,
             updated_at = now()
         `;
       } catch (err) {

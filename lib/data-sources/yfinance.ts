@@ -243,10 +243,26 @@ export async function fetchLatestPrice(
   if (symbol) {
     const backup = await fetchBackupPrice(symbol, gaps).catch(() => null);
     if (backup) {
-      candidates.push({
-        ...backup,
-        ageMinutes: Math.max(0, (Date.now() - new Date(backup.at).getTime()) / 60000),
-      });
+      // Plausibility check against any Yahoo-side witness we have. The backup
+      // sources are hand-mapped (symbol → FRED series / ER-API currency), and
+      // a wrong mapping would serve a confidently-timestamped price for a
+      // different instrument — which the freshness rule would then *prefer*
+      // whenever the live feeds are dark. Days of drift on an index is a few
+      // percent; 15% apart means one of the two is not this market, and the
+      // hand-mapped one is the suspect.
+      const reference = direct?.price;
+      const implausible =
+        reference !== undefined && Math.abs(backup.price - reference) / reference > 0.15;
+      if (implausible) {
+        gaps.push(
+          `備援報價 (${backup.source}) 與主來源價格相差超過 15%（${backup.price} vs ${reference}），疑似對應錯誤的商品，本次不採用`,
+        );
+      } else {
+        candidates.push({
+          ...backup,
+          ageMinutes: Math.max(0, (Date.now() - new Date(backup.at).getTime()) / 60000),
+        });
+      }
     }
   }
 

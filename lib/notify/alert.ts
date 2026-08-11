@@ -68,6 +68,17 @@ export function shouldAlert(
   current: TradeSignal,
   previous: SignalRow | null,
   minGrade: Grade = DEFAULT_MIN_GRADE,
+  options: {
+    /**
+     * True while the monitor is holding an unresolved position on this symbol.
+     * One trade at a time: until it hits its stop or target and lands in the
+     * review, no new entry (and no "levels updated" re-announcement) goes to
+     * the phone — that stream of same-symbol pushes was indistinguishable from
+     * noise. Withdrawals still pass: "the thesis behind your open trade died"
+     * is exactly what an interruption is for.
+     */
+    openTrade?: boolean;
+  } = {},
 ): AlertDecision {
   const plan = current.trade_plan;
 
@@ -107,6 +118,12 @@ export function shouldAlert(
       return { alert: true, reason: "先前的進場訊號已失效" };
     }
     return { alert: false, reason: "觀望，不發送" };
+  }
+  if (options.openTrade) {
+    return {
+      alert: false,
+      reason: "此商品尚有追蹤中的未平倉交易，須先止盈或止損並記入復盤；新訊號僅顯示於網站",
+    };
   }
   if (rank(current.grade) < rank(minGrade)) {
     return { alert: false, reason: `評等 ${current.grade} 低於門檻 ${minGrade}` };

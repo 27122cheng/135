@@ -477,7 +477,11 @@ export const COMMODITIES: CommodityMeta[] = [
     symbol: "US30",
     label: "US30 (道瓊)",
     category: "index",
-    yfinanceSymbol: "^DJI",
+    // Futures, not the cash index (^DJI). NAS100 always used NQ=F and never
+    // read 休市 overnight; ^DJI only prints during the NYSE session, so US30
+    // spent every pre-market labelled closed while its CFD traded happily.
+    // The futures contract is also what a CFD actually tracks.
+    yfinanceSymbol: "YM=F",
     stooqSymbol: "^dji",
     implemented: true,
   },
@@ -493,7 +497,9 @@ export const COMMODITIES: CommodityMeta[] = [
     symbol: "SPX500",
     label: "SPX500",
     category: "index",
-    yfinanceSymbol: "^GSPC",
+    // Futures for the same reason as US30: ^GSPC goes silent outside the
+    // NYSE session and read as a closed market for two thirds of every day.
+    yfinanceSymbol: "ES=F",
     stooqSymbol: "^spx",
     implemented: true,
   },

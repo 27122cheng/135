@@ -163,7 +163,12 @@ export function planConfidence(signal: TradeSignal): Confidence {
   // "missing" punished a signal for its own bookkeeping — a B-grade setup lost
   // confidence points *because* the add-on rule correctly declined to add on.
   const allGaps = (signal.data_gaps ?? []).filter((g) => !isInformational(g));
-  const stale = allGaps.filter((g) => g.includes("快取") || g.includes("stale"));
+  // "非即時" covers the frozen-proxy last resort ("僅剩行情代理的舊資料可用…
+  // 資料非即時") — data that was served, just old, which is the stale rate,
+  // not the missing one.
+  const stale = allGaps.filter(
+    (g) => g.includes("快取") || g.includes("stale") || g.includes("非即時"),
+  );
   const aiRelated = allGaps.filter((g) => g.includes("AI") && !stale.includes(g));
   const missing = allGaps.filter((g) => !stale.includes(g) && !aiRelated.includes(g));
   if (allGaps.length > 0) {

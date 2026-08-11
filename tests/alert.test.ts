@@ -59,6 +59,34 @@ function stored(s: TradeSignal): SignalRow {
   return { ...s, id: "row-1", created_at: s.generated_at };
 }
 
+// ── one trade at a time ───────────────────────────────────────────
+//
+// 「同一個商品的交易，必須要先結束，止盈或止損後再加入復盤」— while the
+// monitor holds an unresolved position, new entries and level updates stay
+// off the phone. The stream of same-symbol pushes came from every rescan
+// re-announcing a trade that had never finished.
+{
+  const open = { openTrade: true };
+  const gated = shouldAlert(signal(), null, "A", open);
+  check("an open tracked trade silences a new entry", !gated.alert, gated);
+  check("and names the rule", gated.reason.includes("未平倉"), gated.reason);
+
+  const prev = stored(signal());
+  const updated = signal({
+    trade_plan: { ...signal().trade_plan, stop_loss: 1985 },
+  });
+  check("a moved stop stays quiet too while the trade runs",
+    !shouldAlert(updated, prev, "A", open).alert);
+
+  // The thesis behind the open trade dying is exactly what a push is for.
+  const withdrawn = signal({ trade_plan: { ...signal().trade_plan, stance: "wait" } });
+  check("a withdrawal still passes while the trade is open",
+    shouldAlert(withdrawn, prev, "A", open).alert);
+
+  check("with no open trade the same signal alerts",
+    shouldAlert(signal(), null, "A", { openTrade: false }).alert);
+}
+
 // ── the floor ─────────────────────────────────────────────────────
 {
   check("a fresh actionable signal alerts", shouldAlert(signal(), null).alert);

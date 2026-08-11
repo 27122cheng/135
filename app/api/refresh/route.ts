@@ -78,7 +78,11 @@ export async function GET(request: Request) {
       releaseNotes.push(...scan.releaseNotes);
       const { storeError: latestError } = await storeScan(signal);
 
-      const decision = shouldAlert(signal, previous ?? null, minGrade);
+      // One trade at a time: while the monitor holds an unresolved position
+      // on this symbol, new entries and level updates stay off the phone.
+      const monitorState = await store.getMonitorState(meta.symbol).catch(() => null);
+      const openTrade = monitorState?.state === "entered" || monitorState?.state === "added";
+      const decision = shouldAlert(signal, previous ?? null, minGrade, { openTrade });
       let notified: string[] = [];
       if (decision.alert) {
         // A failing alert must not fail the refresh that produced it — the

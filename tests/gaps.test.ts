@@ -137,4 +137,22 @@ import { collapseCascades, groupDataGaps } from "@/lib/data-gaps";
   check("while the real failure stays loud", g.other[0].includes("GDELT"), g.other);
 }
 
+// Round two of the same principle, from a card still showing "6 項資料缺口"
+// where most lines were the system narrating itself: the market being closed,
+// which witness supplied the price, a quiet news day. Facts about the market
+// or the run — not data that failed to arrive.
+{
+  const g = groupDataGaps([
+    "最後成交距今 17.2 小時（報價與 K 棒都沒有更新的跡象），市場休市中或所有價格來源停更，不發送進場通知",
+    "即時報價來源已 6.5 小時未更新，K 棒較新，進場區間改用最新 K 棒收盤價計算",
+    "GDELT 近 48 小時查無「Nasdaq 100」相關新聞",
+    "新聞面改用本地關鍵字評分（準確度低於 AI 評分，權重上限 1）",
+    "NAS100 H4 OHLCV 所有來源皆失敗（行情代理無回應）",
+  ]);
+  check("market state and price-basis notes are informational",
+    g.informational.length === 4, g.informational);
+  check("a real fetch failure is still the only warning", g.other.length === 1, g.other);
+  check("and it is the OHLCV one", g.other[0].includes("所有來源皆失敗"), g.other);
+}
+
 report("data-gaps");

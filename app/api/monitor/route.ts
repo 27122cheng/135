@@ -1,5 +1,5 @@
 import { COMMODITIES } from "@/types/signal";
-import { getSignalStore } from "@/lib/db";
+import { getSignalStore, type MonitorRow, type TrackedPlan } from "@/lib/db";
 import { readLatest } from "@/lib/latest-signals";
 import { fetchLatestPrice } from "@/lib/data-sources/yfinance";
 import { notifyAll } from "@/lib/notify";
@@ -107,33 +107,69 @@ export async function GET(request: Request) {
       const latest = current.get(meta.symbol);
       if (!latest) return { symbol: meta.symbol, skipped: "尚無訊號紀錄" };
 
-      // 觀望 signals are tracked too, on their 參考價位, as a paper position.
-      // Two reasons, and neither is cosmetic. The board has been 觀望 on all
-      // nine symbols for days, so a tracker that only watches recommended
-      // trades watches nothing and the journal never fills — which means the
-      // intervention engine never learns anything. And the reference levels
-      // are the ones that were asked about: "參考價位的交易也幫我看勝率".
-      //
-      // Paper positions never notify. They are a measurement, not a call.
-      const paper = latest.trade_plan?.stance !== "enter";
-      const plan = paper ? shadowPlan(latest) : latest.trade_plan;
-      if (!plan) return { symbol: meta.symbol, skipped: "觀望且沒有可追蹤的參考價位" };
+      // A trade in flight outlives the signal that opened it. The old rule —
+      // "a new signal replaces whatever was being tracked" — reset the tracker
+      // on every rescan: the same entry re-fired on every sweep (the duplicate
+      // Telegram alerts) and no trade ever reached its stop or target under
+      // one identity, so the journal and the review page stayed empty. Now the
+      // entered plan is snapshotted into plan_monitor itself (rows from
+      // latest_signal have no stable id to reload it by), and while a position
+      // is open — entered or added-to — the monitor keeps watching that
+      // snapshot until it resolves. Newer analysis waits its turn.
+      const inFlight = (row: MonitorRow | null) =>
+        row !== null &&
+        (row.state === "entered" || row.state === "added") &&
+        row.tracked?.plan != null;
+
+      const openReal = await store.getMonitorState(meta.symbol).catch(() => null);
+      let previous = inFlight(openReal) ? openReal : null;
+      const paper = previous ? false : latest.trade_plan?.stance !== "enter";
+
+      // 觀望 signals are tracked too, on their 參考價位, as a paper position —
+      // a tracker that only watches recommended trades watches nothing during
+      // quiet weeks, and the reference levels' hit rate was explicitly asked
+      // for. Paper positions never notify; they are a measurement, not a call.
+      // The same stickiness applies: a measurement that resets on every rescan
+      // measures nothing.
+      if (!previous && paper) {
+        const openPaper = await store.getMonitorState(`${meta.symbol}:ref`).catch(() => null);
+        if (inFlight(openPaper)) previous = openPaper;
+      }
+
+      const tracked: TrackedPlan | null = previous?.tracked
+        ? previous.tracked
+        : (() => {
+            const plan = paper ? shadowPlan(latest) : latest.trade_plan;
+            if (!plan) return null;
+            return {
+              direction: latest.direction,
+              grade: latest.grade,
+              plan,
+              generatedAt: latest.generated_at,
+            };
+          })();
+      if (!tracked) return { symbol: meta.symbol, skipped: "觀望且沒有可追蹤的參考價位" };
+      const plan = tracked.plan;
       const stateKey = paper ? `${meta.symbol}:ref` : meta.symbol;
 
-      const previous = await store.getMonitorState(stateKey);
-      // A new signal replaces whatever was being tracked — the old plan's
-      // state says nothing about this one's levels.
-      const memory: MonitorMemory =
-        previous && previous.signalId === latest.id
-          ? { state: previous.state, addOnsFilled: previous.addOnsFilled, activeStop: previous.activeStop }
-          : INITIAL_MEMORY;
+      if (!previous) previous = await store.getMonitorState(stateKey).catch(() => null);
+      // Memory carries over only while the same plan is being watched. The
+      // identity is the snapshot's generated_at — latest_signal ids are just
+      // the symbol, which made "same id" true across different plans and left
+      // resolved states stuck forever.
+      const samePlan =
+        previous?.tracked?.generatedAt === tracked.generatedAt ||
+        (previous?.tracked == null && previous?.signalId === latest.id);
+      const memory: MonitorMemory = samePlan && previous
+        ? { state: previous.state, addOnsFilled: previous.addOnsFilled, activeStop: previous.activeStop }
+        : INITIAL_MEMORY;
 
       const gaps: string[] = [];
       const quote = await fetchLatestPrice(meta.yfinanceSymbol, gaps, meta.stooqSymbol, meta.symbol);
       if (!quote) return { symbol: meta.symbol, skipped: "取不到即時報價", notes: gaps };
 
       const { memory: next, events } = advancePlan({
-        direction: latest.direction,
+        direction: tracked.direction,
         plan,
         price: quote.price,
         priceAgeMinutes: quote.ageMinutes,
@@ -142,15 +178,19 @@ export async function GET(request: Request) {
 
       await store.saveMonitorState({
         symbol: stateKey,
-        signalId: latest.id,
+        // latest_signal ids are the symbol, not a uuid; the column is typed
+        // uuid, so a non-uuid id is stored as null and identity lives in
+        // `tracked.generatedAt` instead.
+        signalId: /^[0-9a-f-]{36}$/i.test(latest.id) ? latest.id : null,
         lastPrice: quote.price,
+        tracked,
         ...next,
       });
 
       let notified: string[] = [];
       if (events.length > 0 && !paper) {
         const results = await notifyAll(
-          formatMonitorAlert(meta.symbol, latest.direction, events, quote.ageMinutes, appUrl),
+          formatMonitorAlert(meta.symbol, tracked.direction, events, quote.ageMinutes, appUrl),
         );
         notified = results.filter((r) => r.ok).map((r) => r.channel);
       }
@@ -165,7 +205,9 @@ export async function GET(request: Request) {
         const logged = await recordResolvedPlan({
           store,
           meta,
-          signal: latest,
+          // The journal must describe the trade that actually ran — the
+          // snapshot's direction/grade/plan — not whatever analysis is newest.
+          signal: { ...latest, direction: tracked.direction, grade: tracked.grade, trade_plan: plan },
           entry: plan.entry,
           stopLoss: plan.stop_loss,
           takeProfit: plan.take_profit,

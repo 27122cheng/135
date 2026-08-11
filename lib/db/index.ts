@@ -1,4 +1,4 @@
-import type { SignalRow, TradeSignal } from "@/types/signal";
+import type { Grade, SignalRow, TradePlan, TradeSignal } from "@/types/signal";
 import type { JournalEntry, JournalEntryInput } from "@/types/journal";
 import type { MonitorMemory } from "@/lib/monitor/plan-state";
 import { supabaseStore } from "./supabase-store";
@@ -123,11 +123,30 @@ export interface StoredRelease extends ReleaseRow {
   firstSeenAt: string;
 }
 
+/**
+ * Snapshot of the plan the monitor is holding a position against.
+ *
+ * Stored in `plan_monitor` itself because nothing else can identify it: the
+ * board's rows come from `latest_signal`, whose `id` is just the symbol, and
+ * every rescan replaces the payload. Without this snapshot a new scan reset
+ * the tracker mid-flight — the same entry re-fired on every sweep and no
+ * trade ever reached its stop or target, so the journal stayed empty.
+ */
+export interface TrackedPlan {
+  direction: "long" | "short";
+  grade: Grade;
+  plan: TradePlan;
+  /** Identity of the scan that produced the plan (ids are not stable). */
+  generatedAt: string;
+}
+
 /** One row of `plan_monitor` — what was last reported, so it isn't repeated. */
 export interface MonitorRow extends MonitorMemory {
   symbol: string;
   signalId: string | null;
   lastPrice: number | null;
+  /** Null on rows written before snapshotting existed. */
+  tracked?: TrackedPlan | null;
 }
 
 /** Null when neither backend is configured — callers must return 501, not crash. */

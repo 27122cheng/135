@@ -196,15 +196,17 @@ const EXPECTANCY_EPSILON = 0.05;
 const MIN_STOP_ATR = 0.6;
 
 /**
- * A target beyond this many ATR is not a 20-bar trade.
+ * A target beyond this many ATR is not a short-horizon trade.
  *
- * The backtest's horizon is 20 bars. A target 11R away with a stop inside the
- * noise is a lottery ticket priced as a plan: it resolves rarely, and the few
- * resolutions it does produce are what the hit rate gets computed from. Capping
- * the distance is the honest way to keep the plan inside the window the
- * evidence covers.
+ * Was 4 — a multi-day swing at best. The standing request is 當日短線: trades
+ * that resolve within roughly a session or two, at a higher hit rate, even at
+ * the cost of payoff. Two D1 ATR is about what a market covers in one to two
+ * active days; anything beyond it is a position, not a day trade, and its
+ * backtest sample inside the 20-bar horizon is too thin to trust anyway.
+ * A target 11R away with a stop inside the noise is a lottery ticket priced
+ * as a plan.
  */
-const MAX_TARGET_ATR = 4;
+const MAX_TARGET_ATR = 2;
 
 /**
  * The hit rate below which a plan is not followable, whatever its expectancy.
@@ -214,8 +216,14 @@ const MAX_TARGET_ATR = 4;
  * taking the signal, and a system that produces them is a system that gets
  * turned off. Combinations below this are only used when nothing clears it, and
  * the summary says so rather than hiding it.
+ *
+ * Raised from 0.3 with the day-trade tuning: nearer targets resolve more
+ * often, so demanding they *hit* more often is affordable now — 45% at the
+ * 1:1.22 breakeven means the geometry has to clear a real bar, not scrape by
+ * on a long-shot payoff. (80–90% remains unbuyable at sane risk/reward:
+ * breakevenRr(0.8) = 0.25 is risking four to make one.)
  */
-const MIN_HIT_RATE = 0.3;
+const MIN_HIT_RATE = 0.45;
 
 /**
  * The risk/reward a given hit rate needs just to break even.

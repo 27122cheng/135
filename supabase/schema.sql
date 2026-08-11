@@ -102,6 +102,11 @@ create table if not exists public.plan_monitor (
   updated_at timestamptz not null default now()
 );
 
+-- Snapshot of the plan being tracked (direction/grade/plan/generatedAt).
+-- Added after the table shipped, so it arrives as an alter rather than a
+-- column in the create above — "if not exists" makes both paths idempotent.
+alter table public.plan_monitor add column if not exists tracked jsonb;
+
 alter table public.plan_monitor enable row level security;
 
 drop policy if exists "Public read access" on public.plan_monitor;

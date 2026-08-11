@@ -71,6 +71,24 @@ const INFORMATIONAL_PATTERNS = [
   // Legacy rows written before dedupe notes stopped being filed as gaps.
   /已合併為一票/,
   /合併後視為中性/,
+  // The market being closed is a fact about the market, not missing data —
+  // both the weekend-clock wording and the two-witnesses-stale wording.
+  /不發送進場通知/,
+  // Price-basis notes: which witness supplied the price and why. The data was
+  // served; these explain the choice.
+  /進場區間以此價位計算/,
+  /進場區間改用最新 K 棒/,
+  /進場區間改用最後一根 K 棒/,
+  // A quiet news day — the fetch worked and nothing matched. "No news" and
+  // "news source down" must not share a bucket.
+  /查無「.*」相關新聞/,
+  // The zero-key news path doing its designed job.
+  /改用本地關鍵字評分/,
+  /改用本地備援文字/,
+  // Rule conclusions about this signal (downgrades, interventions firing).
+  // They explain a verdict; nothing failed to arrive.
+  /訊號強制降級為 no-trade/,
+  /干涉：/,
 ];
 
 export function isInformational(gap: string): boolean {

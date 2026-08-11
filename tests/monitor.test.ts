@@ -256,4 +256,30 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   check("links back", text.includes("https://x.app"));
 }
 
+// ── sticky tracking (structural) ──────────────────────────────────
+//
+// 「同一個商品的交易，必須要先結束，止盈或止損後再加入復盤」. The route
+// snapshots the entered plan into plan_monitor and keeps watching it while
+// the position is open; a behavioural test needs a live database, so what is
+// pinned here is that the pieces exist and stay wired: the snapshot column,
+// the in-flight check, and identity by generated_at rather than by ids that
+// latest_signal fills with the symbol name.
+{
+  const { readFileSync } = require("node:fs") as typeof import("node:fs");
+  const route = readFileSync("app/api/monitor/route.ts", "utf8");
+  check("open positions keep their snapshot", route.includes('row.state === "entered" || row.state === "added"'));
+  check("plan identity is the snapshot's generated_at",
+    route.includes("previous?.tracked?.generatedAt === tracked.generatedAt"));
+  check("the snapshot is written back every sweep", route.includes("tracked,"));
+  check("the journal records the tracked plan, not the newest analysis",
+    route.includes("direction: tracked.direction, grade: tracked.grade"));
+
+  const schema = readFileSync("lib/db/schema.ts", "utf8");
+  check("the schema migrates the tracked column",
+    schema.includes("add column if not exists tracked jsonb"));
+  const refresh = readFileSync("app/api/refresh/route.ts", "utf8");
+  check("the refresh route reads the open-trade state before alerting",
+    refresh.includes("openTrade"));
+}
+
 report("monitor + add-ons");
