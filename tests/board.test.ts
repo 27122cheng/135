@@ -2,7 +2,7 @@ import { check, report } from "./_harness";
 import { readLatest } from "@/lib/latest-signals";
 import type { SignalStore } from "@/lib/db";
 import { COMMODITIES, type SignalRow, type TradeSignal } from "@/types/signal";
-import { toBoardRow } from "@/lib/board-row";
+import { toBoardRow, usdExposure } from "@/lib/board-row";
 
 /**
  * The board's read path.
@@ -200,6 +200,33 @@ async function suite() {
   // price. Rendering "止損 null" would be worse than rendering nothing.
   const priceless = { ...historyRow, stop_loss: { ...levels.stop_loss, price: null } } as unknown as SignalRow;
   check("a null stop price yields no reference", toBoardRow(meta, priceless).reference === null);
+}
+
+// ── 美元同向曝險 ──────────────────────────────────────────────────
+//
+// EURUSD long + gold long is short-the-dollar twice; the per-symbol cards
+// cannot see that, so the board aggregates it. FX and gold only — indices
+// correlate with the dollar too loosely for a sign table to claim them.
+{
+  const row = (symbol: string, stance: "enter" | "wait", direction: "long" | "short") =>
+    ({ symbol, stance, direction }) as never;
+
+  const cluster = usdExposure([
+    row("EURUSD", "enter", "long"),
+    row("XAUUSD", "enter", "long"),
+    row("USDJPY", "enter", "short"),
+    row("US30", "enter", "long"),
+  ]);
+  check("three short-USD entries read as one cluster",
+    cluster?.side === "short" && cluster.symbols.length === 3, cluster);
+  check("indices are not claimed", !(cluster?.symbols ?? []).includes("US30"), cluster);
+
+  check("a single trade is not a cluster",
+    usdExposure([row("EURUSD", "enter", "long")]) === null);
+  check("觀望 rows do not count",
+    usdExposure([row("EURUSD", "wait", "long"), row("XAUUSD", "wait", "long")]) === null);
+  check("opposing USD sides do not merge",
+    usdExposure([row("EURUSD", "enter", "long"), row("USDJPY", "enter", "long")]) === null);
 }
 
 // Wrapped: the test runner transforms to CJS, which has no top-level await.

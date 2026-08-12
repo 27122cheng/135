@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { BoardRow } from "@/app/api/board/route";
+import { usdExposure } from "@/lib/board-row";
 import { userKeyHeaders } from "@/lib/user-keys-client";
 import { CONFIDENT_ENTRY_MIN } from "@/lib/analysis/confidence";
 
@@ -440,6 +441,7 @@ export default function BoardPage() {
   });
 
   const trades = sorted.filter((r) => r.stance === "enter");
+  const usdCluster = usdExposure(sorted);
   const failedSymbols = Object.keys(scanErrors);
   const oldest = rows.reduce<string | null>(
     (acc, r) => (r.generatedAt && (!acc || r.generatedAt < acc) ? r.generatedAt : acc),
@@ -516,6 +518,19 @@ export default function BoardPage() {
       {data?.note && (
         <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-400">
           {data.note}
+        </div>
+      )}
+      {usdCluster && (
+        <div className="mb-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-300">
+          <p className="font-medium">
+            ⚠ 美元同向曝險：{usdCluster.symbols.join("、")} 的進場訊號實質上都是
+            {usdCluster.side === "long" ? "做多" : "做空"}美元
+          </p>
+          <p className="mt-1 leading-relaxed text-amber-400/80">
+            同時進場等於同一個宏觀方向開 {usdCluster.symbols.length} 倍槓桿。
+            這一組的部位風險應合併當作一筆計算（例如各單部位除以 {usdCluster.symbols.length}），
+            而不是各自獨立配置。
+          </p>
         </div>
       )}
       {failedSymbols.length > 0 && (

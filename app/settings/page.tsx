@@ -361,6 +361,7 @@ interface AiTestRow {
  */
 function AiTestPanel() {
   const [rows, setRows] = useState<AiTestRow[] | null>(null);
+  const [scheduled, setScheduled] = useState<AiTestRow[] | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -372,9 +373,11 @@ function AiTestPanel() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setRows(data.results as AiTestRow[]);
+      setScheduled((data.scheduled as AiTestRow[]) ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setRows(null);
+      setScheduled(null);
     } finally {
       setRunning(false);
     }
@@ -400,33 +403,60 @@ function AiTestPanel() {
       </div>
       {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
       {rows && (
-        <ul className="mt-3 space-y-2">
-          {rows.map((r) => (
-            <li key={r.name} className="rounded-lg border border-neutral-800 bg-neutral-950/50 p-2.5 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-neutral-200">{r.name}</span>
-                <span className="text-[10px] text-neutral-600">{r.tier === "free" ? "免費" : "付費"}</span>
-                <span
-                  className={
-                    r.ok
-                      ? "ml-auto rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400"
-                      : r.configured
-                        ? "ml-auto rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] font-medium text-red-400"
-                        : "ml-auto rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-500"
-                  }
-                >
-                  {r.ok ? "正常" : r.configured ? "失敗" : "未設定"}
-                </span>
-              </div>
-              {r.detail && !r.ok && (
-                <p className="mt-1 break-all font-mono text-[10px] leading-relaxed text-neutral-500">
-                  {r.detail}
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
+        <>
+          <p className="mt-3 text-[11px] font-medium text-neutral-400">
+            瀏覽器視角（手動重掃看到的：伺服器＋這台裝置的金鑰）
+          </p>
+          <AiTestList rows={rows} />
+        </>
+      )}
+      {scheduled && (
+        <>
+          <p className="mt-3 text-[11px] font-medium text-neutral-400">
+            排程視角（每小時自動掃描看到的：只有伺服器端設定）
+          </p>
+          <AiTestList rows={scheduled} />
+          {rows &&
+            rows.some((r) => r.configured) &&
+            scheduled.every((s) => !s.configured) && (
+              <p className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11px] leading-relaxed text-amber-300">
+                診斷：金鑰只存在這台裝置，沒有進到伺服器 —— 排程掃描拿不到。回到上方按一次「儲存」，
+                並確認沒有出現紅色的「寫進排程失敗」訊息；成功後每個金鑰旁會出現「排程也有」。
+              </p>
+            )}
+        </>
       )}
     </div>
+  );
+}
+
+function AiTestList({ rows }: { rows: AiTestRow[] }) {
+  return (
+    <ul className="mt-1.5 space-y-2">
+      {rows.map((r) => (
+        <li key={r.name} className="rounded-lg border border-neutral-800 bg-neutral-950/50 p-2.5 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-neutral-200">{r.name}</span>
+            <span className="text-[10px] text-neutral-600">{r.tier === "free" ? "免費" : "付費"}</span>
+            <span
+              className={
+                r.ok
+                  ? "ml-auto rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400"
+                  : r.configured
+                    ? "ml-auto rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] font-medium text-red-400"
+                    : "ml-auto rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-500"
+              }
+            >
+              {r.ok ? "正常" : r.configured ? "失敗" : "未設定"}
+            </span>
+          </div>
+          {r.detail && !r.ok && (
+            <p className="mt-1 break-all font-mono text-[10px] leading-relaxed text-neutral-500">
+              {r.detail}
+            </p>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }

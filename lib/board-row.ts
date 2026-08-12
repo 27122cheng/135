@@ -33,6 +33,48 @@ export interface BoardReference {
   takeProfits: { price: number; allocationPct: number; structure: string }[];
 }
 
+/**
+ * 美元同向曝險 — the aggregation a per-symbol card cannot see.
+ *
+ * EURUSD long, GBPUSD long and gold long are, to a first approximation, the
+ * same trade: short the dollar, three times. Position sizing that treats them
+ * as three independent risks is 3× levered on one macro view without saying
+ * so. This flags it when two or more *entered* recommendations share a USD
+ * side, so the reader sizes the cluster as one position.
+ *
+ * Deliberately FX + gold only. Indices and oil correlate with the dollar too,
+ * but loosely and regime-dependently; claiming them as "the same trade" would
+ * overstate what a sign table can know.
+ */
+const USD_SIDE: Record<string, 1 | -1> = {
+  EURUSD: -1, // long the pair = short USD
+  GBPUSD: -1,
+  XAUUSD: -1,
+  USDJPY: 1, // long the pair = long USD
+};
+
+export interface UsdExposure {
+  side: "long" | "short";
+  symbols: string[];
+}
+
+export function usdExposure(
+  rows: Array<Pick<BoardRow, "symbol" | "stance" | "direction">>,
+): UsdExposure | null {
+  const longUsd: string[] = [];
+  const shortUsd: string[] = [];
+  for (const r of rows) {
+    if (r.stance !== "enter" || !r.direction) continue;
+    const side = USD_SIDE[r.symbol];
+    if (!side) continue;
+    const usd = (r.direction === "long" ? 1 : -1) * side;
+    (usd > 0 ? longUsd : shortUsd).push(r.symbol);
+  }
+  if (longUsd.length >= 2) return { side: "long", symbols: longUsd };
+  if (shortUsd.length >= 2) return { side: "short", symbols: shortUsd };
+  return null;
+}
+
 export interface BoardRow {
   symbol: string;
   label: string;
