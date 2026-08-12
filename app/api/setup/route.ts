@@ -1,4 +1,5 @@
 import { neon } from "@neondatabase/serverless";
+import { directNeonUrl } from "@/lib/db";
 import { REQUIRED_TABLES, schemaStatements } from "@/lib/db/schema";
 import { json } from "@/lib/json-response";
 
@@ -23,7 +24,9 @@ export const maxDuration = 60;
 
 function connection(): string | null {
   const url = process.env.DATABASE_URL?.trim();
-  return url ? url : null;
+  // Same pooler bypass the store applies — DDL through the pooler while
+  // queries go direct would reintroduce the split this exists to end.
+  return url ? directNeonUrl(url) : null;
 }
 
 async function existingTables(url: string): Promise<string[]> {

@@ -149,9 +149,44 @@ export interface MonitorRow extends MonitorMemory {
   tracked?: TrackedPlan | null;
 }
 
+/**
+ * Routes around Neon's pooler for the HTTP driver.
+ *
+ * The live deployment's DATABASE_URL points at an `ep-…-pooler` host, and
+ * through it this app spent a day in an impossible state: INSERTs accepted
+ * and committed, immediate SELECTs — same connection string, same invocation
+ * — coming back without the rows, the whole read side frozen at one moment
+ * in time. Every Neon pooler host has a direct twin at the same hostname
+ * minus the `-pooler` suffix, same credentials, same database; and Neon's
+ * own guidance for the HTTP fetch driver is to use the direct endpoint — the
+ * driver brokers per-request connections server-side, so PgBouncer adds
+ * nothing here except, evidently, a place for reads and writes to part ways.
+ *
+ * Only the Neon convention is rewritten (first label ending in `-pooler` on
+ * a `.neon.tech` host). Anything else — Supabase's pooler, self-hosted
+ * Postgres — passes through untouched.
+ */
+export function directNeonUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    if (u.hostname.endsWith(".neon.tech")) {
+      const [first, ...rest] = u.hostname.split(".");
+      if (first.endsWith("-pooler")) {
+        u.hostname = [first.slice(0, -"-pooler".length), ...rest].join(".");
+        return u.toString();
+      }
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
+
 /** Null when neither backend is configured — callers must return 501, not crash. */
 export function getSignalStore(): SignalStore | null {
-  if (process.env.DATABASE_URL?.trim()) return postgresStore(process.env.DATABASE_URL.trim());
+  if (process.env.DATABASE_URL?.trim()) {
+    return postgresStore(directNeonUrl(process.env.DATABASE_URL.trim()));
+  }
   return supabaseStore();
 }
 
@@ -187,7 +222,9 @@ export function describeStore(): StoreIdentity | null {
   const url = process.env.DATABASE_URL?.trim();
   if (url) {
     try {
-      const u = new URL(url);
+      // The *effective* host — after the pooler rewrite — because this field
+      // exists to say where queries actually go, not what the env var says.
+      const u = new URL(directNeonUrl(url));
       return {
         kind: "postgres",
         host: u.hostname,

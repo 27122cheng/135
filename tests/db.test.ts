@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { check, report } from "./_harness";
+import { directNeonUrl } from "@/lib/db";
 import { explain } from "@/lib/db/postgres-store";
 import { REQUIRED_TABLES, SCHEMA_SQL, schemaStatements } from "@/lib/db/schema";
 import { USER_SETTABLE_KEYS } from "@/lib/api-key-names";
@@ -82,6 +83,26 @@ import { parseUserKeyHeader } from "@/lib/api-keys";
   // A comment ending a line must not swallow the semicolon that follows it.
   const tricky = schemaStatements("create table a (x int); -- comment\ncreate table b (y int);");
   check("a trailing comment does not merge statements", tricky.length === 2, tricky);
+}
+
+// ── the pooler bypass ─────────────────────────────────────────────
+//
+// Through the -pooler endpoint the live deployment committed INSERTs that the
+// very next SELECT could not see. Neon's direct endpoint is the same host
+// minus the suffix; only that convention is rewritten, everything else passes
+// through byte-identical.
+{
+  check("a Neon pooler host is rewritten to its direct twin",
+    directNeonUrl("postgresql://u:p@ep-autumn-boat-aw5ckl5v-pooler.c-12.us-east-1.aws.neon.tech/neondb?sslmode=require")
+      === "postgresql://u:p@ep-autumn-boat-aw5ckl5v.c-12.us-east-1.aws.neon.tech/neondb?sslmode=require");
+  check("a direct Neon host is untouched",
+    directNeonUrl("postgresql://u:p@ep-autumn-boat-aw5ckl5v.c-12.us-east-1.aws.neon.tech/neondb")
+      === "postgresql://u:p@ep-autumn-boat-aw5ckl5v.c-12.us-east-1.aws.neon.tech/neondb");
+  const supabasePooler = "postgresql://u:p@aws-0-us-east-1.pooler.supabase.com:6543/postgres";
+  check("a Supabase pooler is not Neon's convention and passes through",
+    directNeonUrl(supabasePooler) === supabasePooler);
+  check("garbage passes through rather than throwing",
+    directNeonUrl("not a url") === "not a url");
 }
 
 report("db setup errors");
