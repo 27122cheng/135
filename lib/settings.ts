@@ -123,6 +123,23 @@ export async function setSetting(key: SettingKey, value: string): Promise<void> 
   if (!store) throw new Error("未設定資料庫，無法儲存設定");
   await store.saveSetting(key, value.trim());
   clearSettingsCache();
+  // The write that lies, settings edition. Keys were "saved", the settings
+  // page showed success, and the hourly sweep still reported 未設定任何 AI
+  // 金鑰 — because the database accepted the row and lost it (the per-deploy
+  // branch failure). A save that cannot be read back is not a save, and the
+  // settings page's red 寫進排程失敗 path is exactly where this belongs.
+  try {
+    const echo = await store.listSettings();
+    if (echo.get(key)?.trim() === value.trim()) return;
+  } catch {
+    // A read-back that itself fails proves nothing about the write.
+    return;
+  }
+  throw new Error(
+    "設定寫入後立刻讀不回 —— 資料庫收下了寫入卻沒有留住（多半是資料庫整合替每個部署開新分支，" +
+      "需把 DATABASE_URL 換成固定分支）。替代做法：把這個值直接設成 Vercel 環境變數，" +
+      "完全不經資料庫，排程一定讀得到",
+  );
 }
 
 export interface SettingStatus {

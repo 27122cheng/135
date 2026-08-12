@@ -69,10 +69,17 @@ function buildRegistry(): Map<string, AIProvider> {
       apiKeyName: "OPENROUTER_API_KEY",
       modelKeyName: "OPENROUTER_MODEL",
       // `:free` models, per the spec. OpenRouter retires these periodically —
-      // the list absorbs one retirement, OPENROUTER_MODEL overrides the rest.
+      // live proof: llama-3.1-8b-instruct:free 404'd with "unavailable for
+      // free, use the paid slug" — so the list is broad across vendors rather
+      // than deep in one family. Each dead id costs one 404 round trip, the
+      // first that answers is remembered for the process, and
+      // OPENROUTER_MODEL overrides the whole list.
       defaultModels: [
         "meta-llama/llama-3.3-70b-instruct:free",
-        "meta-llama/llama-3.1-8b-instruct:free",
+        "deepseek/deepseek-chat-v3-0324:free",
+        "google/gemma-3-27b-it:free",
+        "mistralai/mistral-small-3.1-24b-instruct:free",
+        "qwen/qwen-2.5-72b-instruct:free",
       ],
       extraHeaders: { "x-title": "multi-commodity-signal" },
     }),

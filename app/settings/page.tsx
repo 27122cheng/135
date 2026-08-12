@@ -420,8 +420,12 @@ function AiTestPanel() {
             rows.some((r) => r.configured) &&
             scheduled.every((s) => !s.configured) && (
               <p className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11px] leading-relaxed text-amber-300">
-                診斷：金鑰只存在這台裝置，沒有進到伺服器 —— 排程掃描拿不到。回到上方按一次「儲存」，
+                診斷：金鑰只存在這台裝置，伺服器端沒有 —— 排程掃描拿不到。回到上方按一次「儲存」，
                 並確認沒有出現紅色的「寫進排程失敗」訊息；成功後每個金鑰旁會出現「排程也有」。
+                若按了儲存卻反覆回到這個狀態，代表資料庫收下寫入又丟掉（部署間連到不同資料庫分支）——
+                最穩的做法：到 Vercel 專案 Settings → Environment Variables 直接新增
+                GEMINI_API_KEY / GROQ_API_KEY（All Environments）後 redeploy，
+                完全不經資料庫，排程一定讀得到。
               </p>
             )}
         </>
