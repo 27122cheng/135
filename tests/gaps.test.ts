@@ -100,6 +100,19 @@ import { collapseCascades, groupDataGaps } from "@/lib/data-gaps";
   check("and says how many followed from it",
     collapsed.some((g) => g.includes("另有 3 項後續影響")), collapsed);
 
+  // The live sweep showed the same missing key billed twice on every symbol:
+  // "未設定任何 AI 金鑰…" plus the store-your-keys instruction. One fact, one
+  // line — and the surviving line is the one with the instruction in it.
+  const keyNote =
+    "AI 金鑰在瀏覽器與伺服器兩邊都沒有：排程掃描只讀伺服器端設定，到設定頁把金鑰按一次「儲存」就會同時寫入兩邊（每個金鑰旁會出現「排程也有」）";
+  const merged = collapseCascades([
+    "未設定任何 AI 金鑰（GEMINI_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY），AI 環節改用本地規則",
+    keyNote,
+  ]);
+  check("the missing key is one gap, not two", merged.length === 1, merged);
+  check("and the instruction is the line that survives",
+    merged[0].startsWith("AI 金鑰在瀏覽器與伺服器兩邊都沒有"), merged[0]);
+
   // A lone AI gap must not be rewritten — there is no cascade to collapse.
   const single = collapseCascades(["交易計畫改用預設規則判斷"]);
   check("one AI gap stays exactly as written",

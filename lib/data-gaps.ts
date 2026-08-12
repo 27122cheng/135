@@ -127,10 +127,15 @@ export interface GroupedGaps {
  */
 const CASCADES: Array<{ match: RegExp; keep: RegExp; label: string }> = [
   {
-    // Everything downstream of "no AI answered".
-    match: /所有 AI 供應商皆無法回應|AI 綜合敘述改用本地備援|交易計畫改用預設規則|AI 環節改用本地規則|未設定任何 AI 金鑰/,
-    // The one that names the provider errors is the only one worth reading.
-    keep: /所有 AI 供應商皆無法回應|未設定任何 AI 金鑰/,
+    // Everything downstream of "no AI answered" — including the keys-not-
+    // stored instruction, which used to survive *beside* "未設定任何 AI 金鑰"
+    // and bill the same missing key as two actionable gaps on all nine
+    // symbols (18 of the sweep's warning lines were this one fact).
+    match:
+      /所有 AI 供應商皆無法回應|AI 綜合敘述改用本地備援|交易計畫改用預設規則|AI 環節改用本地規則|未設定任何 AI 金鑰|AI 金鑰在瀏覽器與伺服器兩邊都沒有/,
+    // Keep the line someone can act on: the store-your-keys instruction when
+    // present, else the one naming the provider errors.
+    keep: /AI 金鑰在瀏覽器與伺服器兩邊都沒有|所有 AI 供應商皆無法回應/,
     label: "AI",
   },
 ];
