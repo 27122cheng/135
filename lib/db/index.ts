@@ -159,3 +159,51 @@ export function getSignalStore(): SignalStore | null {
 export function storeKind(): string {
   return getSignalStore()?.kind ?? "none";
 }
+
+export interface StoreIdentity {
+  kind: "postgres" | "supabase";
+  host: string;
+  database: string | null;
+}
+
+/**
+ * Which database this invocation is actually talking to — host and database
+ * name, never credentials.
+ *
+ * Exists because of a failure nothing else could see: every hourly sweep
+ * reported its writes as stored, while the board and the monitor read a world
+ * frozen a day earlier. That combination is impossible inside one Postgres
+ * database — and that is the tell. Vercel's database integrations can mint a
+ * *fresh database branch per deployment*, so each push sends writes to a
+ * branch the next deployment silently abandons. The only way to catch it from
+ * the outside is for every response to say which host answered; when the
+ * hostname changes between deployments, that is the whole diagnosis.
+ *
+ * The hostname is not a secret (connecting still requires the password), and
+ * it is exactly the fact the owner needs to compare across screenshots and
+ * workflow logs.
+ */
+export function describeStore(): StoreIdentity | null {
+  const url = process.env.DATABASE_URL?.trim();
+  if (url) {
+    try {
+      const u = new URL(url);
+      return {
+        kind: "postgres",
+        host: u.hostname,
+        database: u.pathname.replace(/^\//, "") || null,
+      };
+    } catch {
+      return { kind: "postgres", host: "（連線字串無法解析）", database: null };
+    }
+  }
+  const supa = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  if (supa) {
+    try {
+      return { kind: "supabase", host: new URL(supa).hostname, database: null };
+    } catch {
+      return { kind: "supabase", host: "（連線字串無法解析）", database: null };
+    }
+  }
+  return null;
+}

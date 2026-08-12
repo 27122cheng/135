@@ -35,6 +35,8 @@ interface BoardResponse {
   note?: string | null;
   /** Short commit sha of the deployed build, so "did it deploy" is answerable. */
   build?: string | null;
+  /** Which database host answered — the fact that catches a per-deploy branch. */
+  db?: { kind: string; host: string; database: string | null } | null;
   error?: string;
   next?: string;
 }
@@ -232,7 +234,7 @@ export default function BoardPage() {
   // every poll and the rescan would never fire.
   const dataRef = useRef<BoardResponse | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<BoardResponse | null> => {
     try {
       // `no-store` is not optional here. Without it the browser happily serves
       // the first response — an empty board, taken before anything had been
@@ -243,8 +245,10 @@ export default function BoardPage() {
       const body: BoardResponse = await res.json();
       setData(body);
       setError(res.ok ? null : (body.next ?? body.error ?? "讀取失敗"));
+      return body;
     } catch {
       setError("讀取失敗");
+      return null;
     }
   }, []);
 
@@ -274,11 +278,15 @@ export default function BoardPage() {
   const rescan = useCallback(
     async (targets: BoardRow[]) => {
       if (targets.length === 0) return;
+      const startedAt = Date.now();
       setScanErrors({});
       setRescanning(new Set(targets.map((r) => r.symbol)));
+      const failures = new Set<string>();
 
-      const fail = (symbol: string, why: string) =>
+      const fail = (symbol: string, why: string) => {
+        failures.add(symbol);
         setScanErrors((prev) => ({ ...prev, [symbol]: why }));
+      };
 
       // A small worker pool rather than Promise.all over all nine. Same total
       // work, but it arrives at a rate the free AI tiers accept instead of as
@@ -357,7 +365,30 @@ export default function BoardPage() {
         }
       };
       await Promise.all(Array.from({ length: SCAN_CONCURRENCY }, worker));
-      await load();
+      const after = await load();
+
+      // The check that would have caught a day of silent data loss: a scan
+      // that reported "stored" must be visible in the very next read. When the
+      // re-read still shows a row from before the scan started, the write went
+      // to a database this page's reads never see (or was dropped) — a state
+      // the old code rendered as a *success* with day-old timestamps, leaving
+      // 「重整完為什麼還是舊資料」 with no on-screen answer. Ten minutes of
+      // slack so a phone clock a few minutes off cannot fake a failure.
+      if (after?.rows) {
+        const cutoff = startedAt - 10 * 60_000;
+        for (const target of targets) {
+          if (failures.has(target.symbol)) continue;
+          const row = after.rows.find((r) => r.symbol === target.symbol);
+          const at = row?.generatedAt ? Date.parse(row.generatedAt) : NaN;
+          if (Number.isFinite(at) && at < cutoff) {
+            fail(
+              target.symbol,
+              "掃描回報已儲存，但重新讀取資料庫拿到的仍是舊資料 —— 寫入被丟棄，" +
+                "或這個部署連到的資料庫和讀取的不是同一顆（見頁尾的資料庫主機名稱）",
+            );
+          }
+        }
+      }
     },
     [load],
   );
@@ -545,11 +576,13 @@ export default function BoardPage() {
             ))}
           </ul>
           <p className="mt-2 text-red-400/70">
-            存不進去多半是 <code>latest_signal</code> 資料表還沒建立 —— 到{" "}
+            存不進去有兩種：<code>latest_signal</code> 資料表還沒建立（到{" "}
             <Link href="/setup" className="underline">
               設定頁
             </Link>{" "}
-            按「建立資料表」。逾時則是這個商品的資料來源太慢，重按一次通常會過，因為第二次讀的是快取。
+            按「建立資料表」），或寫入被默默丟棄 ——
+            後者幾乎都是資料庫整合替每個部署開了新分支，把 DATABASE_URL
+            換成固定分支的連線字串即可。逾時則是資料來源太慢，重按一次通常會過，因為第二次讀的是快取。
           </p>
         </div>
       )}
@@ -748,6 +781,10 @@ export default function BoardPage() {
         <p className="text-neutral-700">
           版本 {data?.build ?? "本機"}
           {data?.source ? `．資料來源 ${data.source}` : ""}
+          {/* The database *host*. If this string is different in two
+              screenshots, the mystery of "writes succeed, board stays old"
+              is solved: they were different databases. */}
+          {data?.db ? `．資料庫 ${data.db.host}` : ""}
         </p>
       </div>
     </main>

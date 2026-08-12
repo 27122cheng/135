@@ -95,7 +95,16 @@ export async function readLatest(store: SignalStore): Promise<LatestRead> {
       latestError !== null
         ? `latest_signal 讀取失敗（${latestError}），改用 signals 歷史表的最新一筆。到設定頁按「建立資料表」可修好。`
         : rows.length > 0
-          ? "latest_signal 是空的，改用 signals 歷史表的最新一筆。多半是這張表還沒建立，到設定頁按「建立資料表」。"
+          ? // Two very different causes share this symptom, so both are named.
+            // The first cut only said "去按建立資料表" — but a table that setup
+            // reports as existing while sitting empty means the *writes* are
+            // going somewhere reads never look, which no amount of re-creating
+            // tables fixes.
+            "latest_signal 是空的，改用 signals 歷史表的最新一筆。" +
+            "若還沒建過資料表，到設定頁按「建立資料表」；若建表早就成功、" +
+            "掃描也都顯示已儲存，代表寫入進了另一顆資料庫 —— 對照頁尾的" +
+            "「資料庫」主機名稱是否隨部署改變（Neon 的 Vercel 整合可能開了" +
+            "每個部署一個分支）。"
           : null,
   };
 }

@@ -1,5 +1,5 @@
 import { COMMODITIES } from "@/types/signal";
-import { getSignalStore } from "@/lib/db";
+import { describeStore, getSignalStore } from "@/lib/db";
 import { readLatest } from "@/lib/latest-signals";
 import { toBoardRow } from "@/lib/board-row";
 import { json } from "@/lib/json-response";
@@ -53,8 +53,11 @@ export async function GET(request: Request) {
     // "no data yet" and "no trade" are different answers.
     const rows = COMMODITIES.map((meta) => toBoardRow(meta, bySymbol.get(meta.symbol)));
 
+    // Metadata before `rows`, deliberately: the refresh workflow logs the
+    // first few hundred bytes of this response every sweep, and the fields
+    // that diagnose a stale board — which table answered, which build, which
+    // database host — must survive that truncation. `rows` is the bulk.
     return json({
-      rows,
       source,
       note,
       // Which build answered. Three times now a fix has been reported as "still
@@ -62,6 +65,11 @@ export async function GET(request: Request) {
       // deployment had picked it up — the browser shows a page, not a commit.
       // Vercel sets this at build time; locally it is simply absent.
       build: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
+      // Which database answered. When this hostname differs between two
+      // deployments (or between a workflow log and a phone screenshot), every
+      // "successful write that never shows up" is explained at once: the
+      // platform is minting a database branch per deployment.
+      db: describeStore(),
       tradeCount: rows.filter((r) => r.stance === "enter").length,
       scannedCount: rows.filter((r) => r.generatedAt !== null).length,
       oldestAt: rows.reduce<string | null>(
@@ -69,6 +77,7 @@ export async function GET(request: Request) {
           r.generatedAt && (!oldest || r.generatedAt < oldest) ? r.generatedAt : oldest,
         null,
       ),
+      rows,
     });
   } catch (err) {
     return json(

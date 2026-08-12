@@ -1,5 +1,6 @@
 import { COMMODITIES } from "@/types/signal";
 import { parseUserKeyHeader } from "@/lib/api-keys";
+import { describeStore } from "@/lib/db";
 import { runScan, storeScan } from "@/lib/scan";
 import { json } from "@/lib/json-response";
 
@@ -63,6 +64,9 @@ export async function GET(request: Request) {
       // nine successful scans produced a board reading 已掃描 0/9 with no
       // explanation anywhere.
       storeError,
+      // Which database took the write — so a scan that stores and a board that
+      // stays stale can be compared by host instead of by guesswork.
+      db: describeStore(),
       releases: scan.releases.map((f) => `${f.release.label} ${f.period}`),
       // Which keys the *server* holds, as opposed to the ones this browser
       // sent. When the two differ, the scheduled run and this one are working

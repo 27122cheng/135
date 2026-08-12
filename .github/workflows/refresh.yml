@@ -96,6 +96,20 @@ jobs:
           if [ -n "$skipped" ]; then
             echo "Skipped (not configured):$skipped"
           fi
+
+          # Read the board back after the sweep. The sweep above can report
+          # every write as stored and still have persisted nothing anywhere a
+          # reader looks — that exact failure ran for a full day. The board
+          # response leads with source/note/build/db/oldestAt, so this one
+          # line per run is a time series: if `db.host` changes between runs,
+          # the database is rotating per deployment, and if `oldestAt` stops
+          # advancing while the sweep says ok, writes are being lost.
+          echo "::group::board read-back"
+          curl --silent --show-error --location --max-time 30 \
+            "$APP_URL/api/board" | head -c 700 || echo "::warning::board read-back failed"
+          echo ""
+          echo "::endgroup::"
+
           if [ -n "$failed" ]; then
             echo "Failed symbols:$failed" >&2
             exit 1

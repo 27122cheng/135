@@ -5,7 +5,7 @@ import { ingestReleases, type IngestedRelease } from "./analysis/data-release";
 import { withUserKeys } from "./api-keys";
 import { withFreshData } from "./data-sources/free-source";
 import { storedApiKeys } from "./settings";
-import { getSignalStore } from "./db";
+import { getSignalStore, type SignalStore } from "./db";
 
 /**
  * One scan, used by every caller.
@@ -161,11 +161,48 @@ export async function runScan(
  * had been analysed. At a 4-hourly auto-scan over nine symbols the extra rows
  * are a few dozen a day, which is not a reason to keep two stores out of step.
  */
-export async function storeScan(signal: TradeSignal): Promise<{
+/**
+ * Re-reads what was just written, and names each table that came back without
+ * the new row.
+ *
+ * This exists because "the write threw" stopped being the only way to lose
+ * data. A full day of hourly sweeps reported `storeError: null` on every
+ * symbol while the board and the monitor kept reading a world frozen at the
+ * previous morning — the inserts were accepted and committed, but by a
+ * database no later request ever saw again. That happens when the platform
+ * mints a fresh database branch per deployment (Vercel's Neon integration can
+ * be configured to): each push sends writes to a branch the next deployment
+ * abandons. No exception is ever thrown anywhere, so the only way to catch it
+ * is to ask the database, immediately, whether it still has what it just took.
+ */
+async function readBackMissing(store: SignalStore, signal: TradeSignal): Promise<string[]> {
+  // Slack for timestamp round-tripping; anything at-or-after the write counts,
+  // including a newer row a concurrent scan may have stored meanwhile.
+  const wroteAt = Date.parse(signal.generated_at) - 5_000;
+  const freshEnough = (v: unknown) => {
+    const t = Date.parse(String(v ?? ""));
+    return Number.isFinite(t) && t >= wroteAt;
+  };
+  const [latest, history] = await Promise.all([
+    store.latestPerSymbol(),
+    store.listSignals({ symbol: signal.symbol, limit: 1 }),
+  ]);
+  const missing: string[] = [];
+  if (!freshEnough(latest.find((r) => r.symbol === signal.symbol)?.generated_at)) {
+    missing.push("latest_signal");
+  }
+  if (!freshEnough(history[0]?.generated_at)) missing.push("signals");
+  return missing;
+}
+
+export async function storeScan(
+  signal: TradeSignal,
+  // Injectable for tests only; every real caller uses the configured store.
+  store: SignalStore | null = getSignalStore(),
+): Promise<{
   stored: boolean;
   storeError: string | null;
 }> {
-  const store = getSignalStore();
   if (!store) return { stored: false, storeError: "未設定資料庫，掃描結果無處可存" };
 
   // Independently, and both attempted whatever the other does.
@@ -187,8 +224,26 @@ export async function storeScan(signal: TradeSignal): Promise<{
     errors.push(`歷史時間軸（signals）：${err instanceof Error ? err.message : String(err)}`);
   });
 
+  // Verified only when both writes claimed success: a thrown write is already
+  // reported above, and a read-back that itself fails proves nothing about the
+  // writes — "couldn't verify" must not masquerade as "lost".
+  let lost = false;
+  if (errors.length === 0) {
+    const missing = await readBackMissing(store, signal).catch(() => [] as string[]);
+    if (missing.length > 0) {
+      lost = missing.length === 2;
+      errors.push(
+        `寫入宣稱成功，但立刻重讀時 ${missing.join(" 與 ")} 裡都沒有這筆新資料 —— ` +
+          "資料庫收下了寫入卻沒有留住。最常見的原因是 Vercel 的資料庫整合開啟了" +
+          "「每個部署各一個資料庫分支」（Neon preview branches）：每次 push 之後，" +
+          "寫入都進了下一個部署看不到的分支。請到 Neon/Vercel 把 DATABASE_URL " +
+          "換成主分支的固定連線字串，並套用到所有環境",
+      );
+    }
+  }
+
   return {
-    stored: errors.length < 2,
+    stored: errors.length < 2 && !lost,
     storeError: errors.length > 0 ? `寫入失敗 — ${errors.join("；")}` : null,
   };
 }

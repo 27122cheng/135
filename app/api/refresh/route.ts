@@ -1,6 +1,6 @@
 import { COMMODITIES } from "@/types/signal";
 import { groupDataGaps } from "@/lib/data-gaps";
-import { getSignalStore } from "@/lib/db";
+import { describeStore, getSignalStore } from "@/lib/db";
 import { notifyAll } from "@/lib/notify";
 import type { IngestedRelease } from "@/lib/analysis/data-release";
 import { runScan, storeScan } from "@/lib/scan";
@@ -124,6 +124,10 @@ export async function GET(request: Request) {
     {
       ranAt: new Date().toISOString(),
       store: store.kind,
+      // The host this sweep wrote to. Compared across runs (and against the
+      // board's own `db` field) this catches a database that rotates per
+      // deployment — the failure where every write "succeeds" and none survive.
+      db: describeStore(),
       results,
       newReleases: [...new Set(releases.map((f) => `${f.release.label} ${f.period}`))],
       releaseNotes: [...new Set(releaseNotes)],
