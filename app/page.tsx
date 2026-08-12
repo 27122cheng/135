@@ -90,6 +90,15 @@ export default function Home() {
       const signalData = (data as { signal?: TradeSignal }).signal ?? (data as TradeSignal);
       setSignal(signalData);
       setStale(false);
+      // The board checks this; this page silently didn't — so a scan whose
+      // *write* failed showed its fresh numbers here, and the moment you
+      // navigated away and back, the database served the old row again:
+      // 「更新過了為什麼換頁面裡面的資料又還原了」. The fresh analysis stays
+      // on screen, but the failure to keep it is said out loud.
+      const storeError = (data as { storeError?: string | null }).storeError;
+      if (storeError) {
+        setError(`分析完成，但寫入資料庫失敗 —— 換頁後會變回舊資料：${storeError}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

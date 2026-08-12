@@ -206,7 +206,10 @@ async function main() {
     check("FRED's close beats the frozen quote", price?.source === "fred", price);
     check("yesterday's real close, not last Thursday's",
       price?.price === 23750.5, price?.price);
-    check("with its honest age", (price?.ageMinutes ?? 0) > 12 * 60, price?.ageMinutes);
+    // Beyond the live-quote freshness bound (3h) whatever the wall clock says:
+    // yesterday's 20:00Z close is at least 4h old at midnight and grows from
+    // there. The old 12h bound made this test fail every UTC morning.
+    check("with its honest age", (price?.ageMinutes ?? 0) > 3 * 60, price?.ageMinutes);
   }
 
   // ── Stooq saying "no data" is not a price ───────────────────────

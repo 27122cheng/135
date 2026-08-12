@@ -34,6 +34,15 @@ export interface YieldSeries {
 /** Yields move slowly and are published once a day; 6h per the spec. */
 export const YIELD_TTL_MS = 6 * 60 * 60 * 1000;
 
+/**
+ * How long a cached yield stays servable when the source is down. Three days,
+ * not the 24h default: these are end-of-day series that barely move day to
+ * day, and "日本 10Y 殖利率所有來源皆取得失敗，且無可用快取" during a Stooq
+ * outage threw away a two-day-old number that was still perfectly good for a
+ * rate-differential factor. Age is always carried and shown.
+ */
+export const YIELD_STALE_MS = 3 * 24 * 60 * 60 * 1000;
+
 /** Self-imposed — Stooq publishes no limit for the CSV download. */
 const STOOQ_LIMIT = { perMinute: 30, perDay: 1000 };
 const ECB_LIMIT = { perMinute: 30, perDay: 1000 };
@@ -57,6 +66,7 @@ async function fromStooq(code: string, label: string, gaps: string[]): Promise<Y
     label: `Stooq 殖利率 (${label})`,
     key: `stooq:yield:${code}`,
     ttlMs: YIELD_TTL_MS,
+    staleMs: YIELD_STALE_MS,
     limit: STOOQ_LIMIT,
     gaps,
     fn: async () => {
@@ -81,6 +91,7 @@ async function fromEcb(key: string, label: string, gaps: string[]): Promise<Yiel
     label: `ECB 殖利率曲線 (${label})`,
     key: `ecb:${key}`,
     ttlMs: YIELD_TTL_MS,
+    staleMs: YIELD_STALE_MS,
     limit: ECB_LIMIT,
     gaps,
     fn: async () => {
