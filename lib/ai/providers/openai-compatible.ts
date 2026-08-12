@@ -73,9 +73,19 @@ export function openAICompatibleProvider(config: OpenAICompatibleConfig): AIProv
         break;
       }
       if (body === null) {
+        // OpenRouter's answer changed meaning in Aug 2026: five :free ids
+        // across five vendors all came back "unavailable for free. The paid
+        // version is available" — that is the free program (or this account's
+        // access to it) being withdrawn, not a model rename, and telling the
+        // owner to hunt for another slug would send them in circles.
+        const freeWithdrawn = /unavailable for free/i.test(lastModelError ?? "");
         throw new AIProviderError(
           config.name,
-          `可用模型皆已下架或改名（${lastModelError ?? "無回應"}），可在設定頁以 ${config.modelKeyName} 指定新型號`,
+          freeWithdrawn
+            ? `此帳戶目前沒有可用的免費模型（官方回覆：free 版已停用、僅剩付費版）。` +
+              `這不是設定錯誤 —— 其他 AI 供應商正常時可忽略此項；要用 ${config.name} 就儲值後以 ` +
+              `${config.modelKeyName} 指定付費型號（最後嘗試：${lastModelError}）`
+            : `可用模型皆已下架或改名（${lastModelError ?? "無回應"}），可在設定頁以 ${config.modelKeyName} 指定新型號`,
         );
       }
       const text = body?.choices?.[0]?.message?.content ?? "";
