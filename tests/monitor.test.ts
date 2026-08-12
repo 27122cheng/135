@@ -164,14 +164,32 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
 
 // ── monitor state machine ─────────────────────────────────────────
 {
-  const below = step(1990, INITIAL_MEMORY);
-  check("price short of the entry stays quiet", below.events.length === 0, below.events);
-  check("and stays in waiting", below.memory.state === "waiting");
+  // The entry is a limit order at a pullback level, so a long fills when
+  // price comes DOWN to it. Price above the entry is a market that ran off
+  // without you — not a fill.
+  const above = step(2001, INITIAL_MEMORY);
+  check("price on the profit side of the entry fills nobody", above.events.length === 0, above.events);
+  check("and stays in waiting", above.memory.state === "waiting");
 
-  const entered = step(2001, INITIAL_MEMORY);
+  // The exact bug that pushed a fictional XAUUSD win three times: a stale
+  // plan's levels below a risen market let one price be "entry touched" and
+  // "target hit" at once. With fill semantics it is a contradiction.
+  const pastTarget = step(2085, INITIAL_MEMORY);
+  check("a price already past the target fills nobody",
+    pastTarget.events.length === 0 && pastTarget.memory.state === "waiting", pastTarget.memory);
+
+  const entered = step(2000, INITIAL_MEMORY);
   check("touching the entry fires once", entered.events.length === 1 && entered.events[0].kind === "entered");
   check("state becomes entered", entered.memory.state === "entered");
   check("the active stop starts at the plan's stop", entered.memory.activeStop === 1980);
+  check("a dip below the entry but above the stop also fills",
+    step(1990, INITIAL_MEMORY).memory.state === "entered");
+
+  // A gap straight through the zone to below the stop is a fill AND a stop —
+  // reported honestly as both, in order.
+  const gapped = step(1975, INITIAL_MEMORY);
+  check("a gap through entry and stop reports both",
+    gapped.events.map((e) => e.kind).join(",") === "entered,stop_hit", gapped.events);
 
   // Same state on the next run: silence. This is what stops 288 daily alerts.
   const again = step(2005, entered.memory);
@@ -233,9 +251,13 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
     add_ons: [addOn(1, 1980, 2005)],
   });
   const shortEntered = advancePlan({
+    direction: "short", plan: shortPlan, price: 2001, priceAgeMinutes: 5, memory: INITIAL_MEMORY,
+  });
+  check("a short fills when price rises to the entry", shortEntered.memory.state === "entered");
+  const shortAbove = advancePlan({
     direction: "short", plan: shortPlan, price: 1999, priceAgeMinutes: 5, memory: INITIAL_MEMORY,
   });
-  check("short entry triggers below the level", shortEntered.memory.state === "entered");
+  check("a short below its entry is not filled", shortAbove.memory.state === "waiting");
   const shortAdd = advancePlan({
     direction: "short", plan: shortPlan, price: 1975, priceAgeMinutes: 5, memory: shortEntered.memory,
   });
@@ -273,6 +295,13 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   check("the snapshot is written back every sweep", route.includes("tracked,"));
   check("the journal records the tracked plan, not the newest analysis",
     route.includes("direction: tracked.direction, grade: tracked.grade"));
+  // 810-minute-old quotes "filled" and "took profit on" a position three
+  // times in one afternoon; a frozen feed must observe, not judge.
+  check("a frozen quote judges nothing", route.includes("MAX_QUOTE_AGE_MINUTES"));
+  // And a save the database accepts then forgets must not keep its mouth:
+  // the state is read back, and an unreadable save is an unsaved one.
+  check("the saved state is read back before anything is announced",
+    route.includes("狀態寫入後立刻讀不回"));
 
   const schema = readFileSync("lib/db/schema.ts", "utf8");
   check("the schema migrates the tracked column",

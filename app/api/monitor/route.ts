@@ -169,6 +169,23 @@ export async function GET(request: Request) {
       const quote = await fetchLatestPrice(meta.yfinanceSymbol, gaps, meta.stooqSymbol, meta.symbol);
       if (!quote) return { symbol: meta.symbol, skipped: "取不到即時報價", notes: gaps };
 
+      // A frozen feed judges nothing. Three identical XAUUSD 進場+停利 pushes
+      // went out on quotes their own footer dated 810, 840 and 870 minutes
+      // old — a price that has not moved in 13 hours cannot fill an entry or
+      // hit a target; it can only replay whatever the levels already implied.
+      // Same 3-hour liveness bound the market-hours gate uses for its quote
+      // witness: past it, this round observes and decides nothing.
+      const MAX_QUOTE_AGE_MINUTES = 180;
+      if (quote.ageMinutes > MAX_QUOTE_AGE_MINUTES) {
+        return {
+          symbol: meta.symbol,
+          priceAgeMinutes: Math.round(quote.ageMinutes),
+          skipped:
+            `報價已 ${Math.round(quote.ageMinutes)} 分鐘未更新（超過 ${MAX_QUOTE_AGE_MINUTES} 分鐘門檻），` +
+            "市場休市或價格來源停更，本輪不判定進出場",
+        };
+      }
+
       const { memory: next, events } = advancePlan({
         direction: tracked.direction,
         plan,
@@ -193,6 +210,19 @@ export async function GET(request: Request) {
           tracked,
           ...next,
         });
+        // The write that lies: a save that throws is already handled below,
+        // but a save the database accepts and then forgets never throws — it
+        // just resets the state machine, and the next sweep replays the same
+        // entered/stop/target push. That exact loop ran three times in an
+        // afternoon. So the save is read back; a state that cannot be re-read
+        // is treated as unsaved, and no-memory-no-mouth applies.
+        const echo = await store.getMonitorState(stateKey);
+        if (echo?.state !== next.state || echo?.tracked?.generatedAt !== tracked.generatedAt) {
+          throw new Error(
+            "狀態寫入後立刻讀不回 —— 資料庫收下了寫入卻沒有留住" +
+              "（最常見原因：資料庫整合替每個部署開新分支，DATABASE_URL 需改為固定分支）",
+          );
+        }
       } catch (err) {
         return {
           symbol: meta.symbol,

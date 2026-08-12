@@ -62,6 +62,24 @@ function reached(direction: "long" | "short", price: number, level: number): boo
   return direction === "long" ? price >= level : price <= level;
 }
 
+/**
+ * A fill, not a breakout.
+ *
+ * The plans' entries are pullback levels — buy the dip at structure, sell the
+ * bounce — so the entry is a limit order: a long fills when price comes *down*
+ * to it, a short when price comes *up* to it. The first cut reused `reached`,
+ * which is profit-side logic (right for add-ons and targets), and so it
+ * "filled" a long the moment price was anywhere ABOVE the entry. Any stale
+ * plan whose levels sat below a risen market instantly booked entry and
+ * take-profit in the same tick at the same price — a fictional winning trade,
+ * pushed to Telegram and written to the journal as a 停利. With fill logic the
+ * same tick cannot do both: a long that fills at-or-below entry cannot
+ * simultaneously be at-or-above a target that sits higher.
+ */
+function entryFilled(direction: "long" | "short", price: number, entry: number): boolean {
+  return direction === "long" ? price <= entry : price >= entry;
+}
+
 function stopBreached(direction: "long" | "short", price: number, stop: number): boolean {
   return direction === "long" ? price <= stop : price >= stop;
 }
@@ -95,7 +113,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
   let activeStop = memory.activeStop ?? plan.stop_loss;
 
   if (state === "waiting") {
-    if (!reached(direction, price, plan.entry)) {
+    if (!entryFilled(direction, price, plan.entry)) {
       return { memory: { state, addOnsFilled, activeStop }, events };
     }
     state = "entered";
