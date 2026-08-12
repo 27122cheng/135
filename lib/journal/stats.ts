@@ -152,6 +152,23 @@ export interface TrackBucket {
   losses: number;
   winRate: number | null;
   avgPnlPct: number | null;
+  /**
+   * 期望值 — the number 勝率 keeps getting mistaken for.
+   *
+   * A 70% win rate losing money and a 40% win rate making it are both
+   * ordinary outcomes; which one you have depends entirely on the payoff
+   * ratio, and a review page that headlines 勝率 without it teaches the
+   * wrong lesson. Expectancy is mean pnl per resolved trade; the breakeven
+   * win rate is the rate this payoff ratio *requires* — a real win rate
+   * above it is profit, below it is loss, whatever the raw percentage
+   * looks like.
+   */
+  avgWinPct: number | null;
+  avgLossPct: number | null;
+  /** avgWin ÷ |avgLoss| — how much a winner pays for each loser's cost. */
+  payoffRatio: number | null;
+  expectancyPct: number | null;
+  breakevenWinRate: number | null;
   /** Newest first, capped — enough to eyeball the streak. */
   recent: Array<{ symbol: string; result: string; pnlPct: number; closedAt: string }>;
 }
@@ -166,9 +183,20 @@ const AUTO = "[自動追蹤]";
 const PAPER = "[參考價位紙上追蹤]";
 
 function bucketOf(label: string, entries: JournalEntry[]): TrackBucket {
-  const wins = entries.filter((e) => e.result === "win").length;
-  const losses = entries.filter((e) => e.result === "loss").length;
+  const winRows = entries.filter((e) => e.result === "win");
+  const lossRows = entries.filter((e) => e.result === "loss");
+  const wins = winRows.length;
+  const losses = lossRows.length;
   const resolved = wins + losses;
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const mean = (rows: JournalEntry[]) =>
+    rows.length > 0 ? rows.reduce((s, e) => s + e.pnl_pct, 0) / rows.length : null;
+  const avgWin = mean(winRows);
+  const avgLoss = mean(lossRows);
+  // Payoff needs both sides observed and a loss that actually cost something —
+  // a zero or positive "average loss" (breakeven exits tagged loss) would put
+  // nonsense in a denominator.
+  const payoff = avgWin !== null && avgLoss !== null && avgLoss < 0 ? avgWin / -avgLoss : null;
   return {
     label,
     trades: entries.length,
@@ -179,6 +207,17 @@ function bucketOf(label: string, entries: JournalEntry[]): TrackBucket {
       entries.length > 0
         ? Math.round((entries.reduce((s, e) => s + e.pnl_pct, 0) / entries.length) * 100) / 100
         : null,
+    avgWinPct: avgWin === null ? null : r2(avgWin),
+    avgLossPct: avgLoss === null ? null : r2(avgLoss),
+    payoffRatio: payoff === null ? null : r2(payoff),
+    expectancyPct:
+      resolved > 0
+        ? r2(([...winRows, ...lossRows].reduce((s, e) => s + e.pnl_pct, 0)) / resolved)
+        : null,
+    // The win rate this payoff ratio needs just to break even:
+    // p·W − (1−p)·L = 0  ⟹  p = L / (W + L)  with W, L as magnitudes.
+    breakevenWinRate:
+      payoff !== null ? Math.round((1 / (1 + payoff)) * 1000) / 10 : null,
     recent: entries.slice(0, 8).map((e) => ({
       symbol: e.symbol,
       result: e.result,

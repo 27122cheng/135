@@ -91,6 +91,10 @@ const INFORMATIONAL_PATTERNS = [
   // They explain a verdict; nothing failed to arrive.
   /訊號強制降級為 no-trade/,
   /干涉：/,
+  // The counter-trend asymmetry explaining its verdict — both the downgrade
+  // and the "held because bias cleared the A+ bar" wording.
+  /逆勢降級：/,
+  /逆勢訊號：/,
 ];
 
 export function isInformational(gap: string): boolean {

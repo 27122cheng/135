@@ -10,10 +10,10 @@ import {
   summariseTags,
   triggeredTags,
 } from "@/lib/journal/interventions";
-import { computeReviewStats } from "@/lib/journal/stats";
-import { gradeSignal } from "@/lib/scoring";
+import { computeReviewStats, computeTrackRecord } from "@/lib/journal/stats";
+import { applyTrendAlignmentGate, gradeSignal } from "@/lib/scoring";
 import type { JournalEntry } from "@/types/journal";
-import type { Grade } from "@/types/signal";
+import type { BiasItem, Grade } from "@/types/signal";
 
 const GRADES: Grade[] = ["no-trade", "C", "B", "A", "A+"];
 const rank = (g: Grade) => GRADES.indexOf(g);
@@ -40,6 +40,37 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
   };
 }
 
+// ── 期望值 — the number 勝率 gets mistaken for ────────────────────
+{
+  const auto = (result: "win" | "loss", pnl: number) =>
+    entry({ result, pnl_pct: pnl, review_note: "[自動追蹤] 停利/停損" });
+
+  // 70% win rate, losing money: seven +0.5% winners, three −2% losers.
+  const losingHighWinRate = computeTrackRecord([
+    ...Array.from({ length: 7 }, () => auto("win", 0.5)),
+    ...Array.from({ length: 3 }, () => auto("loss", -2)),
+  ]).real;
+  check("a 70% win rate is reported", losingHighWinRate.winRate === 70, losingHighWinRate.winRate);
+  check("with its 0.25 payoff ratio", losingHighWinRate.payoffRatio === 0.25, losingHighWinRate.payoffRatio);
+  check("its breakeven bar is 80%", losingHighWinRate.breakevenWinRate === 80, losingHighWinRate.breakevenWinRate);
+  check("and its expectancy is negative",
+    (losingHighWinRate.expectancyPct ?? 0) < 0, losingHighWinRate.expectancyPct);
+
+  // 40% win rate, making money: the mirror case the floors are built around.
+  const winningLowWinRate = computeTrackRecord([
+    ...Array.from({ length: 4 }, () => auto("win", 3)),
+    ...Array.from({ length: 6 }, () => auto("loss", -1)),
+  ]).real;
+  check("a 40% win rate at 3:1 payoff has positive expectancy",
+    (winningLowWinRate.expectancyPct ?? 0) > 0, winningLowWinRate.expectancyPct);
+  check("and a breakeven bar of 25%", winningLowWinRate.breakevenWinRate === 25);
+
+  // No losses observed: a payoff ratio with a missing denominator stays null.
+  const allWins = computeTrackRecord([auto("win", 1), auto("win", 2)]).real;
+  check("all-wins has no payoff ratio", allWins.payoffRatio === null);
+  check("but still has an expectancy", allWins.expectancyPct === 1.5, allWins.expectancyPct);
+}
+
 // ── grade table ───────────────────────────────────────────────────
 {
   // total is always bias + structure in real use, so the triples here are too.
@@ -59,6 +90,37 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
     }
   }
   check("nothing with bias>=6 and structure>0 falls to no-trade", !anyNoTrade);
+
+  // ── 逆勢不對稱 ──
+  // A direction fighting the weight-2 技術面 trend must clear the A+ bias bar
+  // (8) or lose a notch; with-trend and trendless signals are untouched.
+  {
+    const item = (
+      dimension: BiasItem["dimension"],
+      direction: BiasItem["direction"],
+      weight: 0 | 1 | 2,
+    ): BiasItem =>
+      ({ dimension, direction, weight, factor: "f", evidence: "e" }) as BiasItem;
+    const trendShort = [item("技術面", "short", 2), item("基本面", "long", 1)];
+
+    const gated = applyTrendAlignmentGate("A", "long", trendShort, 6);
+    check("a counter-trend A with bias 6 drops to B", gated.grade === "B", gated);
+    check("and the note names the rule", gated.note?.includes("逆勢降級") === true, gated.note);
+
+    const held = applyTrendAlignmentGate("A", "long", trendShort, 8);
+    check("bias 8 keeps its grade against the trend", held.grade === "A");
+    check("but the counter-trend fact is still stated",
+      held.note?.includes("逆勢訊號") === true, held.note);
+
+    check("with-trend signals are untouched",
+      applyTrendAlignmentGate("A", "short", trendShort, 6).grade === "A");
+    check("weight-1 technical items are triggers, not trend",
+      applyTrendAlignmentGate("A", "long", [item("技術面", "short", 1)], 6).grade === "A");
+    check("no technical evidence means no gate",
+      applyTrendAlignmentGate("B", "long", [item("基本面", "short", 2)], 4).grade === "B");
+    check("a counter-trend B drops below the entry floor",
+      applyTrendAlignmentGate("B", "long", trendShort, 4).grade === "C");
+  }
 
   // The A cap is gone: crossing 13 -> 14 no longer steps a grade down.
   check("total 13 grades A", gradeSignal(6, 7, 13) === "A");

@@ -332,7 +332,8 @@ function TrackRecordTable({ record }: { record: TrackRecord }) {
             <th className="py-1 text-right font-normal">筆數</th>
             <th className="py-1 text-right font-normal">勝/敗</th>
             <th className="py-1 text-right font-normal">勝率</th>
-            <th className="py-1 text-right font-normal">平均損益%</th>
+            <th className="py-1 text-right font-normal">盈虧比</th>
+            <th className="py-1 text-right font-normal">期望值%</th>
           </tr>
         </thead>
         <tbody>
@@ -343,23 +344,33 @@ function TrackRecordTable({ record }: { record: TrackRecord }) {
               <td className="py-1.5 text-right font-mono text-neutral-400">
                 {b.wins}/{b.losses}
               </td>
+              {/* 勝率 next to the rate it must beat: a win rate has no meaning
+                  without the payoff ratio's breakeven bar beside it. */}
               <td className="py-1.5 text-right font-mono text-neutral-200">
                 {b.winRate === null ? "—" : `${b.winRate}%`}
+                {b.breakevenWinRate !== null && (
+                  <span className="text-[10px] text-neutral-600"> /需{b.breakevenWinRate}%</span>
+                )}
+              </td>
+              <td className="py-1.5 text-right font-mono text-neutral-400">
+                {b.payoffRatio === null ? "—" : b.payoffRatio}
               </td>
               <td
                 className={`py-1.5 text-right font-mono ${
-                  (b.avgPnlPct ?? 0) > 0 ? "text-emerald-400" : (b.avgPnlPct ?? 0) < 0 ? "text-red-400" : "text-neutral-400"
+                  (b.expectancyPct ?? 0) > 0 ? "text-emerald-400" : (b.expectancyPct ?? 0) < 0 ? "text-red-400" : "text-neutral-400"
                 }`}
               >
-                {b.avgPnlPct === null ? "—" : b.avgPnlPct}
+                {b.expectancyPct === null ? "—" : b.expectancyPct}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
       <p className="text-[10px] leading-relaxed text-neutral-600">
-        紙上追蹤假設在價位上完美成交、無滑價點差，勝率讀作上限。若紙上長期贏過正式訊號，
-        代表進場門檻把贏家擋掉了，值得回頭調整；若輸，代表門檻有在賺它的位置。
+        <span className="text-neutral-400">期望值</span>＝每筆結算交易的平均損益，才是「有沒有賺」的答案；
+        勝率旁的「需 x%」是這個盈虧比損益兩平所需的勝率——實際勝率高於它才是正期望，
+        低於它就算勝率 70% 也在虧。紙上追蹤假設完美成交、無滑價點差，讀作上限；
+        若紙上長期贏過正式訊號，代表進場門檻把贏家擋掉了，值得回頭調整；若輸，代表門檻有在賺它的位置。
       </p>
     </div>
   );

@@ -84,6 +84,56 @@ export function gradeSignal(
   return "no-trade";
 }
 
+/**
+ * 逆勢不對稱 — a counter-trend signal must pay a higher evidence bar.
+ *
+ * `pickDirection` is a flat weighted vote, so a direction fighting the D1/W1
+ * trend costs exactly as much as one riding it: five weight-1 macro items can
+ * outvote the weight-2 trend evidence and grade an A against the tide. Every
+ * part of trading logic this system encodes says those are not the same trade
+ * — the swing variant already refuses to exist without the D1 trend on side,
+ * and the conditioned backtest's strongest tier *is* trend agreement.
+ *
+ * The rule: the higher-timeframe trend is the net of the weight-2 技術面
+ * items (the D1/W1 trend factors — weight-1 technical items are triggers and
+ * patterns, not trend). When the chosen direction opposes that net, the bias
+ * score must reach the A+ bar (8) for the grade to stand; otherwise the grade
+ * steps down one notch. Not to no-trade outright — counter-trend setups with
+ * overwhelming evidence are real — but a B-grade counter-trend trade drops to
+ * C, below MIN_ENTRY_GRADE, which is the point.
+ */
+export function applyTrendAlignmentGate(
+  grade: Grade,
+  direction: "long" | "short",
+  biasItems: BiasItem[],
+  biasScore: number,
+): { grade: Grade; note: string | null } {
+  const trendNet = biasItems.reduce((sum, i) => {
+    if (i.dimension !== "技術面" || i.weight < 2) return sum;
+    if (i.direction === "long") return sum + i.weight;
+    if (i.direction === "short") return sum - i.weight;
+    return sum;
+  }, 0);
+  if (trendNet === 0) return { grade, note: null };
+  const trend: "long" | "short" = trendNet > 0 ? "long" : "short";
+  if (trend === direction) return { grade, note: null };
+  if (biasScore >= 8) {
+    return {
+      grade,
+      note: `逆勢訊號：D1/W1 技術面淨趨勢偏${trend === "long" ? "多" : "空"}而訊號做${direction === "long" ? "多" : "空"}，但偏向分 ${biasScore} 已達 A+ 門檻（8），評等維持`,
+    };
+  }
+  const order: Grade[] = ["no-trade", "C", "B", "A", "A+"];
+  const stepped = order[Math.max(0, order.indexOf(grade) - 1)];
+  if (stepped === grade) return { grade, note: null };
+  return {
+    grade: stepped,
+    note:
+      `逆勢降級：D1/W1 技術面淨趨勢偏${trend === "long" ? "多" : "空"}而訊號做${direction === "long" ? "多" : "空"}` +
+      `，逆勢單的偏向分需 ≥8（A+ 門檻）才維持原評等，目前僅 ${biasScore}，評等由 ${grade} 降為 ${stepped}`,
+  };
+}
+
 export interface ScoreResult {
   biasScore: number;
   entryStructureScore: number;

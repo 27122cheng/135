@@ -25,7 +25,7 @@ import {
 } from "./analysis/trade-plan";
 import { buildAddOns } from "./analysis/add-on";
 import { CONFIDENT_ENTRY_MIN, clearsEntryBar, planConfidence } from "./analysis/confidence";
-import { gradeAllowsEntry, scoreSignal } from "./scoring";
+import { applyTrendAlignmentGate, gradeAllowsEntry, scoreSignal } from "./scoring";
 import { collapseCascades } from "./data-gaps";
 import { buildStopLoss, buildTakeProfits } from "./entry-exit";
 import { getSignalStore } from "./db";
@@ -451,6 +451,15 @@ async function buildSignalForSymbol(
     const why = "path_obstacles 裡沒有任何在進場價前方、方向正確的障礙";
     gaps.push(`找不到方向正確的停利價位，訊號強制降級為 no-trade（${why}）`);
     downgrades.push(`無法錨定停利：${why}`);
+  }
+
+  // 逆勢不對稱 — part of scoring policy, not a Stage 3 intervention, so it
+  // lands before the baseline the interventions are clamped against.
+  const trendGate = applyTrendAlignmentGate(grade, direction, biasItems, score.biasScore);
+  if (trendGate.note) gaps.push(trendGate.note);
+  if (trendGate.grade !== grade) {
+    downgrades.push(trendGate.note!);
+    grade = trendGate.grade;
   }
 
   // ── Stage 3 干涉 ────────────────────────────────────────────────
