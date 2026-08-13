@@ -58,7 +58,18 @@ export function explain(err: unknown): Error {
 }
 
 export function postgresStore(connectionString: string): SignalStore {
-  const sql = neon(connectionString);
+  // `cache: "no-store"` is load-bearing, not hygiene. The driver issues every
+  // query as a fetch() POST, and on Vercel the platform's Data Cache — which
+  // persists ACROSS deployments — was capturing those responses. Writes carry
+  // unique parameters, so their requests never hit the cache and always
+  // reached the database; reads are byte-identical SQL every time, so after
+  // one execution they were replayed from cache forever. That asymmetry
+  // produced two days of "impossible" behaviour: INSERTs committing with
+  // RETURNING receipts while the very next SELECT saw a world frozen at the
+  // moment the cache entry was first filled — surviving redeploys, pooler
+  // bypasses and read-back retries alike. The smoking gun: nine separate
+  // scans quoting a database self-description identical to the microsecond.
+  const sql = neon(connectionString, { fetchOptions: { cache: "no-store" } });
 
   return {
     kind: "postgres",

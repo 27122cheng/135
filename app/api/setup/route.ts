@@ -29,8 +29,12 @@ function connection(): string | null {
   return url ? directNeonUrl(url) : null;
 }
 
+/** Same no-store as the store: a cached information_schema read would report
+ *  tables that were just created as still missing (or the reverse) forever. */
+const NO_CACHE = { fetchOptions: { cache: "no-store" as const } };
+
 async function existingTables(url: string): Promise<string[]> {
-  const sql = neon(url);
+  const sql = neon(url, NO_CACHE);
   const rows = (await sql`
     select table_name from information_schema.tables
     where table_schema = 'public' and table_name = any(${REQUIRED_TABLES as unknown as string[]})
@@ -90,7 +94,7 @@ export async function POST(request: Request) {
   // idempotent, so the worst an unauthenticated stranger can do is run a
   // no-op; the worst the lock did was make migrations unreachable.
 
-  const sql = neon(url);
+  const sql = neon(url, NO_CACHE);
   const statements = schemaStatements();
   const results: Array<{ statement: string; ok: boolean; error?: string }> = [];
 

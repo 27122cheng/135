@@ -105,4 +105,20 @@ import { parseUserKeyHeader } from "@/lib/api-keys";
     directNeonUrl("not a url") === "not a url");
 }
 
+// ── the driver must opt out of the platform fetch cache ───────────
+//
+// The neon driver queries via fetch() POSTs. Vercel's Data Cache captured
+// those responses and replayed them across requests AND deployments: writes
+// (unique params) always reached the database, reads (identical SQL) froze at
+// their first execution — two days of committed INSERTs invisible to every
+// SELECT. Every neon() instantiation must therefore pass cache: "no-store".
+{
+  const store = readFileSync(join(__dirname, "..", "lib", "db", "postgres-store.ts"), "utf8");
+  const setup = readFileSync(join(__dirname, "..", "app", "api", "setup", "route.ts"), "utf8");
+  check("the signal store's driver disables the fetch cache",
+    /neon\(connectionString,\s*\{\s*fetchOptions:\s*\{\s*cache:\s*"no-store"/.test(store));
+  check("the schema-setup driver disables it too",
+    setup.includes('cache: "no-store"') && !/neon\((url|connectionString)\)[^,]/.test(setup));
+}
+
 report("db setup errors");
