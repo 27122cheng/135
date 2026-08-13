@@ -229,7 +229,17 @@ export async function storeScan(
   // writes — "couldn't verify" must not masquerade as "lost".
   let lost = false;
   if (errors.length === 0) {
-    const missing = await readBackMissing(store, signal).catch(() => [] as string[]);
+    let missing = await readBackMissing(store, signal).catch(() => [] as string[]);
+    if (missing.length > 0) {
+      // One beat, then one re-check. The live database proved this necessary:
+      // a scan's immediate read-back reported both tables missing the new row
+      // while the snapshot query a moment later found it — with counts and a
+      // newest_signal stamped the same second. Neon's HTTP path can serve a
+      // read a beat behind a commit; a verifier that won't wait one beat
+      // reports healthy storage as data loss.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      missing = await readBackMissing(store, signal).catch(() => [] as string[]);
+    }
     if (missing.length > 0) {
       lost = missing.length === 2;
       // The database's own account of itself, taken in the same breath as the

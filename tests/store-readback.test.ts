@@ -102,6 +102,25 @@ async function suite() {
       r.storeError?.includes("latest_signal") === true, r.storeError);
   }
 
+  // ── a read that lags one beat behind the commit is not a loss ─────
+  //
+  // The live database produced exactly this: the immediate read-back missed
+  // the new row while a query a moment later found it. The verifier waits one
+  // beat and re-checks before crying data loss.
+  {
+    const store = fakeStore({});
+    let calls = 0;
+    const realLatest = store.latestPerSymbol.bind(store);
+    store.latestPerSymbol = async () => {
+      calls += 1;
+      if (calls === 1) return [];
+      return realLatest();
+    };
+    const r = await storeScan(signal(), store);
+    check("a lagging read clears on the re-check", r.storeError === null, r.storeError);
+    check("and the write counts as stored", r.stored === true);
+  }
+
   // ── a throwing write keeps its own error ──────────────────────────
   {
     const r = await storeScan(signal(), fakeStore({ throwOnSave: true }));

@@ -215,11 +215,19 @@ export async function GET(request: Request) {
         // just resets the state machine, and the next sweep replays the same
         // entered/stop/target push. That exact loop ran three times in an
         // afternoon. So the save is read back; a state that cannot be re-read
-        // is treated as unsaved, and no-memory-no-mouth applies.
-        const echo = await store.getMonitorState(stateKey);
-        if (echo?.state !== next.state || echo?.tracked?.generatedAt !== tracked.generatedAt) {
+        // is treated as unsaved, and no-memory-no-mouth applies. One beat of
+        // patience before the verdict — Neon's HTTP reads can trail a commit
+        // by a moment, and an instant re-read reported healthy saves as lost.
+        const matches = (echo: MonitorRow | null) =>
+          echo?.state === next.state && echo?.tracked?.generatedAt === tracked.generatedAt;
+        let echo = await store.getMonitorState(stateKey);
+        if (!matches(echo)) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          echo = await store.getMonitorState(stateKey);
+        }
+        if (!matches(echo)) {
           throw new Error(
-            "狀態寫入後立刻讀不回 —— 資料庫收下了寫入卻沒有留住" +
+            "狀態寫入後重讀兩次都讀不回 —— 資料庫收下了寫入卻沒有留住" +
               "（最常見原因：資料庫整合替每個部署開新分支，DATABASE_URL 需改為固定分支）",
           );
         }

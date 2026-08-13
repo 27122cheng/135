@@ -129,7 +129,12 @@ export async function setSetting(key: SettingKey, value: string): Promise<void> 
   // branch failure). A save that cannot be read back is not a save, and the
   // settings page's red 寫進排程失敗 path is exactly where this belongs.
   try {
-    const echo = await store.listSettings();
+    let echo = await store.listSettings();
+    if (echo.get(key)?.trim() === value.trim()) return;
+    // Neon's HTTP reads can trail a commit by a beat; give the save one
+    // re-check before calling it lost, or a healthy save shows a red error.
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    echo = await store.listSettings();
     if (echo.get(key)?.trim() === value.trim()) return;
   } catch {
     // A read-back that itself fails proves nothing about the write.

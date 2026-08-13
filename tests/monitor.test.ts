@@ -301,7 +301,7 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   // And a save the database accepts then forgets must not keep its mouth:
   // the state is read back, and an unreadable save is an unsaved one.
   check("the saved state is read back before anything is announced",
-    route.includes("狀態寫入後立刻讀不回"));
+    route.includes("狀態寫入後重讀兩次都讀不回"));
 
   const schema = readFileSync("lib/db/schema.ts", "utf8");
   check("the schema migrates the tracked column",
