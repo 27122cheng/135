@@ -94,6 +94,14 @@ export interface InterventionEffects {
   noTradeOnFundamentalConflict: boolean;
   /** S8: force no-trade when COT is at an extreme opposing the signal. */
   noTradeOnPositioningConflict: boolean;
+  /**
+   * 實績校準 — extra hit rate demanded on top of the 70% day floor when the
+   * realized win rate of auto-tracked real entries falls well short of what
+   * the backtest floor promised. Not tied to any S-tag: the trigger is the
+   * scoreboard itself. Only ever ≥ 0, and it releases on its own — a window
+   * whose realized rate recovers computes back to zero next scan.
+   */
+  dayHitRateFloorBump: number;
   /** For display: what was applied and why. */
   applied: AppliedIntervention[];
 }
@@ -108,6 +116,7 @@ export const DEFAULT_EFFECTS: InterventionEffects = {
   downgradeOutsideMainSession: false,
   noTradeOnFundamentalConflict: false,
   noTradeOnPositioningConflict: false,
+  dayHitRateFloorBump: 0,
   applied: [],
 };
 
@@ -175,6 +184,36 @@ export function computeInterventions(history: JournalEntry[]): InterventionEffec
         effects.noTradeOnPositioningConflict = true;
         record("COT 處於極端且方向相反時，直接 no-trade");
         break;
+    }
+  }
+
+  // ── 實績校準 ─────────────────────────────────────────────────────
+  // Every real entry passed a backtest floor promising ≥70% — so the
+  // realized win rate of those same entries is a direct audit of the
+  // backtest's honesty. When enough have resolved and the audit fails, new
+  // entries must clear a higher bar until the scoreboard recovers. Real
+  // auto-tracked entries only: paper fills are assumed perfect and manual
+  // entries never claimed the floor.
+  const real = window.filter(
+    (e) =>
+      e.review_note?.includes("[自動追蹤]") &&
+      !e.review_note.includes("[參考價位紙上追蹤]") &&
+      (e.result === "win" || e.result === "loss"),
+  );
+  if (real.length >= 10) {
+    const wins = real.filter((e) => e.result === "win").length;
+    const realized = wins / real.length;
+    const bump = realized < 0.45 ? 0.1 : realized < 0.55 ? 0.05 : 0;
+    if (bump > 0) {
+      effects.dayHitRateFloorBump = bump;
+      effects.applied.push({
+        tag: null,
+        effect: `當沖回測勝率門檻 +${Math.round(bump * 100)} 個百分點（70% → ${Math.round((0.7 + bump) * 100)}%）`,
+        evidence:
+          `實績校準：最近 ${real.length} 筆正式進場實際勝率僅 ${Math.round(realized * 100)}%，` +
+          `遠低於回測門檻承諾的 70% —— 回測偏樂觀時，新進場需要更高的安全邊際`,
+        triggered_by: real.slice(0, 5).map((e) => e.closed_at.slice(0, 10)),
+      });
     }
   }
 

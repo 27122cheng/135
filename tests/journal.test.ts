@@ -71,6 +71,49 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
   check("but still has an expectancy", allWins.expectancyPct === 1.5, allWins.expectancyPct);
 }
 
+// ── 實績校準 — realized outcomes audit the backtest floor ─────────
+{
+  const real = (result: "win" | "loss") =>
+    entry({ result, pnl_pct: result === "win" ? 1.5 : -1, review_note: "[自動追蹤] x" });
+  const paper = (result: "win" | "loss") =>
+    entry({ result, pnl_pct: 1, review_note: "[自動追蹤][參考價位紙上追蹤] x" });
+
+  // 4 wins / 8 losses = 33% realized against a 70% promise → +10 points.
+  const bad = computeInterventions([
+    ...Array.from({ length: 4 }, () => real("win")),
+    ...Array.from({ length: 8 }, () => real("loss")),
+  ]);
+  check("a failing audit raises the day floor", bad.dayHitRateFloorBump === 0.1, bad.dayHitRateFloorBump);
+  check("and explains itself with the numbers",
+    bad.applied.some((a) => a.effect.includes("+10 個百分點") && a.evidence.includes("33%")),
+    bad.applied.map((a) => a.effect));
+
+  // 6/12 = 50% → the milder +5.
+  const mediocre = computeInterventions([
+    ...Array.from({ length: 6 }, () => real("win")),
+    ...Array.from({ length: 6 }, () => real("loss")),
+  ]);
+  check("a mediocre audit raises it less", mediocre.dayHitRateFloorBump === 0.05);
+
+  // 8/12 = 67% — close enough to the promise; no bump.
+  const fine = computeInterventions([
+    ...Array.from({ length: 8 }, () => real("win")),
+    ...Array.from({ length: 4 }, () => real("loss")),
+  ]);
+  check("a healthy audit leaves the floor alone", fine.dayHitRateFloorBump === 0);
+
+  // Under 10 resolved, the sample is noise and must not move the floor.
+  const thin = computeInterventions([
+    ...Array.from({ length: 3 }, () => real("win")),
+    ...Array.from({ length: 5 }, () => real("loss")),
+  ]);
+  check("a thin sample does not calibrate", thin.dayHitRateFloorBump === 0);
+
+  // Paper fills are assumed perfect and never claimed the floor — excluded.
+  const paperOnly = computeInterventions(Array.from({ length: 12 }, () => paper("loss")));
+  check("paper tracking cannot move the real floor", paperOnly.dayHitRateFloorBump === 0);
+}
+
 // ── grade table ───────────────────────────────────────────────────
 {
   // total is always bias + structure in real use, so the triples here are too.

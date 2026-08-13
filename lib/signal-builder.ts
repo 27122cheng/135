@@ -589,6 +589,10 @@ async function buildSignalForSymbol(
       // Lets the geometry search reject a stop inside the noise and a target
       // the 20-bar horizon cannot reach — neither of which a ratio can express.
       atr: atrD1,
+      // 實績校準：realized outcomes auditing the backtest's promises. When
+      // the journal says the 70% floor has been delivering far less, the
+      // floor rises until the scoreboard recovers.
+      dayHitRateFloorBump: effects.dayHitRateFloorBump,
     },
     gaps,
   );

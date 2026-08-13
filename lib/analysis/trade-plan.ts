@@ -42,6 +42,22 @@ export interface TradePlanInput {
    * constraint, and a ratio cannot tell a stop inside the noise from a sane one.
    */
   atr?: number | null;
+  /**
+   * 校準加碼 — extra hit-rate demanded on top of the 70% day floor, from the
+   * intervention engine's comparison of realized outcomes against what the
+   * floor promised. A backtest that says 70% while the journal says 45% is an
+   * optimistic backtest, and the honest response is to demand more margin
+   * from it, not to keep trusting the number. Only ever ≥ 0 — the floors the
+   * operator set are minimums, never relaxed from here.
+   */
+  dayHitRateFloorBump?: number;
+}
+
+/** The day profile with the calibration bump applied, capped below certainty. */
+export function effectiveDayProfile(bump: number | undefined): HorizonProfile {
+  const extra = Math.max(0, Math.min(0.2, bump ?? 0));
+  if (extra === 0) return DAY_PROFILE;
+  return { ...DAY_PROFILE, minHitRate: Math.min(0.9, DAY_PROFILE.minHitRate + extra) };
 }
 
 function round(n: number): number {
@@ -543,7 +559,8 @@ function fallbackPlan(input: TradePlanInput, why: string | null): TradePlan {
     );
   }
 
-  const picked = chooseGeometry(input);
+  const dayProfile = effectiveDayProfile(input.dayHitRateFloorBump);
+  const picked = chooseGeometry(input, dayProfile);
   if (!picked) {
     // Either there were no candidates at all, or every combination lost on
     // geometry. decideStance already refuses the second case before the AI is
@@ -561,14 +578,19 @@ function fallbackPlan(input: TradePlanInput, why: string | null): TradePlan {
   }
 
   // 未達門檻一律觀望 — the operator's rule, verbatim. A best-available combo
-  // below the demonstrated 70% floor (or one whose floor cannot be verified)
-  // is shown as the reason for waiting, never shipped as a trade.
+  // below the demonstrated floor (or one whose floor cannot be verified) is
+  // shown as the reason for waiting, never shipped as a trade. The floor
+  // itself may sit above 70% when the calibration bump is active.
   if (!picked.meetsFloor) {
     const hit = picked.combo.backtest?.hitRate;
+    const bumped =
+      dayProfile.minHitRate > DAY_PROFILE.minHitRate
+        ? `（含實績校準 +${Math.round((dayProfile.minHitRate - DAY_PROFILE.minHitRate) * 100)} 個百分點）`
+        : "";
     return waitPlan(
       `最佳組合${hit != null ? `回測勝率僅 ${Math.round(hit * 100)}%` : "的勝率無法以足夠樣本驗證"}，` +
-        `未達${DAY_PROFILE.label}門檻 ${Math.round(DAY_PROFILE.minHitRate * 100)}% —— 規則：未達勝率門檻一律觀望。${picked.basis}`,
-      `等待市場結構出現回測勝率 ≥${Math.round(DAY_PROFILE.minHitRate * 100)}% 且風報比 ≥1:${MIN_RISK_REWARD} 的組合。`,
+        `未達${dayProfile.label}門檻 ${Math.round(dayProfile.minHitRate * 100)}%${bumped} —— 規則：未達勝率門檻一律觀望。${picked.basis}`,
+      `等待市場結構出現回測勝率 ≥${Math.round(dayProfile.minHitRate * 100)}% 且風報比 ≥1:${MIN_RISK_REWARD} 的組合。`,
       "fallback",
       why,
     );
@@ -748,14 +770,15 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
       ? backtestPlanGeometry(input.direction, entry.price, sl.price, tp.price, input.candles, rr)
       : null;
   const aiHit = aiBacktest?.hitRate ?? null;
+  const aiDayProfile = effectiveDayProfile(input.dayHitRateFloorBump);
   if (
     aiBacktest === null ||
     aiBacktest.resolved < MIN_RESOLVED_FOR_RANKING ||
-    (aiHit ?? 0) < DAY_PROFILE.minHitRate
+    (aiHit ?? 0) < aiDayProfile.minHitRate
   ) {
     gaps.push(
       `AI 選出的組合回測勝率${aiHit != null ? `僅 ${Math.round(aiHit * 100)}%` : "無法驗證"}，` +
-        `未達 ${Math.round(DAY_PROFILE.minHitRate * 100)}% 門檻，已改用預設規則`,
+        `未達 ${Math.round(aiDayProfile.minHitRate * 100)}% 門檻，已改用預設規則`,
     );
     return fallbackPlan(input, "AI 選出的組合未達勝率門檻，已改用預設規則");
   }
