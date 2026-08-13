@@ -10,6 +10,25 @@ export function ema(values: number[], period: number): number[] {
   return out;
 }
 
+/**
+ * Kaufman efficiency ratio — how much of the path went somewhere.
+ *
+ * |net change over n bars| ÷ Σ|bar-to-bar changes|. 1.0 is a straight line,
+ * 0 is a round trip. This is the trend-*quality* measure the vote table was
+ * missing: an EMA stack and a HH/HL pair look identical in a grinding trend
+ * and in a whipsaw that happens to end higher, and only the denominator
+ * knows the difference. Thresholds live at the call site, named.
+ */
+export function efficiencyRatio(values: number[], period = 20): number | null {
+  if (values.length < period + 1) return null;
+  const slice = values.slice(values.length - (period + 1));
+  const net = Math.abs(slice[slice.length - 1] - slice[0]);
+  let path = 0;
+  for (let i = 1; i < slice.length; i++) path += Math.abs(slice[i] - slice[i - 1]);
+  if (path === 0) return null;
+  return net / path;
+}
+
 export function sma(values: number[], period: number): number | null {
   if (values.length < period) return null;
   const slice = values.slice(values.length - period);

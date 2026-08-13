@@ -1,6 +1,7 @@
 import type { BiasItem, EntryStructure, PathObstacle, Timeframe } from "@/types/signal";
 import type { Candle } from "../data-sources/ohlcv";
-import { ema, findSwingPoints, macd, rsi, strengthFromTouches, countTouches } from "./indicators";
+import { efficiencyRatio, ema, findSwingPoints, macd, rsi, strengthFromTouches, countTouches } from "./indicators";
+import { candleSignals } from "./candles";
 import { clusterSwings, collectSwings, describeLevel, levelTolerance, type PriceLevel } from "./levels";
 import {
   fibRetracementLevels,
@@ -52,34 +53,63 @@ export function analyzeTechnical(
   if (d1 && d1.length >= 30) {
     const closes = d1.map((c) => c.close);
 
-    // 1) Multi-period structure: HH/HL vs LH/LL from the last two swing highs/lows.
+    // Trend *quality* first, because it conditions the two votes below. An
+    // EMA stack and a HH/HL pair look identical in a grinding trend and in a
+    // whipsaw that happens to end higher; Kaufman's efficiency ratio is the
+    // denominator that knows the difference. In chop, a trend call is worth
+    // one notch less — not silenced (the direction may still be right), just
+    // no longer allowed to claim full conviction. Thresholds: ≥0.35 has been
+    // going somewhere, <0.18 is a round trip in progress.
+    const er = efficiencyRatio(closes, 20);
+    const choppy = er !== null && er < 0.18;
+    const trending = er !== null && er >= 0.35;
+    const trendWeight = (w: 0 | 1 | 2): 0 | 1 | 2 =>
+      choppy ? ((Math.max(0, w - 1) as 0 | 1 | 2)) : w;
+    const chopNote = choppy ? `（盤整環境 ER=${round(er!)}，權重降一級）` : "";
+    if (er !== null) {
+      biasItems.push({
+        dimension: "技術面",
+        factor: `D1 趨勢效率比 ER(20)=${round(er)} —— ${trending ? "趨勢行進中" : choppy ? "盤整（趨勢票已降權）" : "過渡帶"}`,
+        direction: "neutral",
+        weight: 0,
+        evidence: `淨位移 ÷ 路徑總長 = ${round(er)}；≥0.35 視為趨勢、<0.18 視為盤整`,
+        source: "Twelve Data/yfinance D1 收盤價",
+      });
+    }
+
+    // 1) Swing structure, Dow-style — over the last *three* highs and lows,
+    // not two. A single noisy pivot used to flip the whole trend call; now
+    // two consecutive agreeing pairs are a 成熟趨勢 (weight 2) and a single
+    // agreeing pair is a 單段趨勢 (weight 1) — a trend that has only done it
+    // once has only proven it once.
     const swings = findSwingPoints(d1, 2);
     const highs = swings.filter((s) => s.type === "high");
     const lows = swings.filter((s) => s.type === "low");
     if (highs.length >= 2 && lows.length >= 2) {
-      const [h1, h2] = highs.slice(-2);
-      const [l1, l2] = lows.slice(-2);
-      const higherHigh = h2.price > h1.price;
-      const higherLow = l2.price > l1.price;
-      const lowerHigh = h2.price < h1.price;
-      const lowerLow = l2.price < l1.price;
-      if (higherHigh && higherLow) {
+      const hs = highs.slice(-3);
+      const ls = lows.slice(-3);
+      const pair = (a: { price: number }, b: { price: number }) =>
+        b.price > a.price ? 1 : b.price < a.price ? -1 : 0;
+      const latestUp = pair(hs.at(-2)!, hs.at(-1)!) > 0 && pair(ls.at(-2)!, ls.at(-1)!) > 0;
+      const latestDown = pair(hs.at(-2)!, hs.at(-1)!) < 0 && pair(ls.at(-2)!, ls.at(-1)!) < 0;
+      const hasPrevPair = hs.length >= 3 && ls.length >= 3;
+      const prevUp = hasPrevPair && pair(hs[0], hs[1]) > 0 && pair(ls[0], ls[1]) > 0;
+      const prevDown = hasPrevPair && pair(hs[0], hs[1]) < 0 && pair(ls[0], ls[1]) < 0;
+
+      const trail =
+        `高點 ${hs.map((s) => round(s.price)).join("→")}，低點 ${ls.map((s) => round(s.price)).join("→")}`;
+      if (latestUp || latestDown) {
+        const matured = latestUp ? prevUp : prevDown;
+        const baseWeight: 1 | 2 = matured ? 2 : 1;
         biasItems.push({
           dimension: "技術面",
-          factor: `D1 結構 HH/HL：高點 ${round(h1.price)}→${round(h2.price)}，低點 ${round(l1.price)}→${round(l2.price)}`,
-          direction: "long",
-          weight: 2,
-          evidence: `swing high ${round(h1.price)}→${round(h2.price)}, swing low ${round(l1.price)}→${round(l2.price)}`,
-          source: `Twelve Data/yfinance D1 K棒 ${h2.time}`,
-        });
-      } else if (lowerHigh && lowerLow) {
-        biasItems.push({
-          dimension: "技術面",
-          factor: `D1 結構 LH/LL：高點 ${round(h1.price)}→${round(h2.price)}，低點 ${round(l1.price)}→${round(l2.price)}`,
-          direction: "short",
-          weight: 2,
-          evidence: `swing high ${round(h1.price)}→${round(h2.price)}, swing low ${round(l1.price)}→${round(l2.price)}`,
-          source: `Twelve Data/yfinance D1 K棒 ${h2.time}`,
+          factor:
+            `D1 結構 ${latestUp ? "HH/HL" : "LH/LL"}${matured ? "（連兩段同向，成熟趨勢）" : "（僅最近一段，單段趨勢）"}：${trail}` +
+            chopNote,
+          direction: latestUp ? "long" : "short",
+          weight: trendWeight(baseWeight),
+          evidence: trail + (hasPrevPair ? "" : "；僅有兩組擺盪點，無法確認前一段"),
+          source: `Twelve Data/yfinance D1 K棒 ${hs.at(-1)!.time}`,
         });
       } else {
         biasItems.push({
@@ -87,45 +117,73 @@ export function analyzeTechnical(
           factor: "D1 結構混合，未形成明確 HH/HL 或 LH/LL",
           direction: "neutral",
           weight: 0,
-          evidence: `swing high ${round(h1.price)}→${round(h2.price)}, swing low ${round(l1.price)}→${round(l2.price)}`,
-          source: `Twelve Data/yfinance D1 K棒 ${h2.time}`,
+          evidence: trail,
+          source: `Twelve Data/yfinance D1 K棒 ${hs.at(-1)!.time}`,
         });
       }
     } else {
       gaps.push("D1 K棒不足以判斷 HH/HL 結構（需要至少兩組擺盪高低點）");
     }
 
-    // 2) EMA20/50/200 alignment.
+    // 2) EMA alignment, with partial credit and a slope check. The old rule
+    // was all-or-nothing: a market where EMA20 briefly dipped under EMA50 in
+    // an obvious uptrend got no vote at all, identical to genuine disorder.
+    // Now the full stack keeps weight 2, and the coarser reading — price and
+    // EMA50 on the same side of a *sloping* EMA50/EMA200 — still counts for
+    // 1: the primary trend is a coarser fact than the 20-day wiggle.
     if (closes.length >= 200) {
-      const ema20 = ema(closes, 20).at(-1)!;
-      const ema50 = ema(closes, 50).at(-1)!;
+      const ema20s = ema(closes, 20);
+      const ema50s = ema(closes, 50);
+      const ema20 = ema20s.at(-1)!;
+      const ema50 = ema50s.at(-1)!;
       const ema200 = ema(closes, 200).at(-1)!;
       const price = closes.at(-1)!;
+      // Slope over ~two trading weeks; flat EMAs claim no direction.
+      const slope50 = ema50 - ema50s.at(-11)!;
+      const emaEvidence = `EMA20=${round(ema20)}, EMA50=${round(ema50)}, EMA200=${round(ema200)}, EMA50十日斜率=${round(slope50)}`;
       if (price > ema20 && ema20 > ema50 && ema50 > ema200) {
         biasItems.push({
           dimension: "技術面",
-          factor: `D1 EMA 多頭排列：價格${round(price)} > EMA20(${round(ema20)}) > EMA50(${round(ema50)}) > EMA200(${round(ema200)})`,
+          factor: `D1 EMA 多頭排列：價格${round(price)} > EMA20 > EMA50 > EMA200${chopNote}`,
           direction: "long",
-          weight: 2,
-          evidence: `EMA20=${round(ema20)}, EMA50=${round(ema50)}, EMA200=${round(ema200)}`,
+          weight: trendWeight(2),
+          evidence: emaEvidence,
           source: "Twelve Data/yfinance D1 收盤價",
         });
       } else if (price < ema20 && ema20 < ema50 && ema50 < ema200) {
         biasItems.push({
           dimension: "技術面",
-          factor: `D1 EMA 空頭排列：價格${round(price)} < EMA20(${round(ema20)}) < EMA50(${round(ema50)}) < EMA200(${round(ema200)})`,
+          factor: `D1 EMA 空頭排列：價格${round(price)} < EMA20 < EMA50 < EMA200${chopNote}`,
           direction: "short",
-          weight: 2,
-          evidence: `EMA20=${round(ema20)}, EMA50=${round(ema50)}, EMA200=${round(ema200)}`,
+          weight: trendWeight(2),
+          evidence: emaEvidence,
+          source: "Twelve Data/yfinance D1 收盤價",
+        });
+      } else if (price > ema50 && ema50 > ema200 && slope50 > 0) {
+        biasItems.push({
+          dimension: "技術面",
+          factor: `D1 主趨勢偏多（排列未完整）：價格 > EMA50 > EMA200 且 EMA50 上斜，EMA20 糾結中${chopNote}`,
+          direction: "long",
+          weight: trendWeight(1),
+          evidence: emaEvidence,
+          source: "Twelve Data/yfinance D1 收盤價",
+        });
+      } else if (price < ema50 && ema50 < ema200 && slope50 < 0) {
+        biasItems.push({
+          dimension: "技術面",
+          factor: `D1 主趨勢偏空（排列未完整）：價格 < EMA50 < EMA200 且 EMA50 下斜，EMA20 糾結中${chopNote}`,
+          direction: "short",
+          weight: trendWeight(1),
+          evidence: emaEvidence,
           source: "Twelve Data/yfinance D1 收盤價",
         });
       } else {
         biasItems.push({
           dimension: "技術面",
-          factor: "D1 EMA20/50/200 未形成單向排列",
+          factor: "D1 EMA 未形成方向一致的排列（含粗粒度判讀）",
           direction: "neutral",
           weight: 0,
-          evidence: `EMA20=${round(ema20)}, EMA50=${round(ema50)}, EMA200=${round(ema200)}`,
+          evidence: emaEvidence,
           source: "Twelve Data/yfinance D1 收盤價",
         });
       }
@@ -203,6 +261,54 @@ export function analyzeTechnical(
     atrD1 = null; // computed by caller via indicators.atr on raw D1 candles (kept out of this module for cache reuse)
   } else {
     gaps.push("D1 K棒不足（需 ≥30 根）以進行技術面分析");
+  }
+
+  // W1 anchor — the timeframe above must get a voice, or "higher timeframe
+  // first" is a slogan the vote table doesn't implement. One coarse reading:
+  // price vs W1 EMA20 AND the latest weekly swing pair agreeing = weight 1;
+  // anything mixed stays a stated, non-voting fact.
+  const w1 = candlesByTf.W1;
+  if (w1 && w1.length >= 25) {
+    const closesW = w1.map((c) => c.close);
+    const emaW20 = ema(closesW, 20).at(-1)!;
+    const priceW = closesW.at(-1)!;
+    const swingsW = findSwingPoints(w1, 2);
+    const highsW = swingsW.filter((s) => s.type === "high").slice(-2);
+    const lowsW = swingsW.filter((s) => s.type === "low").slice(-2);
+    if (highsW.length === 2 && lowsW.length === 2) {
+      const upW = highsW[1].price > highsW[0].price && lowsW[1].price > lowsW[0].price;
+      const downW = highsW[1].price < highsW[0].price && lowsW[1].price < lowsW[0].price;
+      const evidenceW =
+        `W1 收盤 ${round(priceW)} vs EMA20 ${round(emaW20)}；週線高點 ${round(highsW[0].price)}→${round(highsW[1].price)}、低點 ${round(lowsW[0].price)}→${round(lowsW[1].price)}`;
+      if (upW && priceW > emaW20) {
+        biasItems.push({
+          dimension: "技術面",
+          factor: "W1 週線偏多：價格在週線 EMA20 之上且週線結構 HH/HL",
+          direction: "long",
+          weight: 1,
+          evidence: evidenceW,
+          source: `Twelve Data/yfinance W1 K棒 ${highsW[1].time}`,
+        });
+      } else if (downW && priceW < emaW20) {
+        biasItems.push({
+          dimension: "技術面",
+          factor: "W1 週線偏空：價格在週線 EMA20 之下且週線結構 LH/LL",
+          direction: "short",
+          weight: 1,
+          evidence: evidenceW,
+          source: `Twelve Data/yfinance W1 K棒 ${highsW[1].time}`,
+        });
+      } else {
+        biasItems.push({
+          dimension: "技術面",
+          factor: "W1 週線方向不明（EMA 位置與週線結構未同向）",
+          direction: "neutral",
+          weight: 0,
+          evidence: evidenceW,
+          source: `Twelve Data/yfinance W1 K棒 ${highsW[1].time}`,
+        });
+      }
+    }
   }
 
   // Structures come from *clustered* levels rather than raw swings: swings a
@@ -303,6 +409,14 @@ export function analyzeTechnical(
       strength: level.strength,
     });
   }
+
+  // 裸K反轉訊號 — after the structures, because a candle shape only votes
+  // when its wick actually tested one of them. D1 for the primary trend
+  // read, H4 for the day-trade trigger; each contributes at most one item.
+  biasItems.push(
+    ...candleSignals("D1", d1, atrForLevels, entryStructures),
+    ...candleSignals("H4", candlesByTf.H4, atrForLevels, entryStructures),
+  );
 
   return { biasItems, entryStructures, pathObstacles, atrD1 };
 }
