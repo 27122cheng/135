@@ -156,6 +156,23 @@ export function postgresStore(connectionString: string): SignalStore {
       }
     },
 
+    async prune(): Promise<{ signals: number; cache: number }> {
+      try {
+        // `returning` so the counts are real, not guessed. Interval literals,
+        // not JS dates: the database's clock decides, the same clock that
+        // stamped the rows.
+        const oldSignals = (await sql`
+          delete from signals where generated_at < now() - interval '14 days' returning id
+        `) as unknown as unknown[];
+        const oldCache = (await sql`
+          delete from source_cache where fetched_at < now() - interval '7 days' returning cache_key
+        `) as unknown as unknown[];
+        return { signals: oldSignals.length, cache: oldCache.length };
+      } catch (err) {
+        throw explain(err);
+      }
+    },
+
     async snapshot(): Promise<Record<string, unknown>> {
       const rows = (await sql`
         select current_database() as db, current_user as role, now()::text as db_now,

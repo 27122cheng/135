@@ -3,14 +3,15 @@ import type { BiasItem } from "@/types/signal";
 /**
  * 時間與事件因子 — the calendar effects a chart cannot see.
  *
- * Everything here is **deterministic**: derivable from the clock alone, with
- * no API and no key. That is the boundary on purpose. NFP is always the first
- * Friday's 12:30 UTC; the London and New York opens are fixed; the futures
- * maintenance hour and the weekend are fixed; month-end is arithmetic. FOMC
- * decision dates, CPI dates and earnings are *not* derivable — they come from
- * the Finnhub calendar when a key is set and from the release table after the
- * fact (lib/analysis/data-release.ts), and this module does not guess at
- * them: a wrong "FOMC today" would be worse than none.
+ * Everything here is **deterministic**: derivable from the clock alone or
+ * from a schedule published far in advance, with no API and no key. NFP is
+ * always the first Friday's 12:30 UTC; the London and New York opens are
+ * fixed; the futures maintenance hour and the weekend are fixed; month-end is
+ * arithmetic; FOMC meeting dates are announced by the Fed more than a year
+ * ahead (see FOMC_2026_DECISIONS). CPI dates and earnings are *not* reliably
+ * derivable — they come from the Finnhub calendar when a key is set and from
+ * the release table after the fact (lib/analysis/data-release.ts), and this
+ * module does not guess at them: a wrong "CPI today" would be worse than none.
  *
  * Everything ships at weight 0 — readings, not votes. "It is NFP day" does
  * not know which way the number lands, so it cannot vote a direction; what it
@@ -38,6 +39,34 @@ function nextNfp(now: Date): Date {
   const thisMonth = nfpTimeFor(now.getUTCFullYear(), now.getUTCMonth());
   if (thisMonth.getTime() >= now.getTime()) return thisMonth;
   return nfpTimeFor(now.getUTCFullYear(), now.getUTCMonth() + 1);
+}
+
+/**
+ * FOMC 2026 decision days — the second day of each scheduled meeting, from
+ * the Fed's published calendar. This is the one exception to "clock-derived
+ * only": the schedule is announced more than a year ahead and does not move
+ * (an unscheduled emergency meeting is exactly the kind of event no calendar
+ * can gate). The statement lands at 14:00 ET — 18:00 UTC during US daylight
+ * saving, 19:00 UTC otherwise — and the same before/after window NFP gets
+ * applies. CPI is deliberately NOT hard-coded: BLS dates wobble within the
+ * month, and a wrong "CPI today" is worse than none; those prints reach the
+ * analysis through the release table when they land.
+ */
+const FOMC_2026_DECISIONS: ReadonlyArray<{ date: string; utcHour: number }> = [
+  { date: "2026-01-28", utcHour: 19 },
+  { date: "2026-03-18", utcHour: 18 },
+  { date: "2026-04-29", utcHour: 18 },
+  { date: "2026-06-17", utcHour: 18 },
+  { date: "2026-07-29", utcHour: 18 },
+  { date: "2026-09-16", utcHour: 18 },
+  { date: "2026-10-28", utcHour: 18 },
+  { date: "2026-12-09", utcHour: 19 },
+];
+
+export function fomcTimes(): Date[] {
+  return FOMC_2026_DECISIONS.map(
+    (m) => new Date(`${m.date}T${String(m.utcHour).padStart(2, "0")}:00:00Z`),
+  );
 }
 
 /** Last weekday (Mon–Fri) of the month containing `d`. */
@@ -96,6 +125,34 @@ export function analyzeTiming(now: Date): TimingResult {
         "timing-nfp",
       ),
     );
+  }
+
+  // ── FOMC：公告日期表（美聯儲提前一年公布）─────────────────────────
+  for (const decision of fomcTimes()) {
+    const hoursTo = (decision.getTime() - now.getTime()) / 3_600_000;
+    if (hoursTo >= 0 && hoursTo <= 24) {
+      highImpact = true;
+      items.push(
+        item(
+          `⚠ FOMC 利率決策約 ${Math.round(hoursTo)} 小時後公布（14:00 ET）`,
+          `決策聲明與記者會是全年波動最大的時段之一，方向常在半小時內反覆兩次；掛單易被雙向掃損`,
+          "timing-fomc",
+        ),
+      );
+      break;
+    }
+    const hoursSince = -hoursTo;
+    if (hoursSince >= 0 && hoursSince <= 3) {
+      highImpact = true;
+      items.push(
+        item(
+          `⚠ FOMC 決策剛公布（${Math.round(hoursSince * 60)} 分鐘前），記者會波動時段`,
+          `聲明後 30 分鐘的第一個方向常被記者會反轉，突破可信度低於平時`,
+          "timing-fomc",
+        ),
+      );
+      break;
+    }
   }
 
   // ── 交易時段 ─────────────────────────────────────────────────────

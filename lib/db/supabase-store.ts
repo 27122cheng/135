@@ -73,6 +73,24 @@ export function supabaseStore(): SignalStore | null {
       if (error) throw new Error(error.message);
     },
 
+    async prune(): Promise<{ signals: number; cache: number }> {
+      const client = getSupabaseServerClient();
+      if (!client) throw new Error("缺少 SUPABASE_SERVICE_ROLE_KEY，無法清理舊資料");
+      const signalCutoff = new Date(Date.now() - 14 * 24 * 3600_000).toISOString();
+      const cacheCutoff = new Date(Date.now() - 7 * 24 * 3600_000).toISOString();
+      const a = await client
+        .from("signals")
+        .delete({ count: "exact" })
+        .lt("generated_at", signalCutoff);
+      if (a.error) throw new Error(a.error.message);
+      const b = await client
+        .from("source_cache")
+        .delete({ count: "exact" })
+        .lt("fetched_at", cacheCutoff);
+      if (b.error) throw new Error(b.error.message);
+      return { signals: a.count ?? 0, cache: b.count ?? 0 };
+    },
+
     async listSignals(filter: HistoryFilter): Promise<SignalRow[]> {
       const client = getSupabaseAnonClient();
       if (!client) throw new Error("缺少 NEXT_PUBLIC_SUPABASE_ANON_KEY，無法讀取 signals");

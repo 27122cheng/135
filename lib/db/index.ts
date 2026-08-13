@@ -51,6 +51,17 @@ export interface SignalStore {
   snapshot?(): Promise<Record<string, unknown>>;
 
   /**
+   * Deletes what the free tier cannot afford to keep: signal rows older than
+   * two weeks and cache rows older than one. Nine symbols writing hourly is
+   * a few hundred rows a day, each carrying full bias items and a narrative
+   * — enough to walk a 0.5GB Neon allowance into a wall in weeks, and a full
+   * database fails writes, which this project has already spent days
+   * diagnosing once. The journal is deliberately untouched: resolved trades
+   * are the track record, and the track record is forever.
+   */
+  prune?(): Promise<{ signals: number; cache: number }>;
+
+  /**
    * Upserts the signal currently in force for a symbol.
    *
    * Separate from `insertSignal` on purpose. That one appends to the history

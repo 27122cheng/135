@@ -15,6 +15,7 @@ import {
   type MonitorMemory,
 } from "@/lib/monitor/plan-state";
 import { recordResolvedPlan } from "@/lib/journal/auto-log";
+import { maybeSendWeeklyDigest } from "@/lib/notify/weekly-digest";
 import type { SignalRow, TradePlan } from "@/types/signal";
 
 /**
@@ -332,11 +333,20 @@ export async function GET(request: Request) {
     releaseError = err instanceof Error ? err.message : String(err);
   }
 
+  // 週結摘要 — piggybacks on the most frequent schedule; its own window and
+  // once-per-week marker live in lib/notify/weekly-digest.ts. A failure here
+  // must not fail the monitoring that just ran.
+  const digest = await maybeSendWeeklyDigest(store, appUrl).catch((err: unknown) => ({
+    sent: false,
+    reason: `週結摘要失敗：${err instanceof Error ? err.message : String(err)}`,
+  }));
+
   return json({
     ranAt: new Date().toISOString(),
     results,
     releases,
     releaseNotes: releaseGaps,
     releaseError,
+    weeklyDigest: digest.sent ? digest.reason : undefined,
   });
 }

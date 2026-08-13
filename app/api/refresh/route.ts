@@ -120,6 +120,12 @@ export async function GET(request: Request) {
   );
   const failed = results.filter((r) => r.status === "error").length;
 
+  // Housekeeping on every call: a delete with nothing to delete costs
+  // milliseconds, and the alternative — a full free-tier database refusing
+  // writes — cost days to diagnose the last time storage misbehaved. Journal
+  // rows are never touched; see the store's prune contract.
+  const pruned = await store.prune?.().catch(() => null);
+
   return json(
     {
       ranAt: new Date().toISOString(),
@@ -128,6 +134,7 @@ export async function GET(request: Request) {
       // board's own `db` field) this catches a database that rotates per
       // deployment — the failure where every write "succeeds" and none survive.
       db: describeStore(),
+      pruned: pruned && (pruned.signals > 0 || pruned.cache > 0) ? pruned : undefined,
       results,
       newReleases: [...new Set(releases.map((f) => `${f.release.label} ${f.period}`))],
       releaseNotes: [...new Set(releaseNotes)],

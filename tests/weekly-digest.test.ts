@@ -1,0 +1,68 @@
+import { check, report } from "./_harness";
+import { buildWeeklyDigest, inSendWindow, isoWeek } from "@/lib/notify/weekly-digest";
+import type { JournalEntry } from "@/types/journal";
+
+/** 週結摘要 — window, dedupe token, and the message itself. */
+
+let seq = 0;
+function entry(over: Partial<JournalEntry> = {}): JournalEntry {
+  seq++;
+  return {
+    id: `id-${seq}`,
+    signal_id: null,
+    symbol: "XAUUSD",
+    direction: "long",
+    grade: "B",
+    entry_price: 2000,
+    exit_price: 1980,
+    result: "loss",
+    pnl_pct: -1,
+    closed_at: "2026-08-12T00:00:00.000Z",
+    stop_reason_tag: "S3",
+    severity: 3,
+    review_note: "[自動追蹤] x",
+    created_at: "2026-08-12T00:00:00.000Z",
+    ...over,
+  } as JournalEntry;
+}
+
+// ── the send window ───────────────────────────────────────────────
+{
+  check("Sunday 22:30 UTC is inside the window",
+    inSendWindow(new Date("2026-08-16T22:30:00Z")));
+  check("Sunday morning is not", !inSendWindow(new Date("2026-08-16T10:00:00Z")));
+  check("Monday is not", !inSendWindow(new Date("2026-08-17T23:00:00Z")));
+}
+
+// ── the dedupe token ──────────────────────────────────────────────
+{
+  check("a week has one label",
+    isoWeek(new Date("2026-08-16T23:00:00Z")) === isoWeek(new Date("2026-08-16T22:05:00Z")));
+  check("the next week has another",
+    isoWeek(new Date("2026-08-16T23:00:00Z")) !== isoWeek(new Date("2026-08-23T23:00:00Z")));
+  check("labels look like ISO weeks", /^\d{4}-W\d{2}$/.test(isoWeek(new Date("2026-08-16T23:00:00Z"))));
+}
+
+// ── the message ───────────────────────────────────────────────────
+{
+  const quiet = buildWeeklyDigest([], "2026-W33");
+  check("a quiet week still reports", quiet.includes("0 筆結算"), quiet);
+  check("and frames standing aside as a result", quiet.includes("觀望也是一種紀錄"));
+
+  const busy = buildWeeklyDigest(
+    [
+      entry({ result: "win", pnl_pct: 1.5 }),
+      entry({ result: "win", pnl_pct: 1.5 }),
+      entry({ result: "loss", pnl_pct: -3, stop_reason_tag: "S3" }),
+      entry({ result: "loss", pnl_pct: -1, stop_reason_tag: "S6" }),
+    ],
+    "2026-W33",
+  );
+  check("names the week", busy.includes("2026-W33"));
+  check("reports the real-signal bucket", busy.includes("正式訊號：4 筆"), busy);
+  check("puts the breakeven bar beside the win rate", busy.includes("損益兩平需"), busy);
+  check("names the costliest stop tag", busy.includes("最痛的停損原因：S3"), busy);
+  check("teaches the reading", busy.includes("正期望"));
+}
+
+report("weekly digest");

@@ -60,6 +60,23 @@ const at = (iso: string) => new Date(iso);
     !lateThursday.items.some((i) => i.factor.includes("週末")));
 }
 
+// ── FOMC (published 2026 calendar) ─────────────────────────────────
+{
+  // 2026-09-16 is a decision day, statement 18:00 UTC (DST).
+  const dayBefore = analyzeTiming(at("2026-09-16T06:00:00Z"));
+  check("12h before an FOMC decision raises the flag",
+    dayBefore.highImpactWithin24h &&
+      dayBefore.items.some((i) => i.factor.includes("FOMC")),
+    dayBefore.items.map((i) => i.factor));
+  const after = analyzeTiming(at("2026-09-16T19:30:00Z"));
+  check("the press-conference window still counts",
+    after.highImpactWithin24h && after.items.some((i) => i.factor.includes("剛公布")),
+    after.items.map((i) => i.factor));
+  const ordinary = analyzeTiming(at("2026-09-10T06:00:00Z"));
+  check("an ordinary day carries no FOMC item",
+    !ordinary.items.some((i) => i.factor.includes("FOMC")));
+}
+
 // ── month-end ──────────────────────────────────────────────────────
 {
   // 2026-08-31 is a Monday.
