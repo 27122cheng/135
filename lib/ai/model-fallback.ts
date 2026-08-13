@@ -43,6 +43,25 @@ export function isModelError(status: number, detail: string): boolean {
   );
 }
 
+/**
+ * Whether a 429 is a *per-model* quota that a sibling model escapes.
+ *
+ * The blanket rule used to be "any 429 aborts the provider", on the theory
+ * that retrying spends the quota being rationed. Live errors disproved half
+ * of it: Gemini meters free requests per model per day ("Quota exceeded …
+ * model: gemini-3.6-flash, limit: 20") and Groq meters tokens per model per
+ * day ("Rate limit reached for model `llama-3.3-70b-versatile` … TPD") — a
+ * different model id has a separate allowance, so walking the candidate list
+ * genuinely helps. Per-*minute* rate limits stay provider-fatal: every model
+ * shares the clock, and three probes in the same minute is spending exactly
+ * what ran out.
+ */
+export function isPerModelQuotaError(status: number, detail: string): boolean {
+  if (status !== 429) return false;
+  if (/per day|per-day|TPD|RPD|daily/i.test(detail)) return true;
+  return /quota|billing/i.test(detail) && !/per min|minute|RPM/i.test(detail);
+}
+
 export function __resetModelMemoryForTests(): void {
   workingModel.clear();
 }

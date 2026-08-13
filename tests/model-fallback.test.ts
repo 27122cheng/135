@@ -1,7 +1,7 @@
 import { check, report, stubFetch } from "./_harness";
 import { __resetCacheForTests } from "@/lib/data-sources/cache";
 import { __resetQuotaForTests } from "@/lib/data-sources/quota";
-import { __resetModelMemoryForTests, isModelError } from "@/lib/ai/model-fallback";
+import { __resetModelMemoryForTests, isModelError, isPerModelQuotaError } from "@/lib/ai/model-fallback";
 import { completeAI, testAIProviders, textSchema } from "@/lib/ai";
 
 /**
@@ -65,14 +65,19 @@ async function main() {
       seen2.length === 1 && !seen2[0].includes("gemini-2.5-flash"), seen2);
   }
 
-  // ── quota errors do not burn the model list ─────────────────────
+  // ── per-minute limits do not burn the model list ──────────────────
+  //
+  // Narrowed from "any 429": daily per-model quotas now hop ids (pinned
+  // below via isPerModelQuotaError), because each model has its own daily
+  // allowance. Per-minute limits are shared across models, so they still
+  // abort straight to the next provider without probing siblings.
   {
     reset();
     process.env.GEMINI_API_KEY = "x";
     process.env.GROQ_API_KEY = "x";
     const seen = stubFetch((url) =>
       url.includes("googleapis")
-        ? { status: 429, json: { error: { message: "quota exceeded" } } }
+        ? { status: 429, json: { error: { message: "Resource exhausted: requests per minute" } } }
         : url.includes("groq")
           ? { status: 200, json: { choices: [{ message: { content: "OK" } }] } }
           : { status: 500, body: "no" },
@@ -116,6 +121,26 @@ async function main() {
     const groq = results.find((r) => r.name === "groq")!;
     check("an unconfigured provider is labelled, not failed",
       !groq.configured && groq.detail === "未設定金鑰", groq);
+  }
+
+  // ── per-model daily quotas hop to the next id ─────────────────────
+  //
+  // Both texts below are verbatim from live 429s. Daily allowances are
+  // metered per model, so a sibling id has its own; per-minute limits are
+  // shared, so hopping would spend what just ran out.
+  {
+    check("gemini's per-model daily quota is hoppable",
+      isPerModelQuotaError(429,
+        "You exceeded your current quota … Quota exceeded for metric: generate_content_free_tier_requests, limit: 20, model: gemini-3.6-flash"));
+    check("groq's per-model TPD is hoppable",
+      isPerModelQuotaError(429,
+        "Rate limit reached for model `llama-3.3-70b-versatile` … on tokens per day (TPD): Limit 100000, Used 98443"));
+    check("a per-minute limit is not",
+      !isPerModelQuotaError(429, "Rate limit reached … tokens per minute (TPM)"));
+    check("a bare 429 with no quota wording is not",
+      !isPerModelQuotaError(429, "Too Many Requests"));
+    check("only 429s qualify",
+      !isPerModelQuotaError(400, "quota exceeded per day"));
   }
 
   report("model fallback");

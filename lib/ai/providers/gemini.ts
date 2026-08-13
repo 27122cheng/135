@@ -1,6 +1,6 @@
 import { getKey } from "@/lib/api-keys";
 import { postJson } from "../http";
-import { isModelError, modelCandidates, rememberModel } from "../model-fallback";
+import { isModelError, isPerModelQuotaError, modelCandidates, rememberModel } from "../model-fallback";
 import { AIProviderError, type AIProvider, type CompleteOptions, type ResponseSchema } from "../provider";
 
 /**
@@ -76,10 +76,12 @@ export function geminiProvider(): AIProvider {
 
         if (!res.ok) {
           const detail = (res.json as GeminiResponse | null)?.error?.message ?? res.detail;
-          // A retired model id walks down the list; anything else (quota,
-          // auth, network) aborts to the next provider — retrying a 429
-          // against three names spends the quota it is out of.
-          if (isModelError(res.status, detail ?? "")) {
+          // A retired model id walks down the list, and so does a per-model
+          // daily quota — Gemini meters free requests per model, so
+          // gemini-3.6-flash being spent (limit 20/day, seen live) says
+          // nothing about gemini-2.5-flash's separate allowance. Per-minute
+          // rate limits still abort the provider: all models share the clock.
+          if (isModelError(res.status, detail ?? "") || isPerModelQuotaError(res.status, detail ?? "")) {
             lastModelError = `${model}: HTTP ${res.status} ${detail}`;
             continue;
           }

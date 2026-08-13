@@ -1,7 +1,7 @@
 import { getKey } from "@/lib/api-keys";
 import type { UserSettableKey } from "@/lib/api-key-names";
 import { postJson } from "../http";
-import { isModelError, modelCandidates, rememberModel } from "../model-fallback";
+import { isModelError, isPerModelQuotaError, modelCandidates, rememberModel } from "../model-fallback";
 import { AIProviderError, type AIProvider, type CompleteOptions, type ResponseSchema } from "../provider";
 
 /**
@@ -61,7 +61,9 @@ export function openAICompatibleProvider(config: OpenAICompatibleConfig): AIProv
 
         if (!res.ok) {
           const detail = (res.json as ChatResponse | null)?.error?.message ?? res.detail;
-          if (isModelError(res.status, detail ?? "")) {
+          // Dead id or a per-model daily quota: either way the *next* id can
+          // succeed where this one cannot. Anything else aborts the provider.
+          if (isModelError(res.status, detail ?? "") || isPerModelQuotaError(res.status, detail ?? "")) {
             lastModelError = `${model}: HTTP ${res.status} ${detail}`;
             continue;
           }
