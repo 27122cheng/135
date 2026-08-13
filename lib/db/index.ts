@@ -42,6 +42,15 @@ export interface SignalStore {
   listSignals(filter: HistoryFilter): Promise<SignalRow[]>;
 
   /**
+   * One-line self-identification for forensics: which database, which role,
+   * what time it thinks it is, how many signal rows it holds and the newest
+   * generated_at. Optional — only the postgres store implements it — and only
+   * read when a write has just failed to round-trip, so the failure report can
+   * quote the database's own account of itself instead of guessing.
+   */
+  snapshot?(): Promise<Record<string, unknown>>;
+
+  /**
    * Upserts the signal currently in force for a symbol.
    *
    * Separate from `insertSignal` on purpose. That one appends to the history

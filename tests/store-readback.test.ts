@@ -76,6 +76,21 @@ async function suite() {
       r.storeError?.includes("分支") === true, r.storeError);
   }
 
+  // ── the database's own account rides along ────────────────────────
+  {
+    const store = fakeStore({ dropLatest: true, dropHistory: true });
+    (store as { snapshot?: () => Promise<Record<string, unknown>> }).snapshot = async () => ({
+      db: "neondb",
+      signal_rows: 42,
+      newest_signal: "2026-08-11T05:08:53Z",
+    });
+    const r = await storeScan(signal(), store);
+    check("a failed read-back quotes the database's self-description",
+      r.storeError?.includes("資料庫自述") === true &&
+        r.storeError?.includes("2026-08-11T05:08:53Z") === true,
+      r.storeError);
+  }
+
   // ── only latest_signal loses the row ──────────────────────────────
   {
     const r = await storeScan(signal(), fakeStore({ dropLatest: true }));

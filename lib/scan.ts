@@ -232,12 +232,19 @@ export async function storeScan(
     const missing = await readBackMissing(store, signal).catch(() => [] as string[]);
     if (missing.length > 0) {
       lost = missing.length === 2;
+      // The database's own account of itself, taken in the same breath as the
+      // failed read-back. When this says signal_rows grew while newest_signal
+      // stayed frozen, or a different db/role than expected, the culprit is
+      // named instead of inferred.
+      const who = await store.snapshot?.().catch(() => null);
+      const whoLine = who
+        ? `。同一連線的資料庫自述：${JSON.stringify(who)}`
+        : "";
       errors.push(
-        `寫入宣稱成功，但立刻重讀時 ${missing.join(" 與 ")} 裡都沒有這筆新資料 —— ` +
-          "資料庫收下了寫入卻沒有留住。最常見的原因是 Vercel 的資料庫整合開啟了" +
-          "「每個部署各一個資料庫分支」（Neon preview branches）：每次 push 之後，" +
-          "寫入都進了下一個部署看不到的分支。請到 Neon/Vercel 把 DATABASE_URL " +
-          "換成主分支的固定連線字串，並套用到所有環境",
+        `寫入宣稱成功（RETURNING 有回條），但立刻重讀時 ${missing.join(" 與 ")} 裡都沒有這筆新資料 —— ` +
+          "寫入與讀取看到的不是同一份資料。最常見的原因是資料庫整合開啟了" +
+          "「每個部署各一個資料庫分支」或端點後方被切換；請到 Neon 控制台用 main 分支" +
+          `重新產生連線字串，換掉 Vercel 的 DATABASE_URL${whoLine}`,
       );
     }
   }

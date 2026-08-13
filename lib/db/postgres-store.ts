@@ -67,7 +67,14 @@ export function postgresStore(connectionString: string): SignalStore {
       try {
         // Parameterised throughout — every value here is interpolated by the
         // driver, never concatenated into the statement.
-        await sql`
+        //
+        // `returning id` is the receipt. A day of sweeps "succeeded" while
+        // nothing became readable, and a bare INSERT's success only proves
+        // the statement ran — RETURNING proves a row exists in the database
+        // that ran it. An empty return means something inside the database
+        // (a rule, a trigger, an interceptor) discarded the row, which is a
+        // storage failure and must throw, not report success.
+        const rows = (await sql`
         insert into signals (
           symbol, direction, grade, bias_score, entry_structure_score, total_score,
           entry_zone, stop_loss, take_profits, bias_items, entry_structures,
@@ -82,7 +89,13 @@ export function postgresStore(connectionString: string): SignalStore {
           ${signal.plan_backtest === null ? null : JSON.stringify(signal.plan_backtest)},
           ${JSON.stringify(signal.data_gaps)}, ${signal.generated_at}
         )
-      `;
+        returning id
+      `) as unknown as Array<{ id: string }>;
+        if (rows.length === 0) {
+          throw new Error(
+            "insert 被資料庫吞掉：陳述式執行成功但沒有建立任何列（RETURNING 為空）",
+          );
+        }
       } catch (err) {
         throw explain(err);
       }
@@ -111,17 +124,35 @@ export function postgresStore(connectionString: string): SignalStore {
 
     async saveLatest(signal: TradeSignal): Promise<void> {
       try {
-        await sql`
+        // Same receipt as insertSignal: an upsert that neither inserted nor
+        // updated returned no row, and that is a discard, not a success.
+        const rows = (await sql`
           insert into latest_signal (symbol, payload, generated_at, updated_at)
           values (${signal.symbol}, ${JSON.stringify(signal)}, ${signal.generated_at}, now())
           on conflict (symbol) do update set
             payload = excluded.payload,
             generated_at = excluded.generated_at,
             updated_at = now()
-        `;
+          returning symbol
+        `) as unknown as Array<{ symbol: string }>;
+        if (rows.length === 0) {
+          throw new Error(
+            "upsert 被資料庫吞掉：陳述式執行成功但沒有寫入任何列（RETURNING 為空）",
+          );
+        }
       } catch (err) {
         throw explain(err);
       }
+    },
+
+    async snapshot(): Promise<Record<string, unknown>> {
+      const rows = (await sql`
+        select current_database() as db, current_user as role, now()::text as db_now,
+               (select count(*)::int from signals) as signal_rows,
+               (select max(generated_at)::text from signals) as newest_signal,
+               (select count(*)::int from latest_signal) as latest_rows
+      `) as unknown as Array<Record<string, unknown>>;
+      return rows[0] ?? {};
     },
 
     async latestPerSymbol(): Promise<SignalRow[]> {
