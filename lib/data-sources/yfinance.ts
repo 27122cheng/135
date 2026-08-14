@@ -42,7 +42,7 @@ export const OHLCV_TTL_MS = 30 * 60 * 1000;
  * these numbers exist to keep us from looking like a scraper. A full refresh
  * of 9 symbols × 3 timeframes is 27 calls, well inside them.
  */
-const YAHOO_LIMIT = { perMinute: 60, perDay: 2000 };
+export const YAHOO_LIMIT = { perMinute: 60, perDay: 2000 };
 
 /**
  * H4 has no native Yahoo interval, so it is built by resampling real 1h
@@ -94,7 +94,7 @@ type YahooChartResult = NonNullable<NonNullable<YahooChartResponse["chart"]>["re
  */
 const YAHOO_HOSTS = ["query1", "query2"] as const;
 
-async function fetchYahooChart(
+export async function fetchYahooChart(
   pathAndQuery: string,
   freshEnoughMs: number,
 ): Promise<YahooChartResult | null> {

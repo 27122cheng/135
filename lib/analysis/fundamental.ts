@@ -2,6 +2,7 @@ import type { BiasItem, CommodityMeta } from "@/types/signal";
 import type { FundamentalsConfig } from "@/config/fundamentals";
 import { fetchFredSeries, type FredPoint } from "../data-sources/fred";
 import { fetchEiaCrudeInventory } from "../data-sources/eia";
+import { fetchWtiTermStructure } from "../data-sources/term-structure";
 import { fetchEarningsCalendar } from "../data-sources/finnhub";
 import { rateSpreadFor } from "@/config/rate-spreads";
 import { analyzeRateSpread } from "./rate-spread";
@@ -46,6 +47,8 @@ export async function analyzeFundamental(
     config.useEiaInventory ? fetchEiaCrudeInventory(gaps) : Promise.resolve(null),
     config.useEarningsSeason ? fetchEarningsCalendar(gaps) : Promise.resolve(null),
   ]);
+
+  const termStructure = config.useTermStructure ? await fetchWtiTermStructure(gaps) : null;
 
   if (config.useRealRate) {
     if (dgs10?.latest?.value != null && t10yie?.latest?.value != null) {
@@ -123,6 +126,34 @@ export async function analyzeFundamental(
         evidence: `${eia.previous?.value.toLocaleString() ?? "N/A"} (${eia.previous?.period ?? "N/A"}) → ${eia.latest.value.toLocaleString()} (${eia.latest.period})`,
         source: eia.source === "eia" ? "EIA petroleum/stoc/wstk weekly" : "FRED WCESTUS1（EIA 原始資料）",
       });
+    }
+  }
+
+  // 期限結構 — the physical market's own reading of supply, and deliberately
+  // separate from the inventory factor above: inventories are last week's
+  // measured stock, the curve is what traders are paying today to hold
+  // barrels now rather than later. Related, not the same fact — so they get
+  // different keys and both may vote.
+  if (config.useTermStructure) {
+    if (termStructure) {
+      const { shape, spread, spreadPct, frontSymbol, nextSymbol, frontPrice, nextPrice } =
+        termStructure;
+      items.push({
+        dimension: "基本面",
+        key: "wti-term-structure",
+        factor:
+          shape === "backwardation"
+            ? `WTI 期限結構逆價差（近月高於次月 ${spread.toFixed(2)} 美元，${spreadPct.toFixed(2)}%）：現貨供給吃緊`
+            : shape === "contango"
+              ? `WTI 期限結構正價差（近月低於次月 ${Math.abs(spread).toFixed(2)} 美元，${Math.abs(spreadPct).toFixed(2)}%）：供給寬鬆、庫存有利可圖`
+              : `WTI 期限結構接近平坦（價差 ${spread.toFixed(2)} 美元，${spreadPct.toFixed(2)}%），供需未表態`,
+        direction: shape === "backwardation" ? "long" : shape === "contango" ? "short" : "neutral",
+        weight: shape === "flat" ? 0 : 1,
+        evidence: `${frontSymbol} ${frontPrice.toFixed(2)} vs ${nextSymbol} ${nextPrice.toFixed(2)}，資料時間 ${termStructure.asOf.slice(0, 10)}`,
+        source: "Yahoo Finance NYMEX 原油分月合約（近月 vs 次月）",
+      });
+    } else {
+      gaps.push("WTI 期限結構取得失敗（找不到兩個仍在交易的分月合約），本次不計入基本面");
     }
   }
 

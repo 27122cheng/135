@@ -18,6 +18,12 @@ export interface FundamentalsConfig {
   /** EIA 原油庫存週變化 — WTI 專用。不在 Stage 1 核准清單內，Stage 2 新增（見 README）。 */
   useEiaInventory: boolean;
   /**
+   * WTI 期貨期限結構（近月 vs 次月）— 逆價差＝現貨吃緊偏多，正價差＝供給過剩偏空。
+   * 只給 WTI：其他商品的曲線形狀不是同一種因果（指數期貨的價差主要是利率與股息，
+   * 匯率期貨的是利差），套用同一條規則會把融資成本讀成供需訊號。
+   */
+  useTermStructure: boolean;
+  /**
    * CFTC COT legacy futures-only report 合約代碼。null 代表該商品無 CFTC 資料
    * （例如 GER40/DAX 在 Eurex 交易，非美國受監管交易所，CFTC 不會有報告）。
    * 代碼取自訓練資料記憶、未於此沙盒環境即時驗證，信心度標註於註解。
@@ -48,6 +54,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     vixRiskOffDirection: "long",
     useEarningsSeason: false,
     useEiaInventory: false,
+    useTermStructure: false,
     cotContractCode: "088691", // GOLD - COMMODITY EXCHANGE INC.
     cotInverted: false,
     newsKeywords: ["gold", "bullion", "precious metal", "fed", "inflation"],
@@ -63,6 +70,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     vixRiskOffDirection: "short",
     useEarningsSeason: true,
     useEiaInventory: false,
+    useTermStructure: false,
     // 20974P (consolidated) returned 查無資料 on every run; 209742 is the
     // futures-only E-MINI NASDAQ-100 series that actually has rows. Both are
     // listed so a change at the CFTC's end doesn't silently empty this again.
@@ -81,6 +89,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     vixRiskOffDirection: "short",
     useEarningsSeason: false,
     useEiaInventory: false,
+    useTermStructure: false,
     cotContractCode: null, // DAX 於 Eurex（德國）交易，非美國受監管交易所，CFTC 無資料
     cotInverted: false,
     newsKeywords: ["dax", "german stocks", "ecb", "europe economy"],
@@ -96,6 +105,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     vixRiskOffDirection: "short",
     useEarningsSeason: true,
     useEiaInventory: false,
+    useTermStructure: false,
     cotContractCode: "124603", // DJIA ($5) - CBOT，信心度中等
     cotInverted: false,
     newsKeywords: ["dow jones", "us stocks", "fed"],
@@ -111,6 +121,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     vixRiskOffDirection: "short",
     useEarningsSeason: true,
     useEiaInventory: false,
+    useTermStructure: false,
     cotContractCode: "13874A", // E-MINI S&P 500 - CME，信心度中等
     cotInverted: false,
     newsKeywords: ["s&p 500", "us stocks", "fed"],
@@ -126,6 +137,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     vixRiskOffDirection: "short",
     useEarningsSeason: false,
     useEiaInventory: true,
+    useTermStructure: true,
     cotContractCode: "067651", // CRUDE OIL, LIGHT SWEET - NYMEX，信心度中等
     cotInverted: false,
     newsKeywords: ["crude oil", "opec", "wti", "oil inventory"],
@@ -141,6 +153,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     vixRiskOffDirection: "short",
     useEarningsSeason: false,
     useEiaInventory: false,
+    useTermStructure: false,
     cotContractCode: "099741", // EURO FX - CME，信心度中等
     cotInverted: false,
     newsKeywords: ["euro", "ecb", "eurozone"],
@@ -156,6 +169,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     vixRiskOffDirection: "short",
     useEarningsSeason: false,
     useEiaInventory: false,
+    useTermStructure: false,
     cotContractCode: "097741", // JAPANESE YEN - CME，信心度中等
     cotInverted: true, // CME 日圓期貨為「每日圓兌美元」，非商業淨多單=看多日圓=看空 USD/JPY
     newsKeywords: ["yen", "boj", "japan"],
@@ -171,6 +185,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     vixRiskOffDirection: "short",
     useEarningsSeason: false,
     useEiaInventory: false,
+    useTermStructure: false,
     cotContractCode: "096742", // BRITISH POUND STERLING - CME，信心度中等
     cotInverted: false,
     newsKeywords: ["pound", "boe", "uk economy"],
@@ -198,6 +213,7 @@ export function defaultFundamentals(
     vixRiskOffDirection: "short",
     useEarningsSeason: false,
     useEiaInventory: false,
+    useTermStructure: false,
     cotContractCode: opts.cotContractCode,
     cotInverted: false,
     newsKeywords: opts.newsKeywords,
