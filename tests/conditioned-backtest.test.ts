@@ -37,13 +37,23 @@ function mixedMarket(): Candle[] {
 {
   const candles = mixedMarket();
   const last = candles[candles.length - 1].close;
-  const bt = backtestPlanGeometry("long", last, last - 400, last + 600, candles, 1.5)!;
+  const bt = backtestPlanGeometry("long", last, last - 400, last + 600, candles)!;
 
   check("the strongest tier answers when its sample suffices",
     bt.conditioned === true && bt.basis?.includes("MACD 同向") === true, bt.basis);
   check("with a real sample", bt.resolved >= 30, bt.resolved);
-  check("and the setup-conditioned hit rate clears what mixed sampling never did",
-    (bt.hitRate ?? 0) >= 0.7, bt.hitRate);
+  // Gross, this fixture cleared 0.70. Net of the round-trip cost it lands
+  // just under — which is the whole point of charging one: the operator's
+  // floor now applies to a number they could actually realize, and a
+  // geometry that only cleared it by paying no spread should not pass.
+  // What the tier still has to prove is that it is far above the
+  // random-walk baseline (stop/(stop+target) ≈ 0.4 at this geometry) —
+  // that gap is what conditioning bought, and cost does not touch it.
+  check("and the setup-conditioned hit rate stays far above the random-walk baseline",
+    (bt.hitRate ?? 0) >= 0.65, bt.hitRate);
+  check("with the cost stated rather than assumed",
+    (bt.costPct ?? 0) > 0 && bt.basis?.includes("交易成本") === true,
+    { costPct: bt.costPct, basis: bt.basis });
   check("RSI is part of the strongest tier", bt.basis?.includes("RSI") === true, bt.basis);
 }
 
@@ -51,7 +61,7 @@ function mixedMarket(): Candle[] {
   // A short in the same market: its matching regime is the *first* half.
   const candles = mixedMarket();
   const last = candles[candles.length - 1].close;
-  const bt = backtestPlanGeometry("short", last, last + 400, last - 600, candles, 1.5)!;
+  const bt = backtestPlanGeometry("short", last, last + 400, last - 600, candles)!;
   check("the mirror direction conditions on its own regime",
     bt.basis?.includes("空頭") === true, bt.basis);
 }
@@ -63,7 +73,7 @@ function mixedMarket(): Candle[] {
   // here must say the stronger tiers were skipped for lack of samples.
   const candles = mixedMarket().slice(0, 300);
   const last = candles[candles.length - 1].close;
-  const bt = backtestPlanGeometry("long", last, last - 400, last + 600, candles, 1.5);
+  const bt = backtestPlanGeometry("long", last, last - 400, last + 600, candles);
   check("thin history still returns an answer rather than nothing", bt !== null, bt);
   if (bt && bt.resolved >= 30) {
     check("and says when stricter tiers lacked samples",

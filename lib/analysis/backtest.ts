@@ -1,4 +1,6 @@
 import type { Candle } from "../data-sources/ohlcv";
+import { COMMODITIES } from "@/types/signal";
+import { totalCostFraction, tradingCostFor } from "@/config/trading-costs";
 import { ema, macd, rsi } from "./indicators";
 
 /**
@@ -61,7 +63,8 @@ export interface PlanBacktest {
   /** wins / resolved, 0..1. Null when nothing resolved. */
   hitRate: number | null;
   /**
-   * Expected value per unit of risk: hitRate × riskReward − (1 − hitRate).
+   * Expected value per unit of risk, net of trading cost:
+   * hitRate × (target−cost)/risk − (1 − hitRate) × (risk+cost)/risk.
    * Positive means the geometry has been historically worth taking.
    */
   expectancyR: number | null;
@@ -73,6 +76,12 @@ export interface PlanBacktest {
   conditioned?: boolean;
   /** How the sample was drawn, in words. Shown wherever the numbers are. */
   basis?: string;
+  /**
+   * Round-trip trading cost charged against every sampled trade, as a
+   * percentage of entry. Never zero: a hit rate measured without spread
+   * belongs to a strategy nobody can trade.
+   */
+  costPct?: number;
 }
 
 /**
@@ -163,14 +172,28 @@ export function backtestPlanGeometry(
   stopLoss: number,
   takeProfit: number,
   candles: Candle[],
-  riskReward: number,
   horizonBars = 20,
+  /**
+   * Whose spread to charge. Optional so an unknown or user-added instrument
+   * still gets backtested — but never free: the fallback is the index cost,
+   * not zero. A hit rate with no spread in it is the one number in this
+   * system most likely to be believed and most likely to be wrong.
+   */
+  symbol?: string,
 ): PlanBacktest | null {
+  const category =
+    COMMODITIES.find((c) => c.symbol === symbol)?.category ?? "index";
+  const cost = tradingCostFor(category);
+  // The per-bar carry is charged over half the horizon: trades resolve
+  // somewhere inside it, and assuming the full horizon would over-charge
+  // every fast winner.
+  const costFraction = totalCostFraction(cost, horizonBars / 2);
+
   const tiers = tiersFor(direction, candles);
   const skipped: string[] = [];
   let last: PlanBacktest | null = null;
   for (const tier of tiers) {
-    const result = walk(direction, entry, stopLoss, takeProfit, candles, riskReward, horizonBars, tier);
+    const result = walk(direction, entry, stopLoss, takeProfit, candles, horizonBars, tier, costFraction);
     if (!result) continue;
     last = result;
     if (result.resolved >= MIN_CONDITIONED_RESOLVED) {
@@ -190,15 +213,20 @@ function walk(
   stopLoss: number,
   takeProfit: number,
   candles: Candle[],
-  riskReward: number,
   horizonBars: number,
   tier: Tier,
+  /** Round-trip cost as a fraction of entry. Never zero — see config/trading-costs.ts. */
+  costFraction: number,
 ): PlanBacktest | null {
   if (entry <= 0 || candles.length < horizonBars + 20) return null;
 
   const slPct = Math.abs(entry - stopLoss) / entry;
   const tpPct = Math.abs(takeProfit - entry) / entry;
   if (!(slPct > 0) || !(tpPct > 0)) return null;
+  // A target that cannot even cover the spread is not a trade at any hit
+  // rate, and pretending otherwise is how a 100%-winning micro-scalp gets
+  // recommended.
+  if (tpPct <= costFraction) return null;
 
   let wins = 0;
   let losses = 0;
@@ -218,8 +246,15 @@ function walk(
       if (!tier.accept(i, e)) continue;
     }
     sampled++;
+    // The stop triggers where it was placed — cost does not move a market
+    // order's trigger — but the target must be cleared by the round trip's
+    // worth before the trade is actually worth its stated reward. Charging
+    // the cost on the target side is what turns a gross touch into a net win.
     const slLevel = direction === "long" ? e * (1 - slPct) : e * (1 + slPct);
-    const tpLevel = direction === "long" ? e * (1 + tpPct) : e * (1 - tpPct);
+    const tpLevel =
+      direction === "long"
+        ? e * (1 + tpPct + costFraction)
+        : e * (1 - tpPct - costFraction);
 
     let settled = false;
     for (let j = i + 1; j <= i + horizonBars; j++) {
@@ -252,8 +287,16 @@ function walk(
 
   const resolved = wins + losses;
   const hitRate = resolved > 0 ? wins / resolved : null;
+  // Expectancy in R, where R stays the *gross* risk so it is comparable with
+  // every other R in the system. A winner banks the target minus the round
+  // trip; a loser pays the stop plus it — costs hit both sides, and only
+  // charging the winners would flatter the same trade twice over.
+  const winR = (tpPct - costFraction) / slPct;
+  const lossR = (slPct + costFraction) / slPct;
   const expectancyR =
-    hitRate === null ? null : Math.round((hitRate * riskReward - (1 - hitRate)) * 100) / 100;
+    hitRate === null
+      ? null
+      : Math.round((hitRate * winR - (1 - hitRate) * lossR) * 100) / 100;
 
   return {
     resolved,
@@ -266,6 +309,9 @@ function walk(
     lookbackBars: sampled,
     hadAmbiguousBars,
     conditioned: tier.conditioned,
-    basis: `只取「${tier.label}」的 ${sampled} 根 K 棒為進場點`,
+    costPct: Math.round(costFraction * 100 * 1000) / 1000,
+    basis:
+      `只取「${tier.label}」的 ${sampled} 根 K 棒為進場點，` +
+      `且已扣除來回交易成本 ${(costFraction * 100).toFixed(3)}%`,
   };
 }

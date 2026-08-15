@@ -192,7 +192,7 @@ function item(over: Partial<BiasItem> & { dimension: BiasDimension }): BiasItem 
     });
   }
 
-  const long = backtestPlanGeometry("long", 150, 147, 156, candles, 2);
+  const long = backtestPlanGeometry("long", 150, 147, 156, candles);
   check("a backtest is produced", long !== null);
   check("it is conditioned", long?.conditioned === true, long?.basis);
   check("and says how the sample was drawn",
@@ -204,7 +204,7 @@ function item(over: Partial<BiasItem> & { dimension: BiasDimension }): BiasItem 
 
   // Too few matching bars must fall back rather than answer from noise.
   const short = candles.slice(0, 120);
-  const thin = backtestPlanGeometry("short", 150, 153, 144, short, 2);
+  const thin = backtestPlanGeometry("short", 150, 153, 144, short);
   check("a thin conditioned sample falls back to all bars",
     thin === null || thin.conditioned === false, thin?.basis);
   if (thin) {

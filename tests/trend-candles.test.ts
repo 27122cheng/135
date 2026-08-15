@@ -1,5 +1,5 @@
 import { check, report } from "./_harness";
-import { candleSignals } from "@/lib/analysis/candles";
+import { candleSignals, falseBreakSignal, unfilledGapSignal } from "@/lib/analysis/candles";
 import { efficiencyRatio } from "@/lib/analysis/indicators";
 import { analyzeTechnical } from "@/lib/analysis/technical";
 import type { EntryStructure } from "@/types/signal";
@@ -146,6 +146,89 @@ function chop(n: number, start = 100): Candle[] {
     bar("d4-forming", 101, 101.5, 100.8, 101.2),
   ];
   check("no shape means no item", candleSignals("D1", quiet, 2, [support]).length === 0);
+}
+
+// ── 假突破 Spring / Upthrust ──────────────────────────────────────
+{
+  const support: EntryStructure = {
+    price: 98, type: "前低", role: "support", timeframe: "D1", strength: 2, distance_pct: -2,
+  };
+  const resistance: EntryStructure = {
+    price: 106, type: "前高", role: "resistance", timeframe: "D1", strength: 2, distance_pct: 2,
+  };
+
+  // Wick to 97.2 (through 98 by more than 0.15×ATR=0.3), closing back above,
+  // and price still above today.
+  const spring = [
+    bar("d1", 100, 101, 99.5, 100),
+    bar("d2", 100, 100.5, 99.4, 99.8),
+    bar("d3", 99.8, 100.2, 97.2, 99.6),
+    bar("d4", 99.6, 100.4, 99.3, 100.1),
+    bar("forming", 100.1, 100.5, 99.9, 100.2),
+  ];
+  const sp = falseBreakSignal("D1", spring, 2, [support, resistance]);
+  check("a wick through support that closes back above is a Spring",
+    sp?.direction === "long" && sp.factor.includes("假跌破"), sp?.factor);
+  check("and it outweighs a plain reversal candle", sp?.weight === 2, sp?.weight);
+
+  // The same pierce, but price has since given the level up — not a spring.
+  const brokeDown = [...spring.slice(0, 4), bar("forming", 97.5, 97.8, 97.1, 97.4)];
+  const gone = falseBreakSignal("D1", [...brokeDown.slice(0, 4), bar("d5", 97.4, 97.6, 97, 97.2), brokeDown[4]], 2, [support]);
+  check("a level that has since given way is not a Spring", gone === null, gone?.factor);
+
+  // Mirror: wick above resistance, close back under.
+  const upthrust = [
+    bar("d1", 104, 105, 103.5, 104),
+    bar("d2", 104, 105.2, 103.8, 104.5),
+    bar("d3", 104.5, 107.1, 104.2, 105.4),
+    bar("d4", 105.4, 105.9, 104.8, 105.2),
+    bar("forming", 105.2, 105.6, 104.9, 105.1),
+  ];
+  const ut = falseBreakSignal("D1", upthrust, 2, [resistance]);
+  check("a wick through resistance that closes back under is an Upthrust",
+    ut?.direction === "short" && ut.factor.includes("假突破"), ut?.factor);
+
+  // A touch is not a break.
+  const touch = [
+    bar("d1", 100, 101, 99.5, 100),
+    bar("d2", 100, 100.5, 99.4, 99.8),
+    bar("d3", 99.8, 100.2, 97.95, 99.6),
+    bar("d4", 99.6, 100.4, 99.3, 100.1),
+    bar("forming", 100.1, 100.5, 99.9, 100.2),
+  ];
+  check("a shallow touch is not a false break",
+    falseBreakSignal("D1", touch, 2, [support]) === null);
+}
+
+// ── 未回補跳空 ────────────────────────────────────────────────────
+{
+  // A gap up between d2's high (100.5) and d3's low (103), never revisited.
+  const gapped = [
+    bar("d1", 99, 100, 98.5, 99.5),
+    bar("d2", 99.5, 100.5, 99, 100),
+    bar("d3", 103, 104, 103, 103.5),
+    bar("d4", 103.5, 105, 103.2, 104.5),
+    bar("d5", 104.5, 106, 104, 105.5),
+    bar("d6", 105.5, 107, 105, 106.5),
+    bar("d7", 106.5, 108, 106, 107.5),
+    bar("d8", 107.5, 109, 107, 108.5),
+    bar("d9", 108.5, 110, 108, 109.5),
+    bar("d10", 109.5, 111, 109, 110.5),
+  ];
+  const g = unfilledGapSignal("D1", gapped);
+  check("an unfilled gap is reported", g !== null, g);
+  check("as position information, not a direction",
+    g?.direction === "neutral" && g?.weight === 0, g);
+  check("naming the side it sits on", g?.factor.includes("下方") === true, g?.factor);
+
+  // The same gap, later filled by a pullback through it.
+  const filled = [...gapped, bar("d11", 110.5, 111, 100, 101)];
+  check("a filled gap stops being reported",
+    unfilledGapSignal("D1", filled) === null, unfilledGapSignal("D1", filled)?.factor);
+
+  const quiet = Array.from({ length: 12 }, (_, i) =>
+    bar(`q${i}`, 100 + i * 0.1, 100.3 + i * 0.1, 99.8 + i * 0.1, 100.1 + i * 0.1));
+  check("a continuous series has no gaps", unfilledGapSignal("D1", quiet) === null);
 }
 
 report("trend maturity + 裸K");

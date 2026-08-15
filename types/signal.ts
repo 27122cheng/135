@@ -290,6 +290,13 @@ export interface PlanBacktest {
   conditioned?: boolean;
   /** How the sample was drawn, in words — shown wherever the numbers are. */
   basis?: string;
+  /**
+   * Round-trip trading cost charged against every sampled trade, as a
+   * percentage of entry. Never absent and never zero: a hit rate measured
+   * without spread is a different strategy's hit rate. Shown so the
+   * assumption can be argued with rather than believed.
+   */
+  costPct?: number;
 }
 
 export interface TradeSignal {

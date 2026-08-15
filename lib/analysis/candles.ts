@@ -118,6 +118,144 @@ function fmt(n: number): string {
  * a signal. Anchored to structure: weight 1. Unanchored: weight 0, still
  * shown, explicitly labelled as not voting.
  */
+/**
+ * 假突破 — Spring（假跌破）與 Upthrust（假突破）.
+ *
+ * A wick that pierces a level and closes back on the original side is the
+ * market rejecting the break: stops beyond the level were taken, the move
+ * failed, and the side that defended it is left holding the field. Of every
+ * shape in this file it is the one with the strongest claim to an edge,
+ * because it is not a shape at all — it is the *outcome* of a fight over a
+ * level the analysis already named.
+ *
+ * Stricter than a pin bar in two ways that matter: the pierce must be a
+ * genuine break of the level (not merely near it), and the *current* price
+ * must still be on the defending side — a spring whose level has since given
+ * way is not a spring, it is a breakdown with an ugly first bar. Looks back
+ * three closed bars, because the retest that confirms it takes a bar or two.
+ */
+export function falseBreakSignal(
+  timeframe: Timeframe,
+  candles: Candle[] | undefined,
+  atr: number | null,
+  structures: EntryStructure[],
+): BiasItem | null {
+  if (!candles || candles.length < 5 || !atr || atr <= 0) return null;
+  // Newest bar is still forming; examine the three closed bars before it.
+  const closed = candles.slice(0, -1);
+  const now = closed[closed.length - 1]?.close;
+  if (!Number.isFinite(now)) return null;
+  const window = closed.slice(-3);
+  // A pierce shallower than this is a level being touched, not broken.
+  const minPierce = 0.15 * atr;
+
+  for (let i = window.length - 1; i >= 0; i--) {
+    const bar = window[i];
+    for (const s of structures) {
+      if (s.role === "support") {
+        const pierced = bar.low < s.price - minPierce;
+        const recovered = bar.close > s.price && now > s.price;
+        if (pierced && recovered) {
+          return {
+            dimension: "技術面",
+            factor: `${timeframe} 假跌破反轉（Spring）：影線刺破 ${s.timeframe} ${s.type} ${fmt(s.price)} 後收回其上`,
+            direction: "long",
+            weight: 2,
+            evidence:
+              `最低 ${fmt(bar.low)} 跌破 ${fmt(s.price)}（穿刺 ${fmt(s.price - bar.low)}，門檻 0.15×ATR），` +
+              `收盤 ${fmt(bar.close)} 收回支撐之上，現價 ${fmt(now)} 仍在其上 —— 掃停損洗盤特徵`,
+            source: `${timeframe} 已收盤K棒 ${bar.time}（假突破偵測）`,
+          };
+        }
+      } else if (s.role === "resistance") {
+        const pierced = bar.high > s.price + minPierce;
+        const recovered = bar.close < s.price && now < s.price;
+        if (pierced && recovered) {
+          return {
+            dimension: "技術面",
+            factor: `${timeframe} 假突破回落（Upthrust）：影線刺穿 ${s.timeframe} ${s.type} ${fmt(s.price)} 後收回其下`,
+            direction: "short",
+            weight: 2,
+            evidence:
+              `最高 ${fmt(bar.high)} 突破 ${fmt(s.price)}（穿刺 ${fmt(bar.high - s.price)}，門檻 0.15×ATR），` +
+              `收盤 ${fmt(bar.close)} 收回壓力之下，現價 ${fmt(now)} 仍在其下 —— 誘多出貨特徵`,
+            source: `${timeframe} 已收盤K棒 ${bar.time}（假突破偵測）`,
+          };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 未回補跳空 — the cleanest support/resistance there is, because nobody
+ * traded inside it.
+ *
+ * For FX the weekend gap is the case that matters: Friday's close to
+ * Sunday's open is a price range the market skipped, and it tends to be
+ * revisited. Reported as a non-voting fact rather than a direction: a gap
+ * is a magnet, not a bias — price being pulled back into it is bullish for
+ * a gap below and bearish for one above, which are opposite conclusions
+ * from the same object. What it changes is where the levels are, so it is
+ * surfaced for the reader and for the path obstacles, not for the vote.
+ */
+export function unfilledGapSignal(
+  timeframe: Timeframe,
+  candles: Candle[] | undefined,
+  lookback = 60,
+): BiasItem | null {
+  if (!candles || candles.length < 10) return null;
+  const bars = candles.slice(-lookback);
+  const price = bars[bars.length - 1].close;
+
+  interface Gap {
+    type: "up" | "down";
+    top: number;
+    bottom: number;
+    time: string;
+    index: number;
+  }
+  const gaps: Gap[] = [];
+  for (let i = 1; i < bars.length; i++) {
+    const b = bars[i];
+    const p = bars[i - 1];
+    // 0.05% floor: below that it is a tick, not a gap.
+    if (b.low > p.high * 1.0005) {
+      gaps.push({ type: "up", top: b.low, bottom: p.high, time: b.time, index: i });
+    } else if (b.high < p.low * 0.9995) {
+      gaps.push({ type: "down", top: p.low, bottom: b.high, time: b.time, index: i });
+    }
+  }
+  const unfilled = gaps.filter((g) => {
+    for (let j = g.index + 1; j < bars.length; j++) {
+      if (g.type === "up" && bars[j].low <= g.bottom) return false;
+      if (g.type === "down" && bars[j].high >= g.top) return false;
+    }
+    return true;
+  });
+  if (unfilled.length === 0) return null;
+
+  // The nearest one on each side is what a plan could actually run into.
+  const below = unfilled.filter((g) => g.top <= price).sort((a, b) => b.top - a.top)[0];
+  const above = unfilled.filter((g) => g.bottom >= price).sort((a, b) => a.bottom - b.bottom)[0];
+  const parts: string[] = [];
+  if (below) parts.push(`下方 ${fmt(below.bottom)}–${fmt(below.top)}（${below.time.slice(0, 10)}）`);
+  if (above) parts.push(`上方 ${fmt(above.bottom)}–${fmt(above.top)}（${above.time.slice(0, 10)}）`);
+  if (parts.length === 0) return null;
+
+  return {
+    dimension: "技術面",
+    factor: `${timeframe} 有 ${unfilled.length} 個未回補跳空缺口，最近的在${parts.join("、")}`,
+    direction: "neutral",
+    weight: 0,
+    evidence:
+      "跳空區間內沒有成交，價格常被吸引回來測試；" +
+      "方向兩義（下方缺口回補是下跌、上方缺口回補是上漲），故只列為位置資訊不計方向",
+    source: `${timeframe} K棒（未回補跳空掃描，回看 ${lookback} 根）`,
+  };
+}
+
 export function candleSignals(
   timeframe: Timeframe,
   candles: Candle[] | undefined,

@@ -1,7 +1,7 @@
 import type { BiasItem, EntryStructure, PathObstacle, Timeframe } from "@/types/signal";
 import type { Candle } from "../data-sources/ohlcv";
 import { efficiencyRatio, ema, findSwingPoints, macd, rsi, strengthFromTouches, countTouches } from "./indicators";
-import { candleSignals } from "./candles";
+import { candleSignals, falseBreakSignal, unfilledGapSignal } from "./candles";
 import { clusterSwings, collectSwings, describeLevel, levelTolerance, type PriceLevel } from "./levels";
 import {
   fibRetracementLevels,
@@ -417,6 +417,19 @@ export function analyzeTechnical(
     ...candleSignals("D1", d1, atrForLevels, entryStructures),
     ...candleSignals("H4", candlesByTf.H4, atrForLevels, entryStructures),
   );
+
+  // 假突破 carries weight 2 — heavier than a plain reversal candle — because
+  // it is not a shape but the outcome of a fight over a level the analysis
+  // already named. D1 first: a daily spring outranks an H4 one, and one
+  // verdict per instrument is enough.
+  const falseBreak =
+    falseBreakSignal("D1", d1, atrForLevels, entryStructures) ??
+    falseBreakSignal("H4", candlesByTf.H4, atrForLevels, entryStructures);
+  if (falseBreak) biasItems.push(falseBreak);
+
+  // Unfilled gaps are position information, not a vote — see the module note.
+  const gapItem = unfilledGapSignal("D1", d1);
+  if (gapItem) biasItems.push(gapItem);
 
   return { biasItems, entryStructures, pathObstacles, atrD1 };
 }

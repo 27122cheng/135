@@ -706,7 +706,8 @@ async function buildSignalForSymbol(
           tradePlan.stop_loss,
           tradePlan.take_profit,
           d1.candles,
-          tradePlan.risk_reward,
+          undefined,
+          meta.symbol,
         )
       : null;
   if (tradePlan.stance === "enter" && !planBacktest) {

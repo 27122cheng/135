@@ -415,7 +415,8 @@ function chooseGeometry(
       c.sl.price,
       c.tp.price,
       candles,
-      c.rr,
+      undefined,
+      input.symbol,
     );
   }
 
@@ -767,7 +768,7 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
   // geometry the fallback would refuse could walk in wearing "AI 判斷".
   const aiBacktest =
     input.candles && input.candles.length >= 60
-      ? backtestPlanGeometry(input.direction, entry.price, sl.price, tp.price, input.candles, rr)
+      ? backtestPlanGeometry(input.direction, entry.price, sl.price, tp.price, input.candles, undefined, input.symbol)
       : null;
   const aiHit = aiBacktest?.hitRate ?? null;
   const aiDayProfile = effectiveDayProfile(input.dayHitRateFloorBump);
