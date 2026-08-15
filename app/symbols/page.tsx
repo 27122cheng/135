@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import {
   loadCustomSymbols,
   saveCustomSymbols,
   validateCustomSymbol,
   type CustomSymbol,
 } from "@/lib/custom-symbols";
+import { SiteNav } from "@/components/site-nav";
 
 interface Suggestion extends CustomSymbol {
   origin: "catalog" | "yahoo";
@@ -122,12 +122,7 @@ export default function SymbolsPage() {
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-5">
-      <div className="mb-4 flex items-baseline justify-between gap-3">
-        <h1 className="text-base font-bold text-neutral-100">自訂分析標的</h1>
-        <Link href="/" className="shrink-0 text-sm text-neutral-500 hover:text-neutral-200">
-          ← 回訊號
-        </Link>
-      </div>
+      <SiteNav title="自訂分析標的" />
 
       <p className="mb-4 text-xs leading-relaxed text-neutral-500">
         直接輸入商品名稱（中英文都可以），其餘欄位會自動帶入。設定存在這台裝置的瀏覽器，

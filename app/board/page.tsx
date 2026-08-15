@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { BoardRow } from "@/app/api/board/route";
 import { usdExposure } from "@/lib/board-row";
+import { SiteNav } from "@/components/site-nav";
 import { userKeyHeaders } from "@/lib/user-keys-client";
 import { CONFIDENT_ENTRY_MIN } from "@/lib/analysis/confidence";
 
@@ -481,35 +482,20 @@ export default function BoardPage() {
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-5">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h1 className="text-base font-bold text-neutral-100">交易總覽</h1>
-        <div className="flex shrink-0 items-center gap-3">
-          <nav className="flex gap-3 text-sm text-neutral-500">
-            <Link href="/" className="hover:text-neutral-200">
-              詳細分析
-            </Link>
-            <Link href="/history" className="hover:text-neutral-200">
-              歷史
-            </Link>
-            <Link href="/review" className="hover:text-neutral-200">
-              復盤
-            </Link>
-            <Link href="/setup" className="hover:text-neutral-200">
-              通知
-            </Link>
-          </nav>
-          {/* 右上角的重整：全部九個商品重新掃描並更新 — the same worker pool
-              the status-row button used, promoted to where a refresh control
-              is expected to live. */}
-          <button
-            type="button"
-            onClick={() => void rescan(rows)}
-            disabled={rescanning.size > 0}
-            className="rounded-lg border border-neutral-700 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-800 disabled:opacity-40"
-          >
-            {rescanning.size > 0 ? `重整中… 剩 ${rescanning.size}` : "↻ 重整"}
-          </button>
-        </div>
+      <SiteNav title="交易總覽" />
+
+      {/* 重整 sits with the status line it acts on, not in the nav bar: the
+          nav is now identical on every page, and a control that exists on
+          exactly one of them cannot live inside it. */}
+      <div className="mb-3 flex items-center justify-end">
+        <button
+          type="button"
+          onClick={() => void rescan(rows)}
+          disabled={rescanning.size > 0}
+          className="rounded-lg border border-neutral-700 px-2.5 py-1 text-xs text-neutral-200 hover:bg-neutral-800 disabled:opacity-40"
+        >
+          {rescanning.size > 0 ? `重整中… 剩 ${rescanning.size}` : "↻ 重整全部商品"}
+        </button>
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500">

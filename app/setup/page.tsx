@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { loadUserKeys } from "@/lib/user-keys-client";
+import { SiteNav } from "@/components/site-nav";
 
 /**
  * 通知設定 — Telegram configured from the browser, no Vercel dashboard.
@@ -268,12 +269,7 @@ export default function SetupPage() {
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-5">
-      <div className="mb-4 flex items-baseline justify-between gap-3">
-        <h1 className="text-base font-bold text-neutral-100">通知設定</h1>
-        <Link href="/" className="shrink-0 text-sm text-neutral-500 hover:text-neutral-200">
-          ← 回訊號
-        </Link>
-      </div>
+      <SiteNav title="通知設定" />
 
       <div className="mb-4 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
         <p className="text-xs leading-relaxed text-neutral-400">

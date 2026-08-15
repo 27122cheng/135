@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { COMMODITIES } from "@/types/signal";
 import type { Grade, SignalRow } from "@/types/signal";
 import { GradeBadge } from "@/components/grade-badge";
 import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { SiteNav } from "@/components/site-nav";
 
 const GRADES: Grade[] = ["A+", "A", "B", "C", "no-trade"];
 
@@ -74,17 +74,7 @@ export default function HistoryPage() {
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-5">
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-lg font-bold text-neutral-100">歷史訊號</h1>
-        <nav className="flex gap-3 text-sm text-neutral-400">
-          <Link href="/" className="hover:underline">
-            即時訊號
-          </Link>
-          <Link href="/review" className="hover:underline">
-            復盤
-          </Link>
-        </nav>
-      </div>
+      <SiteNav title="歷史訊號" />
 
       <div className="mb-4 flex flex-wrap gap-3 rounded-lg border border-neutral-800 bg-neutral-900/60 p-3 text-sm">
         <label className="flex items-center gap-2">

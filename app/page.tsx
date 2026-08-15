@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { COMMODITIES, type CommodityMeta, type TradeSignal } from "@/types/signal";
 import { CommodityList } from "@/components/commodity-list";
 import { SignalCard } from "@/components/signal-card";
 import { loadCustomSymbols, toCommodityMeta, type CustomSymbol } from "@/lib/custom-symbols";
 import { userKeyHeaders } from "@/lib/user-keys-client";
+import { SiteNav } from "@/components/site-nav";
 
 export default function Home() {
   const [selected, setSelected] = useState<string>("XAUUSD");
@@ -134,29 +134,7 @@ export default function Home() {
 
   return (
     <main className="mx-auto min-h-screen max-w-2xl px-4 py-5">
-      <header className="mb-3 flex items-baseline justify-between gap-3">
-        <h1 className="text-base font-bold text-neutral-100">多商品交易訊號</h1>
-        <nav className="flex shrink-0 gap-3 text-sm text-neutral-500">
-          <Link href="/board" className="hover:text-neutral-200">
-            總覽
-          </Link>
-          <Link href="/settings" className="hover:text-neutral-200">
-            金鑰
-          </Link>
-          <Link href="/setup" className="hover:text-neutral-200">
-            通知
-          </Link>
-          <Link href="/symbols" className="hover:text-neutral-200">
-            自訂標的
-          </Link>
-          <Link href="/review" className="hover:text-neutral-200">
-            復盤
-          </Link>
-          <Link href="/history" className="hover:text-neutral-200">
-            歷史
-          </Link>
-        </nav>
-      </header>
+      <SiteNav title="多商品交易訊號" />
 
       <div className="mb-4">
         <CommodityList symbols={symbols} selected={selected} onSelect={setSelected} />

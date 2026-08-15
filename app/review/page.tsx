@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import { COMMODITIES } from "@/types/signal";
 import { STOP_REASON_LABELS } from "@/types/journal";
 import type { GradePerformance, ReviewStats, TagDistribution, TrackRecord } from "@/lib/journal/stats";
@@ -9,6 +8,7 @@ import type { TagStat } from "@/types/journal";
 import { SeverityTrend, StopReasonDonut, TAG_COLORS } from "@/components/review-charts";
 import { JournalForm } from "@/components/journal-form";
 import type { RiskAdvice } from "@/lib/journal/advice";
+import { SiteNav } from "@/components/site-nav";
 
 interface ReviewResponse extends ReviewStats {
   trackRecord?: TrackRecord;
@@ -46,17 +46,7 @@ export default function ReviewPage() {
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-5">
-      <header className="mb-4 flex items-baseline justify-between gap-3">
-        <h1 className="text-base font-bold text-neutral-100">交易建議復盤</h1>
-        <nav className="flex shrink-0 gap-3 text-sm text-neutral-500">
-          <Link href="/" className="hover:text-neutral-200">
-            訊號
-          </Link>
-          <Link href="/history" className="hover:text-neutral-200">
-            歷史
-          </Link>
-        </nav>
-      </header>
+      <SiteNav title="交易建議復盤" />
 
       <div className="mb-4 flex flex-wrap gap-1.5">
         <button
