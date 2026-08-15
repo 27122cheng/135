@@ -7,6 +7,7 @@ import { DimensionBars } from "@/components/dimension-bars";
 import { TradePlanCard } from "@/components/trade-plan-card";
 import { formatPrice, formatTime } from "@/lib/format";
 import { groupDataGaps, KEY_SOURCES } from "@/lib/data-gaps";
+import { summariseRegime } from "@/lib/analysis/regime-summary";
 import { cn } from "@/lib/utils";
 import {
   CONFIDENT_ENTRY_MIN,
@@ -673,6 +674,102 @@ function ReferencePlan({ signal }: { signal: TradeSignal }) {
  * because "the indicator is neutral" and "the indicator wasn't computed" must
  * never look the same.
  */
+/**
+ * 市況與價格行為 — the readings that decide, promoted out of the flat list.
+ *
+ * Every technical reading used to land in one undifferentiated list of
+ * seventeen, where a Spring at a named support (the highest-conviction
+ * price-action signal this engine produces, weight 2) sat between an RSI
+ * number that votes nothing and a dedupe note. The list is still there below;
+ * this lifts the four readings a trader actually decides on — what regime we
+ * are in, how good the trend is, whether a level was just defended, and
+ * where the untraded gaps sit — into one strip at the top.
+ *
+ * Selection is by *matching what the analyzers emit*, not by index or order:
+ * an analyzer that stops emitting one of these leaves a hole here rather than
+ * mislabelling whatever took its place. Everything is optional and every
+ * field is read defensively — this component renders stored signals written
+ * by older builds, which is exactly how a detail page went to a black screen
+ * once before.
+ */
+function MarketRegime({ items }: { items: BiasItem[] }) {
+  const r = summariseRegime(items);
+  if (!r.hasAny) return null;
+
+  const toneClass = (t: "long" | "short" | "neutral") =>
+    t === "long" ? "text-emerald-400" : t === "short" ? "text-red-400" : "text-neutral-400";
+
+  const cells: Array<{ title: string; cell: typeof r.structure; mono?: boolean }> = [
+    { title: "日線結構", cell: r.structure },
+    { title: "趨勢品質 ER", cell: r.efficiency, mono: true },
+    { title: "週線方向", cell: r.weekly },
+    { title: "均線排列", cell: r.emaStack },
+  ];
+
+  return (
+    <Card>
+      <CardContent className="p-4 pt-4">
+        <div className="mb-3 flex items-baseline justify-between gap-2">
+          <p className="text-sm font-medium text-neutral-300">市況與價格行為</p>
+          <span className="text-[11px] text-neutral-600">先看這裡，再看細項</span>
+        </div>
+
+        <dl className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          {cells.map(({ title, cell, mono }) => (
+            <div key={title} className="rounded-lg border border-neutral-800 bg-neutral-950/50 p-2.5">
+              <dt className="text-[10px] text-neutral-600">{title}</dt>
+              <dd
+                className={cn(
+                  "mt-0.5 text-sm font-medium",
+                  mono ? "font-mono text-neutral-200" : toneClass(cell.tone),
+                )}
+              >
+                {cell.label}
+              </dd>
+              {cell.detail && (
+                <dd className="mt-0.5 text-[10px] leading-relaxed text-neutral-500">{cell.detail}</dd>
+              )}
+            </div>
+          ))}
+        </dl>
+
+        {/* 假突破 gets its own band: it is the only weight-2 price-action
+            verdict here, and a grid cell would undersell the one reading
+            that says a level was actually defended. */}
+        {r.falseBreak && (
+          <div
+            className={cn(
+              "mt-3 rounded-lg border p-2.5",
+              r.falseBreak.tone === "long"
+                ? "border-emerald-500/40 bg-emerald-500/5"
+                : "border-red-500/40 bg-red-500/5",
+            )}
+          >
+            <p
+              className={cn(
+                "text-xs font-medium",
+                r.falseBreak.tone === "long" ? "text-emerald-300" : "text-red-300",
+              )}
+            >
+              ⚑ {r.falseBreak.factor}
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-neutral-400">
+              {r.falseBreak.evidence}
+            </p>
+          </div>
+        )}
+
+        {r.gaps && (
+          <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-950/50 p-2.5">
+            <p className="text-[11px] leading-relaxed text-neutral-400">▤ {r.gaps.factor}</p>
+            <p className="mt-0.5 text-[10px] leading-relaxed text-neutral-600">{r.gaps.evidence}</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function TechnicalDetails({ items }: { items: BiasItem[] }) {
   const tech = items.filter((b) => b.dimension === "技術面");
   if (tech.length === 0) return null;
@@ -894,9 +991,13 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
         </div>
       </Section>
 
+      {/* Regime first: what kind of market this is decides how much every
+          signal below is worth. */}
+      <MarketRegime items={signal.bias_items ?? []} />
+
       <ChartPatterns patterns={signal.chart_patterns ?? []} />
 
-      <TechnicalDetails items={signal.bias_items} />
+      <TechnicalDetails items={signal.bias_items ?? []} />
 
       {/* Six dimensions — the main "why", so it stays open. */}
       <Card>

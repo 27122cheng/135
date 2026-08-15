@@ -192,12 +192,24 @@ export function TradePlanCard({
               </span>
             )}
             <span className="ml-2 text-neutral-600">n={backtest.resolved}</span>
+            {typeof backtest.costPct === "number" && backtest.costPct > 0 && (
+              <span className="ml-2 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
+                已扣成本 {backtest.costPct}%
+              </span>
+            )}
           </summary>
           <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
             以相同的停損／停利「相對距離」逐根回測（最多持有 {backtest.horizonBars} 根）：
             {backtest.wins} 勝 / {backtest.losses} 敗 / {backtest.timeouts} 次未觸及。
             {backtest.basis ? `樣本取法：${backtest.basis}。` : null}
           </p>
+          {typeof backtest.costPct === "number" && backtest.costPct > 0 && (
+            <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500">
+              勝負是<span className="text-neutral-300">扣掉來回交易成本 {backtest.costPct}%</span>
+              之後才認定的 —— 停利要多走這段距離才算贏，停損則多賠這段。
+              毛勝率永遠比這個數字好看，而好看的那個沒有人交易得到。
+            </p>
+          )}
           <p className="mt-1.5 text-[11px] leading-relaxed text-amber-500/70">
             這檢驗的是「這組距離配置」在
             {backtest.conditioned ? "與訊號同向的格局下" : "本商品全部歷史波動下"}
