@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { SessionStrip } from "@/components/session-strip";
 import { cn } from "@/lib/utils";
 
 /**
@@ -41,16 +42,22 @@ interface Destination {
   hint: string;
 }
 
-/** The daily loop, in the order it is actually used. */
+/**
+ * The six-page architecture, in the order a session actually runs:
+ * what is the market doing → which instruments rank → this one in detail →
+ * what am I holding → what did it all earn.
+ */
 export const PRIMARY: Destination[] = [
-  { href: "/board", label: "總覽", hint: "九個商品現在有沒有交易" },
-  { href: "/", label: "分析", hint: "單一商品的完整分析與交易計畫" },
-  { href: "/history", label: "歷史", hint: "過去產生過的訊號" },
-  { href: "/review", label: "復盤", hint: "結算成績、期望值與自動干涉" },
+  { href: "/board", label: "總覽", hint: "美元格局、風險情緒、類別強弱、經濟數據倒數" },
+  { href: "/ranking", label: "排名", hint: "依趨勢品質排序，附相關性檢查" },
+  { href: "/", label: "詳情", hint: "單一商品的完整分析與交易計畫" },
+  { href: "/positions", label: "持倉", hint: "追蹤中的部位、移動停損與合併風險敞口" },
+  { href: "/review", label: "總結", hint: "成績單、期望值、教訓學習與交易紀錄" },
 ];
 
 /** Setup — visited when something needs fixing, not every day. */
 export const SECONDARY: Destination[] = [
+  { href: "/history", label: "歷史", hint: "過去產生過的訊號" },
   { href: "/setup", label: "通知", hint: "Telegram／Discord 與資料表" },
   { href: "/settings", label: "金鑰", hint: "AI 與資料源金鑰" },
   { href: "/symbols", label: "標的", hint: "自訂追蹤的商品" },
@@ -112,6 +119,12 @@ export function SiteNav({ title }: { title: string }) {
           );
         })}
       </nav>
+
+      {/* 全站常駐：a 24-hour market has no bell, so every page says which
+          session produced the numbers on it. */}
+      <div className="mt-2">
+        <SessionStrip />
+      </div>
     </header>
   );
 }

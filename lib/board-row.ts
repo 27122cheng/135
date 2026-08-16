@@ -1,5 +1,6 @@
 import { COMMODITIES, type AddOnLevel, type Grade, type SignalRow } from "@/types/signal";
 import { groupDataGaps } from "@/lib/data-gaps";
+import { summariseRegime } from "@/lib/analysis/regime-summary";
 
 export interface BoardAddOn {
   sequence: number;
@@ -104,6 +105,20 @@ export interface BoardRow {
   generatedAt: string | null;
   /** How many data gaps the scan reported — a count, not the list. */
   gapCount: number;
+  /**
+   * 趨勢品質 — what the ranking page sorts on.
+   *
+   * The grade answers "is this tradeable"; it says nothing about whether the
+   * market is trending or chopping, and a B-grade in a clean trend is a
+   * different proposition from a B-grade in a round trip. Derived from the
+   * stored bias items via the same summary the detail card reads, so the two
+   * pages cannot disagree about what regime an instrument is in.
+   */
+  trendPhase: "up" | "down" | "mixed" | null;
+  /** Kaufman efficiency ratio 0..1, or null on a row written before it existed. */
+  trendEfficiency: number | null;
+  /** True when both the daily structure and the weekly anchor agree. */
+  weeklyAligned: boolean;
 }
 
 /**
@@ -157,6 +172,9 @@ export function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | 
       reference: null,
       generatedAt: null,
       gapCount: 0,
+      trendPhase: null,
+      trendEfficiency: null,
+      weeklyAligned: false,
     };
   }
 
@@ -191,5 +209,19 @@ export function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | 
           return g.keyRelated.length + g.other.length;
         })()
       : 0,
+    ...(() => {
+      // One summary, read the same way the detail card reads it, so the
+      // ranking and the analysis page can never describe different regimes.
+      const r = summariseRegime(row.bias_items);
+      const phase =
+        r.structure.tone === "long" ? "up" : r.structure.tone === "short" ? "down" : "mixed";
+      const er = Number.parseFloat(r.efficiency.label);
+      return {
+        trendPhase: r.structure.label === "—" ? null : (phase as "up" | "down" | "mixed"),
+        trendEfficiency: Number.isFinite(er) ? er : null,
+        weeklyAligned:
+          r.weekly.tone !== "neutral" && r.weekly.tone === r.structure.tone,
+      };
+    })(),
   };
 }

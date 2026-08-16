@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { BoardRow } from "@/app/api/board/route";
 import { usdExposure } from "@/lib/board-row";
 import { SiteNav } from "@/components/site-nav";
+import { EconomicCountdown } from "@/components/economic-countdown";
 import { userKeyHeaders } from "@/lib/user-keys-client";
 import { CONFIDENT_ENTRY_MIN } from "@/lib/analysis/confidence";
 
@@ -526,6 +527,8 @@ export default function BoardPage() {
           每 4 小時自動掃描
         </label>
       </div>
+
+      <EconomicCountdown />
 
       {error && (
         <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-400">
