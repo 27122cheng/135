@@ -62,10 +62,29 @@ export interface Confidence {
   factors: string[];
 }
 
+/**
+ * The base each grade starts from, aligned to the entry bar on purpose.
+ *
+ * B was 55 against a bar of 60, which made the two gates contradict each
+ * other: `MIN_ENTRY_GRADE` declares B tradeable, and then a *flawless* B —
+ * no data gaps, AI available, geometry sound — scored 58 and stood aside
+ * anyway. Measured, not theorised: A+ 83 / A 73 / B 58 on clean inputs. So
+ * the grade table said one thing and the confidence gate quietly overruled
+ * it every single time, which is a whole tier of the scoring system that
+ * could never fire.
+ *
+ * B now starts exactly at the bar. That is the coherent reading of what the
+ * two constants already claim: the grade decides whether a setup qualifies,
+ * and confidence is a *veto for degraded conditions* — gaps, a spent AI
+ * tier, a thin backtest — rather than a second grading system with its own
+ * private opinion. A clean B trades; a B with three sources down does not.
+ * Nothing above B moves, and no win-rate floor is touched: the 70% backtest
+ * gate still has to pass before any of this is reached.
+ */
 const GRADE_BASE: Record<string, number> = {
   "A+": 80,
   A: 70,
-  B: 55,
+  B: 60,
   C: 40,
   "no-trade": 20,
 };

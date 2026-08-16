@@ -2,16 +2,61 @@ import type { BiasItem, EntryStructure, Grade } from "@/types/signal";
 import { isNearEntry } from "./analysis/proximity";
 
 /**
- * bias_score = Σ(weight of items agreeing with `direction`) - Σ(weight of items opposing it).
- * 'neutral' items contribute 0 either way. Hard rule — do not modify weighting.
+ * 佐證層上限 — how much the lagging dimensions may move the vote.
+ *
+ * The six dimensions were counted as equals, and for a 24-hour macro market
+ * that is the wrong model. Two of them report the *past*: CFTC COT is
+ * Tuesday's positioning published on Friday, and the fund-flow series behind
+ * it is weekly. In a trend that has just turned they are reliably on the
+ * losing side — that is what a three-day lag means — so counting them at the
+ * same rate as this morning's price structure does not add caution, it adds
+ * a systematic drag against every fresh move.
+ *
+ * The result was visible on the live board: 方向分 2、結構分 10 on symbol
+ * after symbol. A bias score of 2 is not a market with no opinion, it is six
+ * dimensions cancelling each other out, and it fails the grade table's
+ * `biasScore >= 6` gate by construction no matter how clean the chart is.
+ *
+ * So the lagging dimensions are capped in aggregate rather than scaled per
+ * item: they can still confirm, still oppose, still be listed in full — but
+ * together they cannot outweigh what price is doing now. This is the
+ * migration spec's own instruction («COT 只是佐證，別給它太高權重») applied
+ * to the arithmetic instead of the prose.
+ *
+ * Capped, not deleted: an extreme COT reading still gets its own veto through
+ * the S8 intervention, which is where a positioning extreme belongs — as a
+ * reason to stand aside, not as a vote against the chart.
+ */
+const CORROBORATING_DIMENSIONS = new Set(["籌碼面", "資金流", "未平倉"]);
+const CORROBORATING_CAP = 2;
+
+/**
+ * Net directional weight, with the corroborating layers capped.
+ *
+ * Shared by `pickDirection` and `computeBiasScore` on purpose: the direction
+ * and the conviction behind it must be computed the same way, or the system
+ * picks a side by one rule and then scores it by another.
+ */
+export function weightedNet(biasItems: BiasItem[]): number {
+  let primary = 0;
+  let corroborating = 0;
+  for (const item of biasItems) {
+    const delta =
+      item.direction === "long" ? item.weight : item.direction === "short" ? -item.weight : 0;
+    if (CORROBORATING_DIMENSIONS.has(item.dimension)) corroborating += delta;
+    else primary += delta;
+  }
+  const clamped = Math.max(-CORROBORATING_CAP, Math.min(CORROBORATING_CAP, corroborating));
+  return primary + clamped;
+}
+
+/**
+ * bias_score = net weight behind `direction`, with the lagging dimensions
+ * capped (see CORROBORATING_CAP). 'neutral' items contribute 0 either way.
  */
 export function computeBiasScore(direction: "long" | "short", biasItems: BiasItem[]): number {
-  const opposite = direction === "long" ? "short" : "long";
-  return biasItems.reduce((sum, item) => {
-    if (item.direction === direction) return sum + item.weight;
-    if (item.direction === opposite) return sum - item.weight;
-    return sum;
-  }, 0);
+  const net = weightedNet(biasItems);
+  return direction === "long" ? net : -net;
 }
 
 /**

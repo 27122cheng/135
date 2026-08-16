@@ -25,7 +25,7 @@ import {
 } from "./analysis/trade-plan";
 import { buildAddOns } from "./analysis/add-on";
 import { CONFIDENT_ENTRY_MIN, clearsEntryBar, planConfidence } from "./analysis/confidence";
-import { applyTrendAlignmentGate, gradeAllowsEntry, scoreSignal } from "./scoring";
+import { applyTrendAlignmentGate, gradeAllowsEntry, scoreSignal, weightedNet } from "./scoring";
 import { collapseCascades } from "./data-gaps";
 import { buildStopLoss, buildTakeProfits } from "./entry-exit";
 import { getSignalStore } from "./db";
@@ -118,11 +118,10 @@ async function highImpactWithin24h(
 }
 
 function pickDirection(biasItems: BiasItem[]): { direction: "long" | "short"; tie: boolean } {
-  const net = biasItems.reduce((sum, item) => {
-    if (item.direction === "long") return sum + item.weight;
-    if (item.direction === "short") return sum - item.weight;
-    return sum;
-  }, 0);
+  // The same weighting `computeBiasScore` uses, deliberately: picking a side
+  // by a flat vote and then scoring conviction by a capped one would let the
+  // system commit to a direction its own score cannot justify.
+  const net = weightedNet(biasItems);
   if (net === 0) return { direction: "long", tie: true };
   return { direction: net > 0 ? "long" : "short", tie: false };
 }

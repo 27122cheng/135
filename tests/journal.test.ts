@@ -11,9 +11,10 @@ import {
   triggeredTags,
 } from "@/lib/journal/interventions";
 import { computeReviewStats, computeTrackRecord } from "@/lib/journal/stats";
-import { applyTrendAlignmentGate, gradeSignal } from "@/lib/scoring";
+import { applyTrendAlignmentGate, computeBiasScore, gradeSignal, weightedNet } from "@/lib/scoring";
 import type { JournalEntry } from "@/types/journal";
 import type { BiasItem, Grade } from "@/types/signal";
+import { CONFIDENT_ENTRY_MIN, planConfidence } from "@/lib/analysis/confidence";
 
 const GRADES: Grade[] = ["no-trade", "C", "B", "A", "A+"];
 const rank = (g: Grade) => GRADES.indexOf(g);
@@ -71,6 +72,50 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
   check("but still has an expectancy", allWins.expectancyPct === 1.5, allWins.expectancyPct);
 }
 
+// ── 層與層的統一：佐證層不得蓋過價格行為 ─────────────────────────
+//
+// The live board read 方向分 2、結構分 10 on symbol after symbol, and a bias
+// score of 2 fails the grade table's >=6 gate however clean the chart is.
+// The cause was six dimensions counted as equals — including two that report
+// the past (CFTC COT is Tuesday's data published Friday) and are therefore
+// reliably against any move that has just started.
+{
+  const it = (dimension: string, direction: "long" | "short", weight: 0 | 1 | 2): BiasItem =>
+    ({ dimension, direction, weight, factor: "f", evidence: "e" }) as BiasItem;
+
+  // Price action clearly long (+7); the lagging layers lean short (-5).
+  const freshTrend = [
+    it("技術面", "long", 2), it("技術面", "long", 2), it("技術面", "long", 1),
+    it("技術面", "long", 1), it("基本面", "long", 1),
+    it("籌碼面", "short", 2), it("籌碼面", "short", 1),
+    it("資金流", "short", 1), it("未平倉", "short", 1),
+  ];
+  check("the lagging layers are capped, not counted in full",
+    weightedNet(freshTrend) === 5, weightedNet(freshTrend));
+  check("and bias_score follows the same rule",
+    computeBiasScore("long", freshTrend) === 5);
+  check("the losing side is the negation, not a separate computation",
+    computeBiasScore("short", freshTrend) === -5);
+
+  // The cap is symmetric: corroboration cannot inflate either.
+  const piled = [
+    it("技術面", "long", 2),
+    it("籌碼面", "long", 2), it("籌碼面", "long", 2),
+    it("資金流", "long", 2), it("未平倉", "long", 2),
+  ];
+  check("stacked corroboration cannot exceed the cap",
+    weightedNet(piled) === 4, weightedNet(piled));
+
+  // With nothing but corroboration, the cap is the whole score — enough to
+  // pick a side, never enough to reach the A gate on its own.
+  const onlyCot = [it("籌碼面", "long", 2), it("資金流", "long", 2)];
+  check("corroboration alone tops out at the cap", weightedNet(onlyCot) === 2);
+
+  // Nothing changes when only price action speaks.
+  const pureTechnical = [it("技術面", "short", 2), it("技術面", "short", 2)];
+  check("the primary layers are untouched", weightedNet(pureTechnical) === -4);
+}
+
 // ── 實績校準 — realized outcomes audit the backtest floor ─────────
 {
   const real = (result: "win" | "loss") =>
@@ -123,6 +168,29 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
   check("A band unchanged", gradeSignal(6, 4, 10) === "A");
   check("B band unchanged", gradeSignal(5, 4, 9) === "B");
   check("C band unchanged", gradeSignal(2, 2, 4) === "C");
+
+  // ── the two gates must agree ──
+  // MIN_ENTRY_GRADE declares B tradeable; a flawless B used to score 58
+  // against a bar of 60 and stand aside anyway, so a whole tier of the
+  // grade table could never fire. Confidence is a veto for *degraded*
+  // conditions, not a second grade with a private opinion.
+  {
+    const clean = (grade: string) =>
+      planConfidence({
+        grade, direction: "long", bias_items: [], data_gaps: [],
+        trade_plan: { risk_reward: null, decided_by: "ai" }, plan_backtest: null,
+      } as never).score;
+    check("a flawless B now reaches the entry bar",
+      clean("B") >= CONFIDENT_ENTRY_MIN, clean("B"));
+    check("and a degraded one still does not",
+      planConfidence({
+        grade: "B", direction: "long", bias_items: [],
+        data_gaps: ["來源 A 取得失敗", "來源 B 取得失敗", "來源 C 取得失敗"],
+        trade_plan: { risk_reward: null, decided_by: "fallback" }, plan_backtest: null,
+      } as never).score < CONFIDENT_ENTRY_MIN);
+    check("C stays below the bar whatever happens", clean("C") < CONFIDENT_ENTRY_MIN);
+    check("the ordering is preserved", clean("A+") > clean("A") && clean("A") > clean("B"));
+  }
   check("disqualifiers still win", gradeSignal(0, 5, 14) === "no-trade");
   check("total 10-13 with weak bias stays no-trade", gradeSignal(3, 9, 12) === "no-trade");
 
