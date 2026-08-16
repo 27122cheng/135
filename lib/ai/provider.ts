@@ -45,6 +45,24 @@ export interface CompleteOptions {
   maxTokens?: number;
   temperature?: number;
   timeoutMs?: number;
+  /**
+   * A stable identity for "this question, this bar" — overrides the default
+   * hash-of-the-prompt cache key.
+   *
+   * The default key was structurally useless. Prompts embed the live price
+   * and every current indicator reading, so an hourly sweep produced a
+   * different prompt — and therefore a different key — every single time,
+   * and the 4-hour AI cache never once hit. Nine symbols × three calls ×
+   * hourly is ~430 model calls a day against free tiers that allow between
+   * 20 and 1500, which is why every provider ends the day rate-limited.
+   *
+   * Callers that know the H4 bar the analysis is built on pass
+   * `symbol:barTime` instead. Inside one bar the inputs genuinely have not
+   * moved — the system's own doctrine says a rescan then "buys a
+   * differently-worded answer to identical facts" — so reusing the answer
+   * is not a compromise, it is the honest interval applied to the model too.
+   */
+  cacheKey?: string;
 }
 
 export interface AIProvider {

@@ -211,6 +211,8 @@ export async function analyzeNews(
   gdeltQuery: string,
   finnhubKeywords: string[],
   gaps: string[],
+  /** `symbol:h4BarTime` — see CompleteOptions.cacheKey. */
+  aiCacheKey?: string,
 ): Promise<NewsAnalysisResult> {
   const [gdelt, finnhub] = await Promise.all([
     fetchGdeltNews(gdeltQuery, gaps),
@@ -245,6 +247,7 @@ export async function analyzeNews(
   // both the prompt and the digest's source list — the indices must line up.
   const shown = articles.slice(0, PROMPT_LIMIT);
   const result = await completeAI(buildPrompt(shown), analysisSchema(shown.length), gaps, {
+    cacheKey: aiCacheKey,
     maxTokens: 900,
   });
   if (!result) {

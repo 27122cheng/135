@@ -56,6 +56,41 @@ export function isModelError(status: number, detail: string): boolean {
  * shares the clock, and three probes in the same minute is spending exactly
  * what ran out.
  */
+/**
+ * How long a rate-limit response asked us to wait, in milliseconds.
+ *
+ * Groq's 429 states it outright — "Please try again in 19.98s" — and that
+ * sentence was being thrown away with the rest of the error, so a per-minute
+ * limit that would have cleared in twenty seconds cost the whole analysis its
+ * AI and dropped it onto local rules for the next four hours of cache. When
+ * the wait is short enough to sit inside the function's own budget, waiting
+ * it out is strictly better than falling back.
+ *
+ * Returns null when no wait is stated, or when the stated wait is too long to
+ * be worth blocking a serverless invocation on — the caller then falls back
+ * as before. Deliberately capped rather than trusted: a provider answering
+ * "try again in 900s" must not hold a 60-second function open.
+ */
+export const MAX_RETRY_WAIT_MS = 22_000;
+
+export function retryAfterMs(detail: string, headerValue?: string | null): number | null {
+  // The standard header first — it is machine-readable and unambiguous.
+  if (headerValue) {
+    const seconds = Number.parseFloat(headerValue);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      const ms = seconds * 1000;
+      return ms <= MAX_RETRY_WAIT_MS ? Math.ceil(ms) : null;
+    }
+  }
+  const match = /try again in ([\d.]+)\s*(ms|s|m)\b/i.exec(detail);
+  if (!match) return null;
+  const value = Number.parseFloat(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const unit = match[2].toLowerCase();
+  const ms = unit === "ms" ? value : unit === "m" ? value * 60_000 : value * 1000;
+  return ms <= MAX_RETRY_WAIT_MS ? Math.ceil(ms) : null;
+}
+
 export function isPerModelQuotaError(status: number, detail: string): boolean {
   if (status !== 429) return false;
   if (/per day|per-day|TPD|RPD|daily/i.test(detail)) return true;

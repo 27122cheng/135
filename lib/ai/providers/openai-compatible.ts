@@ -1,7 +1,13 @@
 import { getKey } from "@/lib/api-keys";
 import type { UserSettableKey } from "@/lib/api-key-names";
 import { postJson } from "../http";
-import { isModelError, isPerModelQuotaError, modelCandidates, rememberModel } from "../model-fallback";
+import {
+  isModelError,
+  isPerModelQuotaError,
+  modelCandidates,
+  rememberModel,
+  retryAfterMs,
+} from "../model-fallback";
 import { AIProviderError, type AIProvider, type CompleteOptions, type ResponseSchema } from "../provider";
 
 /**
@@ -46,18 +52,35 @@ export function openAICompatibleProvider(config: OpenAICompatibleConfig): AIProv
 
       let body: ChatResponse | null = null;
       let lastModelError: string | null = null;
+      /** One short wait per call, not per model — see retryAfterMs. */
+      let waited = false;
       for (const model of models) {
-        const res = await postJson(
-          `${config.baseUrl}/chat/completions`,
-          { authorization: `Bearer ${apiKey}`, ...config.extraHeaders },
-          {
-            model,
-            messages: [{ role: "user", content: `${prompt}\n\n${schema.instruction}` }],
-            max_tokens: options.maxTokens ?? 900,
-            temperature: options.temperature ?? 0.2,
-          },
-          options.timeoutMs ?? 25000,
-        );
+        const ask = () =>
+          postJson(
+            `${config.baseUrl}/chat/completions`,
+            { authorization: `Bearer ${apiKey}`, ...config.extraHeaders },
+            {
+              model,
+              messages: [{ role: "user", content: `${prompt}\n\n${schema.instruction}` }],
+              max_tokens: options.maxTokens ?? 900,
+              temperature: options.temperature ?? 0.2,
+            },
+            options.timeoutMs ?? 25000,
+          );
+        let res = await ask();
+
+        // A per-minute limit that clears in twenty seconds is not a reason to
+        // spend the next four hours on local rules. Groq states the wait in
+        // the error itself; if it is short, take it — once.
+        if (!res.ok && res.status === 429 && !waited) {
+          const detail = (res.json as ChatResponse | null)?.error?.message ?? res.detail ?? "";
+          const wait = retryAfterMs(detail);
+          if (wait !== null) {
+            waited = true;
+            await new Promise((resolve) => setTimeout(resolve, wait));
+            res = await ask();
+          }
+        }
 
         if (!res.ok) {
           const detail = (res.json as ChatResponse | null)?.error?.message ?? res.detail;

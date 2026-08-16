@@ -11,6 +11,7 @@ import { geminiProvider } from "./providers/gemini";
 import { openAICompatibleProvider } from "./providers/openai-compatible";
 import { anthropicProvider } from "./providers/anthropic";
 import { getCached, setCached } from "@/lib/data-sources/cache";
+import { isForced } from "@/lib/data-sources/free-source";
 
 export * from "./provider";
 
@@ -204,8 +205,12 @@ export async function completeAI<T>(
   // Identical question, still inside the same H4 bar → reuse the answer.
   // Checked before the provider list so it costs nothing even when every
   // provider is rate-limited: a cached answer is better than a fallback.
-  const cacheKey = promptKey(schema.name, prompt);
-  const cached = getCached<AIResult<T>>(cacheKey);
+  const cacheKey = options?.cacheKey
+    ? `ai:${schema.name}:${options.cacheKey}`
+    : promptKey(schema.name, prompt);
+  // 重新分析 means it. A manual rescan replaying a four-hour-old narrative is
+  // the same empty refresh the data layer's force flag exists to prevent.
+  const cached = isForced() ? null : getCached<AIResult<T>>(cacheKey);
   if (cached) return cached;
 
   const providers = orderedProviders();

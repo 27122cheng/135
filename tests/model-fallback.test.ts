@@ -1,7 +1,12 @@
 import { check, report, stubFetch } from "./_harness";
 import { __resetCacheForTests } from "@/lib/data-sources/cache";
 import { __resetQuotaForTests } from "@/lib/data-sources/quota";
-import { __resetModelMemoryForTests, isModelError, isPerModelQuotaError } from "@/lib/ai/model-fallback";
+import {
+  __resetModelMemoryForTests,
+  isModelError,
+  isPerModelQuotaError,
+  retryAfterMs,
+} from "@/lib/ai/model-fallback";
 import { completeAI, testAIProviders, textSchema } from "@/lib/ai";
 
 /**
@@ -141,6 +146,28 @@ async function main() {
       !isPerModelQuotaError(429, "Too Many Requests"));
     check("only 429s qualify",
       !isPerModelQuotaError(400, "quota exceeded per day"));
+  }
+
+  // ── the wait the provider itself asked for ────────────────────────
+  //
+  // Groq's 429 states it: "Please try again in 19.98s". Throwing that away
+  // cost the analysis its AI over a limit that clears inside one function
+  // call — but a wait long enough to hold a serverless invocation open is
+  // refused rather than obeyed.
+  {
+    check("a short stated wait is taken",
+      retryAfterMs("Rate limit reached … Please try again in 19.98s") === 19980);
+    check("milliseconds parse too",
+      retryAfterMs("Please try again in 800ms") === 800);
+    check("a long wait is refused",
+      retryAfterMs("Please try again in 900s") === null);
+    check("minutes are refused as too long",
+      retryAfterMs("Please try again in 5m") === null);
+    check("no stated wait means no wait", retryAfterMs("Too Many Requests") === null);
+    check("the Retry-After header wins when present",
+      retryAfterMs("Please try again in 900s", "12") === 12000);
+    check("and an over-long header is still refused",
+      retryAfterMs("whatever", "600") === null);
   }
 
   report("model fallback");

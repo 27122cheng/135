@@ -123,7 +123,13 @@ export function withFreshData<T>(fn: () => Promise<T>): Promise<T> {
   return forceStore.run(true, fn);
 }
 
-function isForced(): boolean {
+/**
+ * Whether the current call tree asked for fresh data. Exported so the AI
+ * layer can honour 重新分析 too: its answers are cached for four hours, and a
+ * manual rescan that replayed a cached narrative would be the same "refresh
+ * that refreshes nothing" this flag was introduced to end.
+ */
+export function isForced(): boolean {
   return forceStore.getStore() === true;
 }
 

@@ -51,6 +51,11 @@ export interface TradePlanInput {
    * operator set are minimums, never relaxed from here.
    */
   dayHitRateFloorBump?: number;
+  /**
+   * `symbol:h4BarTime` — a stable identity for the AI cache, so an hourly
+   * sweep inside one H4 bar asks the model once rather than four times.
+   */
+  aiCacheKey?: string;
 }
 
 /** The day profile with the calibration bump applied, capped below certainty. */
@@ -727,6 +732,7 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
   // that blamed the reader for a setting they had got right.
   let unavailable: AiUnavailable | null = null;
   const result = await completeAI(buildPrompt(input), PLAN_SCHEMA, gaps, {
+    cacheKey: input.aiCacheKey,
     maxTokens: 900,
     onUnavailable: (why) => {
       unavailable = why;

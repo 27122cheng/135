@@ -222,7 +222,7 @@ async function buildSignalForSymbol(
     const positioning = await analyzePositioning(meta, config, gaps);
     const [fundamentalItems, news, fundFlowItems] = await Promise.all([
       analyzeFundamental(meta, config, gaps),
-      analyzeNews(config.gdeltQuery, config.newsKeywords, gaps),
+      analyzeNews(config.gdeltQuery, config.newsKeywords, gaps, meta.symbol),
       analyzeFundFlow(meta, config, positioning.reports, gaps),
     ]);
     return { positioning, fundamentalItems, news, fundFlowItems };
@@ -551,7 +551,7 @@ async function buildSignalForSymbol(
     })),
   };
   const narrative = gradeAllowsEntry(grade)
-    ? await generateNarrative(narrativeInput, gaps)
+    ? await generateNarrative(narrativeInput, gaps, meta.symbol)
     : ruleNarrative(narrativeInput, `評等 ${grade} 不可交易，未動用 AI 額度`);
 
   // The single actionable recommendation. Candidates come from the real
@@ -593,6 +593,10 @@ async function buildSignalForSymbol(
       // the journal says the 70% floor has been delivering far less, the
       // floor rises until the scoreboard recovers.
       dayHitRateFloorBump: effects.dayHitRateFloorBump,
+      // One model call per symbol per cache window, not one per sweep: the
+      // prompt embeds live prices, so hashing it made every hourly scan a
+      // fresh question and the 4-hour cache never once hit.
+      aiCacheKey: meta.symbol,
     },
     gaps,
   );

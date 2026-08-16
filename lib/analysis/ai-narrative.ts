@@ -52,13 +52,18 @@ const SCHEMA = textSchema(
  * Goes through the provider chain (lib/ai), so it works on whichever free tier
  * is configured and degrades to deterministic local prose when none is.
  */
-export async function generateNarrative(input: NarrativeInput, gaps: string[]): Promise<string> {
+export async function generateNarrative(
+  input: NarrativeInput,
+  gaps: string[],
+  /** `symbol:h4BarTime` — see CompleteOptions.cacheKey for why. */
+  cacheKey?: string,
+): Promise<string> {
   const prompt =
     `你是交易訊號的綜合分析助手。以下是結構化 JSON 資料，請只根據這些資料進行推論並指出潛在衝突` +
     `（例如某個面向的方向與整體訊號方向相反）。不准補充未提供的事實或數字，不准臆測未包含在資料中的消息。\n\n` +
     JSON.stringify(input, null, 2);
 
-  const result = await completeAI(prompt, SCHEMA, gaps, { maxTokens: 700 });
+  const result = await completeAI(prompt, SCHEMA, gaps, { maxTokens: 700, cacheKey });
   if (!result) {
     gaps.push("AI 綜合敘述改用本地備援文字");
     return fallbackNarrative(input);
