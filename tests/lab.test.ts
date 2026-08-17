@@ -99,6 +99,17 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
   check("no combination repeats a condition",
     r.pairs.every((f) => new Set(f.ids).size === f.ids.length));
   check("cost is deducted and stated", r.costPct > 0, r.costPct);
+
+  // 結算率 — every entry the walk took is accounted for, not only the ones
+  // that reached a stop or a target. A hit rate over a self-selected subset is
+  // the quiet way a backtest flatters itself.
+  const all = [r.baseline.inSample, r.baseline.outOfSample, ...r.solo.map((f) => f.inSample)];
+  check("every entry taken is counted, resolved or not",
+    all.every((s) => s.entries >= s.trades && s.unresolved === s.entries - s.trades), all);
+  check("and a condition never reports more resolutions than entries",
+    [...r.solo, ...r.pairs].every((f) => f.inSample.trades <= f.inSample.entries));
+  check("the resolution rate is stated in the report",
+    r.notes.some((n) => n.includes("結算率")), r.notes);
 }
 
 // ── a relentless uptrend should favour long conditions ────────────

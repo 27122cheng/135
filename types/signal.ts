@@ -409,7 +409,38 @@ export interface TradeSignal {
   } | null;
   /** Every reason the computed grade was overruled, in the order applied. */
   downgrades?: string[];
+  /**
+   * 實驗室已採用條件 — the measured entry requirement checked on this bar.
+   *
+   * Present only when a condition combination has been adopted for this symbol
+   * and direction (see lib/analysis/lab-adoption.ts). It can hold a plan back
+   * and can never let one through: `blocked` is true exactly when this gate is
+   * what turned an entry into a wait.
+   */
+  lab_gate?: LabGate | null;
   data_gaps: string[];
+}
+
+/** The live check of an adopted lab condition combination. */
+export interface LabGate {
+  ids: string[];
+  labels: string[];
+  /** Every adopted condition holds on the latest bar. */
+  met: boolean;
+  checks: { id: string; label: string; met: boolean }[];
+  /**
+   * Why the gate could not be checked at all; null when it was checked.
+   * Unevaluable always means `met: false` — "we couldn't look" is not a pass.
+   */
+  unevaluable: string | null;
+  adopted_at: string;
+  /** The numbers the combination was adopted on, so the card can show its provenance. */
+  in_sample_hit_rate: number;
+  in_sample_trades: number;
+  out_of_sample_hit_rate: number;
+  out_of_sample_trades: number;
+  /** True when this gate is what withdrew an otherwise-enterable plan. */
+  blocked: boolean;
 }
 
 /** Shape of a row in the Supabase `signals` table (see supabase/schema.sql). */

@@ -1,7 +1,7 @@
 import type { BiasItem, CommodityMeta, SupportedSymbol, TradeSignal } from "@/types/signal";
 import { COMMODITIES } from "@/types/signal";
 import { FUNDAMENTALS_CONFIG, type FundamentalsConfig } from "@/config/fundamentals";
-import { fetchOHLCV } from "./data-sources/ohlcv";
+import { fetchOHLCV, type Candle } from "./data-sources/ohlcv";
 import { fetchLatestPrice } from "./data-sources/yfinance";
 import { atr as computeAtr } from "./analysis/indicators";
 import { analyzeTechnical } from "./analysis/technical";
@@ -24,6 +24,13 @@ import {
   selectSwingVariant,
 } from "./analysis/trade-plan";
 import { buildAddOns } from "./analysis/add-on";
+import {
+  describeGate,
+  evaluateAdoption,
+  findAdoption,
+  loadAdoptionsFor,
+  type LabAdoption,
+} from "./analysis/lab-adoption";
 import { CONFIDENT_ENTRY_MIN, clearsEntryBar, planConfidence } from "./analysis/confidence";
 import { applyTrendAlignmentGate, gradeAllowsEntry, scoreSignal, weightedNet } from "./scoring";
 import { collapseCascades } from "./data-gaps";
@@ -216,6 +223,9 @@ async function buildSignalForSymbol(
   ]);
   // Journal history is independent of every market call, so it loads alongside them.
   const interventionsPromise = loadInterventions(meta.symbol, gaps);
+  // 實驗室已採用條件 — same story, and the settings cache makes nine symbols
+  // in one scan cost one round trip.
+  const adoptionsPromise = loadAdoptionsFor(meta.symbol, gaps);
   const nonTechnicalPromise = (async () => {
     // Positioning first — fundFlow reuses its COT reports instead of re-fetching.
     const positioning = await analyzePositioning(meta, config, gaps);
@@ -227,10 +237,11 @@ async function buildSignalForSymbol(
     return { positioning, fundamentalItems, news, fundFlowItems };
   })();
 
-  const [[d1, h4, w1], nonTechnical, effects] = await Promise.all([
+  const [[d1, h4, w1], nonTechnical, effects, adoptions] = await Promise.all([
     ohlcvPromise,
     nonTechnicalPromise,
     interventionsPromise,
+    adoptionsPromise,
   ]);
   const { positioning, fundamentalItems, news, fundFlowItems } = nonTechnical;
   const interventions: AppliedIntervention[] = [...effects.applied];
@@ -802,5 +813,58 @@ async function buildSignalForSymbol(
     };
   }
 
+  applyLabGate(signal, adoptions, d1?.candles);
+
   return signal;
+}
+
+/**
+ * 實驗室閘門 — the last gate, and the only one whose threshold was measured
+ * rather than argued.
+ *
+ * Runs after everything else because it is a veto, not an input: by this point
+ * the analysis has already decided what it thinks, and this asks the separate
+ * question of whether the entry condition the operator adopted — one that
+ * cleared 80% on 100+ trades in-sample *and* held up on history the search
+ * never saw — actually holds on the current bar.
+ *
+ * It can only subtract. If the plan was already a wait, nothing changes and the
+ * gate is still attached so the card can show that the requirement is live and
+ * being checked. `blocked` marks the one case where this gate is what withdrew
+ * the trade, which keeps the reason attributable instead of blurring into the
+ * confidence message that may also have applied.
+ */
+function applyLabGate(
+  signal: TradeSignal,
+  adoptions: LabAdoption[],
+  candles: Candle[] | undefined,
+): void {
+  // An adoption is scoped to a direction: a long combination says nothing about
+  // whether a short is a good idea, so it must not gate one.
+  const adoption = findAdoption(adoptions, signal.symbol, signal.direction);
+  if (!adoption) return;
+
+  const gate = evaluateAdoption(adoption, candles);
+  signal.lab_gate = gate;
+  if (gate.met || signal.trade_plan.stance !== "enter") return;
+
+  gate.blocked = true;
+  const detail = describeGate(gate);
+  signal.trade_plan = {
+    ...signal.trade_plan,
+    stance: "wait",
+    summary:
+      `實驗室已採用的進場條件尚未成立（${gate.labels.join(" ＋ ")}），暫不進場。` +
+      `這組條件在 ${gate.in_sample_trades} 筆樣本內、${gate.out_of_sample_trades} 筆樣本外` +
+      `都達到 ${Math.round(gate.out_of_sample_hit_rate * 100)}% 以上的勝率，` +
+      `不符合就等 —— 下方價位仍是分析算出的真實結構，可作為掛單觀察。`,
+    wait_for: `等已採用條件全數成立。${detail}`,
+    // The three prices described a recommendation that is being withdrawn;
+    // entry_zone / stop_loss / take_profits stay, as reference.
+    entry: null,
+    stop_loss: null,
+    take_profit: null,
+    risk_reward: null,
+    add_ons: [],
+  };
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { COMMODITIES } from "@/types/signal";
 import type { LabFinding, LabReport } from "@/lib/analysis/lab";
+import type { LabAdoption } from "@/lib/analysis/lab-adoption";
 import { SiteNav } from "@/components/site-nav";
 
 /**
@@ -22,11 +23,42 @@ interface LabResponse {
   gaps?: string[];
 }
 
+interface LiveStatus {
+  symbol: string;
+  direction: "long" | "short";
+  met: boolean | null;
+  blocked: boolean;
+  detail: string | null;
+  checkedAt: string | null;
+}
+
+interface AdoptResponse {
+  adoptions?: LabAdoption[];
+  live?: LiveStatus[];
+  error?: string;
+}
+
 function pct(v: number | null | undefined): string {
   return v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`;
 }
 
-function FindingRow({ f, floor }: { f: LabFinding; floor: number }) {
+function sameCombo(a: string[], b: string[]): boolean {
+  return a.length === b.length && [...a].sort().join("+") === [...b].sort().join("+");
+}
+
+function FindingRow({
+  f,
+  floor,
+  adopted,
+  busy,
+  onAdopt,
+}: {
+  f: LabFinding;
+  floor: number;
+  adopted: boolean;
+  busy: boolean;
+  onAdopt: (ids: string[]) => void;
+}) {
   const inRate = f.inSample.hitRate ?? 0;
   const outRate = f.outOfSample.hitRate ?? 0;
   return (
@@ -40,6 +72,23 @@ function FindingRow({ f, floor }: { f: LabFinding; floor: number }) {
             通過
           </span>
         )}
+        {/* 採用 only ever appears on a combination the hold-out confirmed —
+            and the server re-verifies before believing this click anyway. */}
+        {f.verified &&
+          (adopted ? (
+            <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] text-sky-400">
+              已採用
+            </span>
+          ) : (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onAdopt(f.ids)}
+              className="ml-1.5 rounded border border-emerald-500/40 px-1.5 py-0.5 text-[10px] text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40"
+            >
+              採用
+            </button>
+          ))}
       </td>
       <td
         className={`py-2 text-right font-mono text-[11px] ${
@@ -47,7 +96,12 @@ function FindingRow({ f, floor }: { f: LabFinding; floor: number }) {
         }`}
       >
         {pct(f.inSample.hitRate)}
-        <span className="ml-1 text-[10px] text-neutral-600">n={f.inSample.trades}</span>
+        <span
+          className="ml-1 text-[10px] text-neutral-600"
+          title={`${f.inSample.trades} 筆結算／${f.inSample.entries} 次進場（${f.inSample.unresolved} 筆在 20 根內未觸及停損停利）`}
+        >
+          n={f.inSample.trades}/{f.inSample.entries}
+        </span>
       </td>
       <td
         className={`py-2 text-right font-mono text-[11px] ${
@@ -55,7 +109,12 @@ function FindingRow({ f, floor }: { f: LabFinding; floor: number }) {
         }`}
       >
         {pct(f.outOfSample.hitRate)}
-        <span className="ml-1 text-[10px] text-neutral-600">n={f.outOfSample.trades}</span>
+        <span
+          className="ml-1 text-[10px] text-neutral-600"
+          title={`${f.outOfSample.trades} 筆結算／${f.outOfSample.entries} 次進場`}
+        >
+          n={f.outOfSample.trades}/{f.outOfSample.entries}
+        </span>
       </td>
       <td
         className={`py-2 text-right font-mono text-[11px] ${
@@ -68,7 +127,19 @@ function FindingRow({ f, floor }: { f: LabFinding; floor: number }) {
   );
 }
 
-function Table({ rows, floor }: { rows: LabFinding[]; floor: number }) {
+function Table({
+  rows,
+  floor,
+  adoptedIds,
+  busy,
+  onAdopt,
+}: {
+  rows: LabFinding[];
+  floor: number;
+  adoptedIds: string[] | null;
+  busy: boolean;
+  onAdopt: (ids: string[]) => void;
+}) {
   if (rows.length === 0) {
     return <p className="py-3 text-center text-[11px] text-neutral-600">樣本不足，沒有可報告的結果</p>;
   }
@@ -85,7 +156,14 @@ function Table({ rows, floor }: { rows: LabFinding[]; floor: number }) {
         </thead>
         <tbody>
           {rows.map((f) => (
-            <FindingRow key={f.ids.join("+")} f={f} floor={floor} />
+            <FindingRow
+              key={f.ids.join("+")}
+              f={f}
+              floor={floor}
+              adopted={adoptedIds !== null && sameCombo(adoptedIds, f.ids)}
+              busy={busy}
+              onAdopt={onAdopt}
+            />
           ))}
         </tbody>
       </table>
@@ -98,6 +176,9 @@ export default function LabPage() {
   const [direction, setDirection] = useState<"long" | "short">("long");
   const [data, setData] = useState<LabResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [adopt, setAdopt] = useState<AdoptResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const run = useCallback(async () => {
     setLoading(true);
@@ -114,11 +195,75 @@ export default function LabPage() {
     }
   }, [symbol, direction]);
 
+  const loadAdoptions = useCallback(async () => {
+    try {
+      const res = await fetch("/api/lab/adopt", { cache: "no-store" });
+      setAdopt(await res.json());
+    } catch (err) {
+      setAdopt({ error: err instanceof Error ? err.message : String(err) });
+    }
+  }, []);
+
   useEffect(() => {
     void run();
   }, [run]);
 
+  useEffect(() => {
+    void loadAdoptions();
+  }, [loadAdoptions]);
+
+  const onAdopt = useCallback(
+    async (ids: string[]) => {
+      setBusy(true);
+      setNotice(null);
+      try {
+        const res = await fetch("/api/lab/adopt", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ symbol, direction, ids }),
+        });
+        const body = (await res.json()) as AdoptResponse & { error?: string };
+        if (!res.ok) {
+          setNotice(body.error ?? "採用失敗");
+        } else {
+          setAdopt(body);
+          setNotice("已採用。從下一次掃描起，這個商品這個方向的進場都要先通過這組條件。");
+          void loadAdoptions();
+        }
+      } catch (err) {
+        setNotice(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [symbol, direction, loadAdoptions],
+  );
+
+  const onRevoke = useCallback(
+    async (s: string, d: "long" | "short") => {
+      setBusy(true);
+      setNotice(null);
+      try {
+        const res = await fetch(`/api/lab/adopt?symbol=${s}&direction=${d}`, { method: "DELETE" });
+        const body = (await res.json()) as AdoptResponse & { error?: string };
+        if (!res.ok) setNotice(body.error ?? "撤銷失敗");
+        else {
+          setNotice("已撤銷，這組條件不再擋下進場。");
+          void loadAdoptions();
+        }
+      } catch (err) {
+        setNotice(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadAdoptions],
+  );
+
   const r = data?.report;
+  const adoptions = adopt?.adoptions ?? [];
+  const current = adoptions.find((a) => a.symbol === symbol && a.direction === direction) ?? null;
+  const adoptedIds = current ? current.ids : null;
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-5">
@@ -168,6 +313,89 @@ export default function LabPage() {
         </button>
       </div>
 
+      {notice && (
+        <div className="mb-3 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 text-xs leading-relaxed text-sky-300">
+          {notice}
+        </div>
+      )}
+
+      {/* 已採用 — first, because this is the part that touches real trades.
+          Everything below it is research; this is what the scanner obeys. */}
+      <section className="mb-4 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3">
+        <h2 className="mb-1.5 text-xs font-medium text-sky-300">
+          已採用的進場條件（{adoptions.length}）
+        </h2>
+        {adopt?.error && <p className="text-[11px] text-amber-400">{adopt.error}</p>}
+        {adoptions.length === 0 ? (
+          <p className="text-[10px] leading-relaxed text-neutral-500">
+            目前沒有任何條件被採用，交易建議照原本的規則產生。
+            通過驗證的組合按下「採用」後，該商品該方向的每一次進場都必須先滿足它，不滿足就只給參考價位。
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {adoptions.map((a) => {
+              const status = adopt?.live?.find(
+                (l) => l.symbol === a.symbol && l.direction === a.direction,
+              );
+              return (
+                <li
+                  key={`${a.symbol}:${a.direction}`}
+                  className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-2"
+                >
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="text-[11px] font-medium text-neutral-100">{a.symbol}</span>
+                    <span className="text-[10px] text-neutral-400">
+                      {a.direction === "long" ? "做多" : "做空"}
+                    </span>
+                    <span className="text-[11px] text-neutral-300">{a.labels.join(" ＋ ")}</span>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void onRevoke(a.symbol, a.direction)}
+                      className="ml-auto rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-400 hover:bg-neutral-800 disabled:opacity-40"
+                    >
+                      撤銷
+                    </button>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-neutral-500">
+                    <span>
+                      採用時：樣本內{" "}
+                      <span className="font-mono text-neutral-300">{pct(a.inSample.hitRate)}</span>
+                      （n={a.inSample.trades}）．樣本外{" "}
+                      <span className="font-mono text-neutral-300">
+                        {pct(a.outOfSample.hitRate)}
+                      </span>
+                      （n={a.outOfSample.trades}）
+                    </span>
+                    <span>{a.adoptedAt.slice(0, 16).replace("T", " ")} UTC</span>
+                  </div>
+                  {/* The proof it is actually running: what the newest stored
+                      signal's own gate recorded, not a re-derivation here. */}
+                  <div className="mt-1 text-[10px] leading-relaxed">
+                    {status?.met === null || !status ? (
+                      <span className="text-neutral-600">
+                        最新掃描狀態：{status?.detail ?? "尚無資料"}
+                      </span>
+                    ) : status.met ? (
+                      <span className="text-emerald-400">
+                        最新掃描：條件成立（{status.detail}），沒有擋下任何進場
+                        {status.checkedAt ? `．${status.checkedAt.slice(0, 16).replace("T", " ")} UTC` : ""}
+                      </span>
+                    ) : (
+                      <span className="text-amber-400">
+                        最新掃描：條件未成立（{status.detail}）
+                        {status.blocked ? "，已擋下一次進場建議" : "，當時本來也沒有進場建議"}
+                        {status.checkedAt ? `．${status.checkedAt.slice(0, 16).replace("T", " ")} UTC` : ""}
+                      </span>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
       {loading && <p className="py-8 text-center text-sm text-neutral-500">回測所有條件與組合中…</p>}
 
       {data?.error && (
@@ -185,14 +413,20 @@ export default function LabPage() {
               <span>
                 樣本內{" "}
                 <span className="font-mono text-neutral-200">{pct(r.baseline.inSample.hitRate)}</span>
-                <span className="text-neutral-600"> n={r.baseline.inSample.trades}</span>
+                <span className="text-neutral-600">
+                  {" "}
+                  n={r.baseline.inSample.trades}/{r.baseline.inSample.entries}
+                </span>
               </span>
               <span>
                 樣本外{" "}
                 <span className="font-mono text-neutral-200">
                   {pct(r.baseline.outOfSample.hitRate)}
                 </span>
-                <span className="text-neutral-600"> n={r.baseline.outOfSample.trades}</span>
+                <span className="text-neutral-600">
+                  {" "}
+                  n={r.baseline.outOfSample.trades}/{r.baseline.outOfSample.entries}
+                </span>
               </span>
               <span className="text-neutral-600">
                 門檻 {pct(r.floor)}．已扣成本 {r.costPct}%．{r.bars} 根 K 棒
@@ -211,9 +445,16 @@ export default function LabPage() {
               </h2>
               <p className="mb-2 text-[10px] leading-relaxed text-neutral-400">
                 樣本內 ≥100 筆、樣本外 ≥43 筆，且兩邊勝率都達到 {pct(r.floor)}。
-                這些是目前唯一有資格被納入交易條件的組合。
+                這些是目前唯一有資格被納入交易條件的組合。按<span className="text-emerald-300">採用</span>
+              就會生效 —— 伺服器會當場重跑一次驗證，通過才寫入。
               </p>
-              <Table rows={r.verified} floor={r.floor} />
+              <Table
+                rows={r.verified}
+                floor={r.floor}
+                adoptedIds={adoptedIds}
+                busy={busy}
+                onAdopt={onAdopt}
+              />
             </section>
           ) : (
             <section className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
@@ -229,7 +470,13 @@ export default function LabPage() {
             <h2 className="mb-1.5 text-xs font-medium text-neutral-300">
               單一條件（{r.solo.length}）
             </h2>
-            <Table rows={r.solo} floor={r.floor} />
+            <Table
+              rows={r.solo}
+              floor={r.floor}
+              adoptedIds={adoptedIds}
+              busy={busy}
+              onAdopt={onAdopt}
+            />
           </section>
 
           <section>
@@ -241,7 +488,13 @@ export default function LabPage() {
               每多疊一個條件，符合的 K 棒就更少 —— 掉到 100 筆以下的組合會直接被剔除，
               這正是擋掉「十一筆交易 100% 勝率」這種假發現的機制。
             </p>
-            <Table rows={r.pairs} floor={r.floor} />
+            <Table
+              rows={r.pairs}
+              floor={r.floor}
+              adoptedIds={adoptedIds}
+              busy={busy}
+              onAdopt={onAdopt}
+            />
           </section>
 
           <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-3">

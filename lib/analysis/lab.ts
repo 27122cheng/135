@@ -71,8 +71,14 @@ const MIN_SAMPLE = 100;
 const MIN_OUT_OF_SAMPLE = Math.round((MIN_SAMPLE * (1 - 0.7)) / 0.7);
 /** 勝率門檻 —— the operator's floor for a condition to be worth adopting. */
 export const VERIFY_FLOOR = 0.8;
-/** Indicators need to warm up before any bar is a legitimate entry. */
-const WARMUP = 60;
+/**
+ * Indicators need to warm up before any bar is a legitimate entry.
+ *
+ * Exported because the live gate has to honour the same number: a condition
+ * measured only on bars ≥60 must not be *checked* on bar 12, where EMA200 is
+ * still a partial average of whatever history happened to arrive.
+ */
+export const WARMUP = 60;
 /** The share of history the search is allowed to see. */
 const IN_SAMPLE_SHARE = 0.7;
 
@@ -105,18 +111,25 @@ function align<T>(length: number, series: T[]): (T | null)[] {
   return out;
 }
 
-export function buildContext(candles: Candle[]): LabContext {
+/**
+ * @param only When given, ATR and the efficiency ratio are computed at these
+ *   bar indices alone. Both are O(n) per bar, so a full context is O(n²) — the
+ *   sweep needs every bar and pays it once, but the live gate needs exactly one
+ *   and would otherwise re-derive four hundred bars of history it never reads,
+ *   nine times a scan. Everything else is O(n) whole-series either way.
+ */
+export function buildContext(candles: Candle[], only?: number[]): LabContext {
   const close = candles.map((c) => c.close);
   const er: (number | null)[] = new Array(candles.length).fill(null);
-  for (let i = 20; i < close.length; i++) {
-    er[i] = efficiencyRatio(close.slice(0, i + 1), 20);
-  }
-  // ATR series, computed the same way the plan builder computes its single
-  // value — a lab measuring on a different volatility definition would not be
-  // measuring the system's own geometry.
   const atrSeries: (number | null)[] = new Array(candles.length).fill(null);
-  for (let i = 14; i < candles.length; i++) {
-    atrSeries[i] = atrOf(candles.slice(0, i + 1), 14);
+  // ATR the same way the plan builder computes its single value — a lab
+  // measuring on a different volatility definition would not be measuring the
+  // system's own geometry.
+  const wanted = only ?? null;
+  for (let i = 0; i < candles.length; i++) {
+    if (wanted && !wanted.includes(i)) continue;
+    if (i >= 20) er[i] = efficiencyRatio(close.slice(0, i + 1), 20);
+    if (i >= 14) atrSeries[i] = atrOf(candles.slice(0, i + 1), 14);
   }
   return {
     candles,
@@ -248,10 +261,25 @@ export const CONDITIONS: Condition[] = [
 ];
 
 export interface ConditionResult {
+  /** Resolved trades — the denominator of `hitRate`. */
   trades: number;
   wins: number;
   hitRate: number | null;
   expectancyR: number | null;
+  /**
+   * Every bar the condition accepted, whether or not the trade resolved.
+   *
+   * The gap between this and `trades` is the part a hit rate hides. A trade
+   * that reaches neither the stop nor the target inside the 20-bar horizon is
+   * not a win and not a loss, and counting only the ones that resolved means
+   * the reported rate describes whichever subset happened to move. If a
+   * condition takes 400 entries and 90 of them resolve, "83% 勝率" is a claim
+   * about 22% of what it would actually have done — so the count is carried
+   * out of the walk instead of being thrown away inside it.
+   */
+  entries: number;
+  /** entries − trades. Timed out at the horizon with the position still open. */
+  unresolved: number;
 }
 
 /**
@@ -269,11 +297,13 @@ function run(
 ): ConditionResult {
   let wins = 0;
   let losses = 0;
+  let entries = 0;
   for (let i = Math.max(from, WARMUP); i < to - HORIZON; i++) {
     const a = ctx.atr[i];
     const entry = ctx.close[i];
     if (a === null || !(a > 0) || !(entry > 0)) continue;
     if (!accept(i)) continue;
+    entries++;
 
     const stopDist = a * STOP_ATR;
     const targetDist = a * TARGET_ATR;
@@ -310,6 +340,8 @@ function run(
     hitRate: hitRate === null ? null : Math.round(hitRate * 1000) / 1000,
     expectancyR:
       hitRate === null ? null : Math.round((hitRate * winR - (1 - hitRate)) * 100) / 100,
+    entries,
+    unresolved: entries - trades,
   };
 }
 
@@ -457,6 +489,15 @@ export function runLab(
       `按同樣的發生率換算），且兩邊勝率都要達到 ${Math.round(floor * 100)}%。` +
       `條件愈疊愈多，符合的 K 棒就愈少 —— 疊到樣本數不足的組合會在報告前就被剔除，` +
       `這正是防止「十一筆交易 100% 勝率」這種假發現的機制。`,
+  );
+  // 結算率 — how much of the walk the hit rate is actually a statement about.
+  const entered = baseline.inSample.entries;
+  const resolved = baseline.inSample.trades;
+  notes.push(
+    `結算率：基準線在樣本內取了 ${entered} 次進場，其中 ${resolved} 筆在 ${HORIZON} 根 K 棒內` +
+      `觸及停損或停利（${entered > 0 ? Math.round((resolved / entered) * 100) : 0}%）。` +
+      `勝率只計算有結算的那些 —— 沒結算的既不是贏也不是輸，但它們也不是不存在。` +
+      `表格中的 n 是「結算筆數／進場次數」，兩個數字差距愈大，勝率描述的就愈只是「有走出去的那部分」。`,
   );
   if (verified.length === 0) {
     notes.push(

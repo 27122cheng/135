@@ -118,6 +118,28 @@ export async function getSetting(key: SettingKey): Promise<string | null> {
   return stored || null;
 }
 
+/**
+ * Reads a key the settings API deliberately does not expose.
+ *
+ * `app_settings` is also where the app keeps its own state — the weekly-digest
+ * marker, the adopted lab conditions. Those are not settings anybody types in,
+ * and putting them in `SETTABLE_KEYS` to reuse this cache would hand the public
+ * settings endpoint the ability to write them. So they stay off the allowlist
+ * and read through here instead.
+ *
+ * The point of routing them through this module rather than the store is the
+ * per-invocation cache: nine symbols asking for the adopted conditions during
+ * one scan is one round trip, not nine. Writes go through the store directly
+ * and must call `clearSettingsCache()`.
+ *
+ * Never use this for a credential — `getSetting`'s env-first precedence and the
+ * secret masking in `settingsStatus` do not apply here.
+ */
+export async function readInternalSetting(key: string): Promise<string | null> {
+  const stored = (await loadAll()).get(key)?.trim();
+  return stored || null;
+}
+
 export async function setSetting(key: SettingKey, value: string): Promise<void> {
   const store = getSignalStore();
   if (!store) throw new Error("未設定資料庫，無法儲存設定");

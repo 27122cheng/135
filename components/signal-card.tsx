@@ -693,6 +693,61 @@ function ReferencePlan({ signal }: { signal: TradeSignal }) {
  * by older builds, which is exactly how a detail page went to a black screen
  * once before.
  */
+/**
+ * 實驗室已採用條件 — the measured requirement, and whether it holds right now.
+ *
+ * Shown next to the plan rather than buried with the research because it is
+ * the one gate whose threshold came from counting instead of arguing, and
+ * because a trade being withheld needs a visible reason. When it blocked the
+ * entry, the block says so in amber and prints the numbers the combination was
+ * adopted on — so the cost of the gate is as legible as its benefit.
+ */
+function LabGateCard({ gate }: { gate: NonNullable<TradeSignal["lab_gate"]> }) {
+  const tone = gate.blocked
+    ? "border-amber-500/40 bg-amber-500/5"
+    : gate.met
+      ? "border-emerald-500/30 bg-emerald-500/5"
+      : "border-neutral-800 bg-neutral-900/40";
+  return (
+    <div className={cn("rounded-xl border p-3", tone)}>
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium text-neutral-200">實驗室已採用條件</span>
+        <span
+          className={cn(
+            "rounded px-1.5 py-0.5 text-[10px]",
+            gate.met ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400",
+          )}
+        >
+          {gate.met ? "全數成立" : gate.blocked ? "未成立，已擋下進場" : "未成立"}
+        </span>
+      </div>
+
+      {gate.unevaluable ? (
+        <p className="text-xs leading-relaxed text-amber-400">{gate.unevaluable}</p>
+      ) : (
+        <ul className="flex flex-col gap-1">
+          {gate.checks.map((c) => (
+            <li key={c.id} className="flex items-start gap-2 text-xs">
+              <span className={c.met ? "text-emerald-400" : "text-neutral-600"}>
+                {c.met ? "✓" : "✗"}
+              </span>
+              <span className={c.met ? "text-neutral-300" : "text-neutral-500"}>{c.label}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="mt-2 text-[10px] leading-relaxed text-neutral-500">
+        採用依據：樣本內 {gate.in_sample_trades} 筆勝率{" "}
+        {Math.round(gate.in_sample_hit_rate * 100)}%、樣本外 {gate.out_of_sample_trades} 筆勝率{" "}
+        {Math.round(gate.out_of_sample_hit_rate * 100)}%（
+        {gate.adopted_at.slice(0, 10)} 於實驗室採用）。
+        這個條件只會擋下交易，不會放行任何原本不成立的交易。
+      </p>
+    </div>
+  );
+}
+
 function MarketRegime({ items }: { items: BiasItem[] }) {
   const r = summariseRegime(items);
   if (!r.hasAny) return null;
@@ -1052,6 +1107,9 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
 
       {/* The answer: one entry, one stop, one target. */}
       <TradePlanCard plan={signal.trade_plan} backtest={signal.plan_backtest} />
+
+      {/* Directly under the plan: when the plan is a wait, this is often why. */}
+      {signal.lab_gate && <LabGateCard gate={signal.lab_gate} />}
 
       {signal.interventions.length > 0 && <Interventions items={signal.interventions} />}
 
