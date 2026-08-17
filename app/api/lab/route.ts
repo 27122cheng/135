@@ -1,7 +1,6 @@
 import { COMMODITIES } from "@/types/signal";
 import { fetchOHLCV } from "@/lib/data-sources/ohlcv";
-import { runLab } from "@/lib/analysis/lab";
-import { DAY_PROFILE } from "@/lib/analysis/trade-plan";
+import { runLab, VERIFY_FLOOR } from "@/lib/analysis/lab";
 import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +30,7 @@ export async function GET(request: Request) {
     if (!d1?.candles?.length) {
       return json({ error: "取不到 K 棒，無法進行實驗", gaps }, { status: 502 });
     }
-    const report = runLab(meta, d1.candles, direction, DAY_PROFILE.minHitRate);
+    const report = runLab(meta, d1.candles, direction, VERIFY_FLOOR);
     if (!report) {
       return json(
         {

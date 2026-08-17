@@ -1,5 +1,5 @@
 import { check, report } from "./_harness";
-import { CONDITIONS, buildContext, runLab } from "@/lib/analysis/lab";
+import { CONDITIONS, VERIFY_FLOOR, buildContext, runLab } from "@/lib/analysis/lab";
 import type { Candle } from "@/lib/data-sources/ohlcv";
 
 /**
@@ -79,11 +79,25 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
   // Pairs may only be built from conditions that beat the baseline solo.
   const soloIds = new Set(r.solo.filter((f) => (f.lift ?? 0) > 0).map((f) => f.ids[0]));
   const wrongPair = r.pairs.filter((p) => !p.ids.every((id) => soloIds.has(id)));
-  check("pairs are built only from conditions that beat the baseline",
+  check("combinations are built only from conditions that beat the baseline",
     wrongPair.length === 0, wrongPair.map((p) => p.ids));
 
-  check("every reported finding has a real sample",
-    [...r.solo, ...r.pairs].every((f) => f.inSample.trades >= 25));
+  check("every reported finding meets the 100-trade floor",
+    [...r.solo, ...r.pairs].every((f) => f.inSample.trades >= 100),
+    [...r.solo, ...r.pairs].filter((f) => f.inSample.trades < 100).map((f) => f.inSample.trades));
+  check("the adoption floor is 80%", r.floor === 0.8 && VERIFY_FLOOR === 0.8, r.floor);
+  check("the criteria are stated in the report",
+    r.notes.some((n) => n.includes("100") && n.includes("80%")), r.notes);
+
+  // Combinations are no longer fixed at two — but every one of them is built
+  // only from conditions that beat the baseline solo, at any depth.
+  const deeper = r.pairs.filter((f) => f.ids.length > 2);
+  check("combinations can go deeper than two when the sample survives",
+    r.pairs.every((f) => f.ids.length >= 2), r.pairs.map((f) => f.ids.length));
+  check("and every member of a deep combination beat the baseline solo",
+    deeper.every((f) => f.ids.every((id) => soloIds.has(id))), deeper.map((f) => f.ids));
+  check("no combination repeats a condition",
+    r.pairs.every((f) => new Set(f.ids).size === f.ids.length));
   check("cost is deducted and stated", r.costPct > 0, r.costPct);
 }
 

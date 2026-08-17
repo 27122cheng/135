@@ -49,8 +49,28 @@ const STOP_ATR = 1;
 const TARGET_ATR = 1.5;
 /** How far forward a trade is given to resolve, in bars. */
 const HORIZON = 20;
-/** Below this many resolved trades a rate is noise and is not reported as a result. */
-const MIN_SAMPLE = 25;
+/**
+ * 樣本數門檻 —— the operator's number, and a strict one on purpose.
+ *
+ * 100 resolved trades in-sample. At 80% that is a rate whose 95% interval is
+ * roughly ±8 points, so a combination reported as passing is genuinely
+ * distinguishable from one that merely got lucky; at the old 25 the same
+ * interval was ±16 and half the "discoveries" were coin flips.
+ *
+ * It also does the combinatorial pruning for free. Every condition added to
+ * a combination cuts the number of bars that satisfy it, so a four-way stack
+ * that looks perfect on eleven trades is refused before anyone can be
+ * tempted by it — which is exactly the failure mode a deeper search invites.
+ */
+const MIN_SAMPLE = 100;
+/**
+ * The hold-out half is 30% of the history against the search half's 70%, so
+ * demanding the same 100 there would refuse every finding on arithmetic
+ * rather than on evidence. Scaled to the same *rate* of occurrence instead.
+ */
+const MIN_OUT_OF_SAMPLE = Math.round((MIN_SAMPLE * (1 - 0.7)) / 0.7);
+/** 勝率門檻 —— the operator's floor for a condition to be worth adopting. */
+export const VERIFY_FLOOR = 0.8;
 /** Indicators need to warm up before any bar is a legitimate entry. */
 const WARMUP = 60;
 /** The share of history the search is allowed to see. */
@@ -328,7 +348,7 @@ export function runLab(
   meta: Pick<CommodityMeta, "symbol" | "category">,
   candles: Candle[],
   direction: "long" | "short",
-  floor = 0.7,
+  floor = VERIFY_FLOOR,
 ): LabReport | null {
   if (!candles || candles.length < WARMUP + HORIZON + 100) return null;
 
@@ -351,7 +371,7 @@ export function runLab(
     );
     const verified =
       inSample.trades >= MIN_SAMPLE &&
-      outOfSample.trades >= Math.floor(MIN_SAMPLE / 2) &&
+      outOfSample.trades >= MIN_OUT_OF_SAMPLE &&
       (inSample.hitRate ?? 0) >= floor &&
       (outOfSample.hitRate ?? 0) >= floor;
     const lift =
@@ -365,24 +385,57 @@ export function runLab(
     .filter((f) => f.inSample.trades >= MIN_SAMPLE)
     .sort((a, b) => (b.inSample.hitRate ?? 0) - (a.inSample.hitRate ?? 0));
 
-  // Only pair conditions that beat the baseline on their own. Pairing two
+  // Only combine conditions that beat the baseline on their own. Stacking two
   // conditions that each do nothing is how a search spends its whole budget
-  // on noise — and every pair tested makes the false-positive count worse.
+  // on noise — and every extra test makes the false-positive count worse.
   const promising = solo
     .filter((f) => (f.lift ?? 0) > 0)
     .slice(0, 6)
     .map((f) => f.ids[0]);
 
-  const pairs: LabFinding[] = [];
-  for (let a = 0; a < promising.length; a++) {
-    for (let b = a + 1; b < promising.length; b++) {
-      const ids = [promising[a], promising[b]];
-      const labels = ids.map((id) => CONDITIONS.find((c) => c.id === id)!.label);
-      const f = finding(ids, labels);
-      if (f.inSample.trades >= MIN_SAMPLE) pairs.push(f);
+  const label = (id: string) => CONDITIONS.find((c) => c.id === id)!.label;
+
+  /**
+   * Combinations, grown one condition at a time rather than fixed at two.
+   *
+   * Beam search, not exhaustive: at each depth only the best few survivors
+   * are extended. Enumerating all 3-way and 4-way stacks of twelve
+   * conditions is 715 more hypotheses, and testing 700 things against one
+   * price series guarantees a spectacular-looking winner that means nothing.
+   * The beam keeps the search honest by keeping it small.
+   *
+   * Growth stops on its own: every added condition cuts how many bars
+   * qualify, so combinations fall below the 100-trade floor after two or
+   * three and are dropped before they can be reported.
+   */
+  const BEAM = 5;
+  const MAX_DEPTH = 4;
+  const combos: LabFinding[] = [];
+  let frontier: string[][] = promising.map((id) => [id]);
+
+  for (let depth = 2; depth <= MAX_DEPTH; depth++) {
+    const next: LabFinding[] = [];
+    const seen = new Set<string>();
+    for (const base of frontier) {
+      for (const id of promising) {
+        if (base.includes(id)) continue;
+        const ids = [...base, id].sort();
+        const key = ids.join("+");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const f = finding(ids, ids.map(label));
+        // Below the sample floor it cannot be reported *or* extended: a
+        // thinner stack built on top of it can only have fewer trades.
+        if (f.inSample.trades >= MIN_SAMPLE) next.push(f);
+      }
     }
+    if (next.length === 0) break;
+    next.sort((a, b) => (b.inSample.hitRate ?? 0) - (a.inSample.hitRate ?? 0));
+    combos.push(...next);
+    frontier = next.slice(0, BEAM).map((f) => f.ids);
   }
-  pairs.sort((a, b) => (b.inSample.hitRate ?? 0) - (a.inSample.hitRate ?? 0));
+  combos.sort((a, b) => (b.inSample.hitRate ?? 0) - (a.inSample.hitRate ?? 0));
+  const pairs = combos;
 
   const tested = solo.length + pairs.length;
   const verified = [...solo, ...pairs]
@@ -398,6 +451,12 @@ export function runLab(
   notes.push(
     `共測試 ${tested} 個假設。以 5% 的偶然顯著率估算，約有 ${Math.round(tested * 0.05)} 個` +
       `會單純因為運氣好看 —— 這就是為什麼只有樣本內外都過門檻的才標為「通過」。`,
+  );
+  notes.push(
+    `通過門檻：樣本內至少 ${MIN_SAMPLE} 筆、樣本外至少 ${MIN_OUT_OF_SAMPLE} 筆（樣本外只有 30% 的資料，` +
+      `按同樣的發生率換算），且兩邊勝率都要達到 ${Math.round(floor * 100)}%。` +
+      `條件愈疊愈多，符合的 K 棒就愈少 —— 疊到樣本數不足的組合會在報告前就被剔除，` +
+      `這正是防止「十一筆交易 100% 勝率」這種假發現的機制。`,
   );
   if (verified.length === 0) {
     notes.push(

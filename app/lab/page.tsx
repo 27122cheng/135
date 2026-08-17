@@ -125,10 +125,11 @@ export default function LabPage() {
       <SiteNav title="實驗室" />
 
       <p className="mb-3 text-[11px] leading-relaxed text-neutral-500">
-        進場條件不靠講理決定，靠量。每個條件<span className="text-neutral-300">單獨測</span>、
-        表現好的<span className="text-neutral-300">兩兩搭配</span>再測，
-        全部扣掉交易成本，而且只用最舊的 70% 歷史搜尋 ——
-        最新的 30% 完全不參與搜尋，只用來驗證。兩邊都過門檻才算數。
+        進場條件不靠講理決定，靠量。每個條件<span className="text-neutral-300">單獨測</span>，
+        表現勝過基準的再<span className="text-neutral-300">層層疊加</span>（兩個、三個、四個都試，
+        疊到樣本數不足為止），全部扣掉交易成本。
+        採用標準：<span className="text-neutral-300">樣本數 ≥100 筆、勝率 ≥80%</span>，
+        而且只用最舊的 70% 歷史搜尋 —— 最新的 30% 完全不參與搜尋，只用來驗證，兩邊都要達標。
       </p>
 
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
@@ -209,7 +210,7 @@ export default function LabPage() {
                 通過樣本外驗證（{r.verified.length}）
               </h2>
               <p className="mb-2 text-[10px] leading-relaxed text-neutral-400">
-                樣本內外都達到 {pct(r.floor)} 門檻、且兩邊樣本都足夠。
+                樣本內 ≥100 筆、樣本外 ≥43 筆，且兩邊勝率都達到 {pct(r.floor)}。
                 這些是目前唯一有資格被納入交易條件的組合。
               </p>
               <Table rows={r.verified} floor={r.floor} />
@@ -233,11 +234,12 @@ export default function LabPage() {
 
           <section>
             <h2 className="mb-1.5 text-xs font-medium text-neutral-300">
-              兩兩搭配（{r.pairs.length}）
+              條件組合（{r.pairs.length}）
             </h2>
             <p className="mb-1.5 text-[10px] leading-relaxed text-neutral-600">
-              只用單獨測試時勝過基準的條件去組合 ——
-              把兩個各自無效的條件湊在一起，只是讓搜尋把預算花在雜訊上。
+              只用單獨測試時勝過基準的條件去疊加，從兩個一路試到四個。
+              每多疊一個條件，符合的 K 棒就更少 —— 掉到 100 筆以下的組合會直接被剔除，
+              這正是擋掉「十一筆交易 100% 勝率」這種假發現的機制。
             </p>
             <Table rows={r.pairs} floor={r.floor} />
           </section>
