@@ -57,6 +57,7 @@ export const PRIMARY: Destination[] = [
 
 /** Setup — visited when something needs fixing, not every day. */
 export const SECONDARY: Destination[] = [
+  { href: "/lab", label: "實驗室", hint: "量測進場條件，單獨測與兩兩搭配" },
   { href: "/history", label: "歷史", hint: "過去產生過的訊號" },
   { href: "/setup", label: "通知", hint: "Telegram／Discord 與資料表" },
   { href: "/settings", label: "金鑰", hint: "AI 與資料源金鑰" },
