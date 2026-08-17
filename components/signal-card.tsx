@@ -8,6 +8,7 @@ import { TradePlanCard } from "@/components/trade-plan-card";
 import { formatPrice, formatTime } from "@/lib/format";
 import { groupDataGaps, KEY_SOURCES } from "@/lib/data-gaps";
 import { summariseRegime } from "@/lib/analysis/regime-summary";
+import { buildTraderView } from "@/lib/analysis/trader-view";
 import { cn } from "@/lib/utils";
 import {
   CONFIDENT_ENTRY_MIN,
@@ -770,6 +771,139 @@ function MarketRegime({ items }: { items: BiasItem[] }) {
   );
 }
 
+
+/**
+ * 頂級交易員視角 — what a desk would write down before touching the ticket.
+ *
+ * Deliberately above 新聞重點: news is an input, and a professional reads
+ * their own thesis first so the headlines are judged against it rather than
+ * the other way round. Everything here traces to a number elsewhere on the
+ * card — see lib/analysis/trader-view.ts for why it is composed rather than
+ * generated.
+ */
+function TraderViewCard({ signal }: { signal: TradeSignal }) {
+  const view = buildTraderView(signal);
+  const convictionLabel = { high: "高", medium: "中", low: "低" }[view.conviction];
+  const convictionTone = {
+    high: "bg-emerald-500/15 text-emerald-400",
+    medium: "bg-sky-500/15 text-sky-400",
+    low: "bg-neutral-700/60 text-neutral-300",
+  }[view.conviction];
+
+  // **粗體** in the composed lines, rendered without a markdown dependency.
+  const withBold = (text: string) =>
+    text.split(/\*\*(.+?)\*\*/g).map((part, i) =>
+      i % 2 === 1 ? (
+        <span key={i} className="font-medium text-neutral-200">
+          {part}
+        </span>
+      ) : (
+        <span key={i}>{part}</span>
+      ),
+    );
+
+  const stanceStyle: Record<string, string> = {
+    多: "bg-emerald-500/15 text-emerald-400",
+    空: "bg-red-500/15 text-red-400",
+    中性: "bg-neutral-700/60 text-neutral-400",
+  };
+
+  return (
+    <Card>
+      <CardContent className="p-4 pt-4">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <p className="text-sm font-medium text-neutral-200">頂級交易員視角</p>
+          <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", convictionTone)}>
+            信心 {convictionLabel}
+          </span>
+          <span className="ml-auto text-[10px] text-neutral-600">
+            以下每一句都對應卡片上的具體數字，非模型自由發揮
+          </span>
+        </div>
+
+        <p className="mb-3 rounded-lg border border-neutral-800 bg-neutral-950/60 p-2.5 text-xs leading-relaxed text-neutral-100">
+          {view.headline}
+        </p>
+
+        {view.thesis.length > 0 && (
+          <div className="mb-3">
+            <p className="mb-1 text-[11px] text-neutral-500">我的判斷依據</p>
+            <ul className="flex flex-col gap-1.5">
+              {view.thesis.map((t, i) => (
+                <li key={i} className="text-[11px] leading-relaxed text-neutral-400">
+                  {withBold(t)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="mb-3">
+          <p className="mb-1 text-[11px] text-neutral-500">操作方式</p>
+          <ul className="flex flex-col gap-1.5">
+            {view.execution.map((t, i) => (
+              <li key={i} className="text-[11px] leading-relaxed text-neutral-400">
+                {withBold(t)}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* The line amateurs leave out. */}
+        <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5">
+          <p className="mb-0.5 text-[11px] font-medium text-amber-300">什麼會證明我錯</p>
+          <p className="text-[11px] leading-relaxed text-amber-400/80">{view.invalidation}</p>
+        </div>
+
+        <div className="mb-3">
+          <p className="mb-1 text-[11px] text-neutral-500">我擔心的地方</p>
+          <ul className="flex flex-col gap-1">
+            {view.risks.map((t, i) => (
+              <li key={i} className="text-[11px] leading-relaxed text-neutral-500">
+                · {t}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {view.macro.length > 0 && (
+          <details className="border-t border-neutral-800 pt-2.5">
+            <summary className="cursor-pointer list-none text-[11px] text-neutral-400">
+              影響市場的宏觀因素（{view.macro.length}）—— 每項都標明偏多或偏空
+            </summary>
+            <ul className="mt-2 flex flex-col gap-1.5">
+              {view.macro.map((m, i) => (
+                <li key={i} className="rounded-lg border border-neutral-800 bg-neutral-950/50 p-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="min-w-0 text-[11px] leading-relaxed text-neutral-300">
+                      <span className="mr-1.5 text-neutral-600">{m.dimension}</span>
+                      {m.name}
+                    </p>
+                    <span
+                      className={cn(
+                        "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+                        stanceStyle[m.stance] ?? stanceStyle["中性"],
+                      )}
+                    >
+                      {m.stance}
+                      {m.weight > 0 ? ` ×${m.weight}` : "（不計分）"}
+                    </span>
+                  </div>
+                  {m.note && (
+                    <p className="mt-0.5 font-mono text-[10px] leading-relaxed text-neutral-600">
+                      {m.note}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function TechnicalDetails({ items }: { items: BiasItem[] }) {
   const tech = items.filter((b) => b.dimension === "技術面");
   if (tech.length === 0) return null;
@@ -920,6 +1054,9 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
       <TradePlanCard plan={signal.trade_plan} backtest={signal.plan_backtest} />
 
       {signal.interventions.length > 0 && <Interventions items={signal.interventions} />}
+
+      {/* 頂級交易員視角在新聞之上：新聞是輸入，先有自己的看法才有判斷新聞的標準。 */}
+      <TraderViewCard signal={signal} />
 
       {signal.news_digest && <NewsDigestCard digest={signal.news_digest} />}
 
