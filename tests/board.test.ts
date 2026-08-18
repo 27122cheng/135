@@ -182,13 +182,45 @@ async function suite() {
   } as unknown as SignalRow;
 
   const built = toBoardRow(meta, historyRow);
-  check("a history row still yields reference levels", built.reference !== null);
-  check("the entry zone survives", built.reference?.entryLow === 3300);
-  check("the stop survives", built.reference?.stopLoss === 3270);
-  check("both targets survive", built.reference?.takeProfits.length === 2);
-  check("allocation comes through", built.reference?.takeProfits[0].allocationPct === 50);
-  // The whole point: a row with no trade is exactly the row that needs these.
+  // 沒過門檻就不給價位。The three level fields are always populated — they are
+  // the mid of the entry zone and the nearest structures — and nothing has
+  // screened them. Printing them on a row the rules refused to trade is how a
+  // computed number gets read as a recommendation, so the reference block now
+  // requires `reference_plan`: the geometry the same search actually selected.
+  check("raw structure alone does not become 參考價位", built.reference === null, built.reference);
+
+  // The whole point: a row with no trade is exactly the row where an unselected
+  // price is most likely to be traded from.
   check("and it is a no-trade row", built.stance === "wait");
+
+  // With a selected reference plan, the board shows *those* numbers — the ones
+  // that cleared the 55% hit rate and the 1:1.5 payoff — not the raw zone.
+  const selected = toBoardRow(meta, {
+    ...historyRow,
+    reference_plan: {
+      entry: 3305,
+      stop_loss: 3272,
+      take_profit: 3365,
+      risk_reward: 1.8,
+      entry_reason: "回踩 H4 前低上緣",
+      stop_reason: "H4 前低下方",
+      target_reason: "H4 前高",
+      basis: "回測 12 筆 58%，風報比 1:1.8",
+      backtest: null,
+    },
+  } as unknown as SignalRow);
+  check("a selected reference plan does become 參考價位", selected.reference !== null);
+  check("and carries its own entry, not the zone",
+    selected.reference?.entryLow === 3305 && selected.reference?.entryHigh === 3305,
+    selected.reference);
+  check("its stop is the selected one", selected.reference?.stopLoss === 3272);
+  check("with a single target at 100%",
+    selected.reference?.takeProfits.length === 1 &&
+      selected.reference?.takeProfits[0].price === 3365 &&
+      selected.reference?.takeProfits[0].allocationPct === 100,
+    selected.reference?.takeProfits);
+  check("and states how it was chosen",
+    selected.reference?.entryReason.includes("回測") === true, selected.reference?.entryReason);
   check("a missing confidence column is not fatal", built.confidence === null);
   check("a missing direction_tie column reads false", built.directionTie === false);
 

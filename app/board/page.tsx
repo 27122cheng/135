@@ -133,20 +133,19 @@ function ago(iso: string | null): string {
 
 
 /**
- * The levels behind a row that has no trade.
+ * 參考價位 on a row that has no trade — when one was actually selected.
  *
- * 觀望 as the entire contents of an opened row throws away work that was
- * actually done: the entry zone, the stop structure and the targets were all
- * derived from real support/resistance before the rules decided to stand aside.
- * They are the same numbers the detail page shows under
- * 參考價位（未達可交易門檻）, and they are useful — a level to watch is not a
- * trade, but it is not nothing either.
+ * This block used to render on every scanned row, because the levels it drew
+ * from (entry zone, nearest protecting structure, nearest obstacles) are always
+ * populated. Nothing had chosen them: no hit-rate floor, no payoff floor, no
+ * backtest. So the board printed an entry, a stop and a target for instruments
+ * the rules had just refused to trade, and the quieter styling did not stop
+ * anyone reading three prices as a plan.
  *
- * Styled deliberately quieter than the trade block above it, and labelled
- * 參考價位 rather than 進場/止損/止盈, so it cannot be mistaken for a plan the
- * system is recommending. That distinction is the whole reason the trade plan
- * empties itself in the first place; reproducing it here in the same green
- * would undo it.
+ * It now renders only when `reference_plan` exists — the geometry the same
+ * search picked at the lower reference bar (回測勝率 ≥55%、風報比 ≥1:1.5).
+ * When that comes back empty the row says 無交易 instead, matching the detail
+ * card exactly.
  */
 function ReferenceLevels({ row }: { row: BoardRow }) {
   const ref = row.reference;
@@ -156,8 +155,8 @@ function ReferenceLevels({ row }: { row: BoardRow }) {
     // has no usable stop price look identical — both show nothing at all.
     if (row.generatedAt === null) return null;
     return (
-      <p className="mt-2.5 text-[11px] text-neutral-600">
-        這筆訊號沒有可用的進場區或停損結構（掃描當下取不到價格資料），所以沒有參考價位。
+      <p className="mt-2.5 text-[11px] leading-relaxed text-neutral-600">
+        無交易：沒有任何進場／停損／停利組合通過門檻（回測勝率 ≥55%、風報比 ≥1:1.5），因此不提供價位。
       </p>
     );
   }
@@ -178,7 +177,7 @@ function ReferenceLevels({ row }: { row: BoardRow }) {
       <p className="mb-1.5 flex items-baseline gap-2 text-[10px] text-neutral-500">
         <span>參考價位</span>
         <span className={dirTone}>{dir}</span>
-        <span className="text-neutral-600">分析算出的結構，不是建議進場</span>
+        <span className="text-neutral-600">已通過回測與風報比門檻，但未達可交易評等</span>
       </p>
       <dl className="grid grid-cols-3 gap-2">
         <div>

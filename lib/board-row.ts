@@ -10,20 +10,22 @@ export interface BoardAddOn {
 }
 
 /**
- * The levels the analysis computed, whether or not they became a trade.
+ * 參考價位 — but only when something was actually *chosen*.
  *
- * `trade_plan` goes empty the moment the rules stand aside — that is correct,
- * because a plan is a recommendation and there isn't one. But the entry zone,
- * the stop structure and the targets were still derived from real structure,
- * and a row that opens to the single word 觀望 throws all of it away. The
- * detail page has always shown these under 參考價位（未達可交易門檻）; this
- * carries the same three fields to the board so opening a row without a trade
- * still tells you where the interesting prices are.
+ * This used to be built from `entry_zone` / `stop_loss` / `take_profits`
+ * directly, on every scanned row. Those three fields are always populated:
+ * they are the mid of the entry zone, the nearest protecting structure and the
+ * nearest obstacles ahead. Nothing has screened them — no hit-rate floor, no
+ * risk-reward floor, no backtest — so on a row where the rules refused to
+ * trade, the board was printing an entry, a stop and a target anyway. A row of
+ * prices reads as a recommendation whatever the label above it says, and
+ * labelling them 參考價位 does not change what a reader does with them.
  *
- * Kept separate from the plan's `entry`/`stopLoss`/`takeProfit` rather than
- * merged into them. They are different claims — one is "take this", the other
- * is "this is what the structure says" — and collapsing them is exactly how a
- * reference number gets read as a signal.
+ * `reference_plan` is the selected version: the same search that picks a real
+ * plan, run at the lower reference bar (backtest hit rate ≥55%, payoff ≥1:1.5).
+ * When that search comes back empty there is genuinely nothing to show, and
+ * the row now says so — the same rule the detail card follows, so the two
+ * pages cannot disagree about whether a price is worth looking at.
  */
 export interface BoardReference {
   entryLow: number;
@@ -128,22 +130,19 @@ export interface BoardRow {
  * signal predates a field is worse than one that shows eight rows and a gap.
  */
 export function toReference(row: SignalRow): BoardReference | null {
-  const zone = row.entry_zone;
-  const sl = row.stop_loss;
-  if (!zone || !sl || !Number.isFinite(sl.price)) return null;
+  const ref = row.reference_plan;
+  if (!ref || !Number.isFinite(ref.entry) || !Number.isFinite(ref.stop_loss)) return null;
   return {
-    entryLow: zone.low,
-    entryHigh: zone.high,
-    entryReason: zone.reason,
-    stopLoss: sl.price,
-    stopReason: sl.structure,
-    takeProfits: (row.take_profits ?? [])
-      .filter((tp) => Number.isFinite(tp?.price))
-      .map((tp) => ({
-        price: tp.price,
-        allocationPct: tp.allocation_pct,
-        structure: tp.structure,
-      })),
+    // A single price, not a band: the reference geometry chose one entry, and
+    // widening it back into the raw zone would show a number nothing selected.
+    entryLow: ref.entry,
+    entryHigh: ref.entry,
+    entryReason: `${ref.entry_reason}｜${ref.basis}`,
+    stopLoss: ref.stop_loss,
+    stopReason: ref.stop_reason,
+    takeProfits: Number.isFinite(ref.take_profit)
+      ? [{ price: ref.take_profit, allocationPct: 100, structure: ref.target_reason }]
+      : [],
   };
 }
 
