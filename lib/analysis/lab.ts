@@ -1,7 +1,10 @@
 import type { Candle } from "../data-sources/ohlcv";
-import { atr as atrOf, ema, efficiencyRatio, macd, rsi } from "./indicators";
+import { CONDITIONS, buildContext, type Condition, type LabContext } from "./lab-conditions";
 import { totalCostFraction, tradingCostFor } from "@/config/trading-costs";
 import type { CommodityMeta } from "@/types/signal";
+
+export { CONDITIONS, buildContext, FAMILIES } from "./lab-conditions";
+export type { Condition, LabContext } from "./lab-conditions";
 
 /**
  * 實驗室 — which entry conditions actually earn their place.
@@ -81,184 +84,6 @@ export const VERIFY_FLOOR = 0.8;
 export const WARMUP = 60;
 /** The share of history the search is allowed to see. */
 const IN_SAMPLE_SHARE = 0.7;
-
-export interface Condition {
-  id: string;
-  label: string;
-  /** What it is trying to capture, in one line. */
-  rationale: string;
-  /** True when bar `i` satisfies it for `direction`. */
-  test: (ctx: LabContext, i: number, direction: "long" | "short") => boolean;
-}
-
-export interface LabContext {
-  candles: Candle[];
-  close: number[];
-  ema20: number[];
-  ema50: number[];
-  ema200: number[];
-  hist: (number | null)[];
-  rsi14: (number | null)[];
-  atr: (number | null)[];
-  /** Efficiency ratio at each bar, over the trailing 20. */
-  er: (number | null)[];
-}
-
-function align<T>(length: number, series: T[]): (T | null)[] {
-  const out: (T | null)[] = new Array(length).fill(null);
-  const offset = length - series.length;
-  for (let i = 0; i < series.length; i++) out[offset + i] = series[i];
-  return out;
-}
-
-/**
- * @param only When given, ATR and the efficiency ratio are computed at these
- *   bar indices alone. Both are O(n) per bar, so a full context is O(n²) — the
- *   sweep needs every bar and pays it once, but the live gate needs exactly one
- *   and would otherwise re-derive four hundred bars of history it never reads,
- *   nine times a scan. Everything else is O(n) whole-series either way.
- */
-export function buildContext(candles: Candle[], only?: number[]): LabContext {
-  const close = candles.map((c) => c.close);
-  const er: (number | null)[] = new Array(candles.length).fill(null);
-  const atrSeries: (number | null)[] = new Array(candles.length).fill(null);
-  // ATR the same way the plan builder computes its single value — a lab
-  // measuring on a different volatility definition would not be measuring the
-  // system's own geometry.
-  const wanted = only ?? null;
-  for (let i = 0; i < candles.length; i++) {
-    if (wanted && !wanted.includes(i)) continue;
-    if (i >= 20) er[i] = efficiencyRatio(close.slice(0, i + 1), 20);
-    if (i >= 14) atrSeries[i] = atrOf(candles.slice(0, i + 1), 14);
-  }
-  return {
-    candles,
-    close,
-    ema20: ema(close, 20),
-    ema50: ema(close, 50),
-    ema200: ema(close, 200),
-    hist: align(close.length, macd(close).histogram),
-    rsi14: align(close.length, rsi(close, 14)),
-    atr: atrSeries,
-    er,
-  };
-}
-
-const side = (direction: "long" | "short", value: number, threshold: number) =>
-  direction === "long" ? value > threshold : value < threshold;
-
-/**
- * The candidate conditions.
- *
- * Every one is something the analysis already believes, written so it can be
- * checked rather than argued about. Deliberately kept to a dozen: each extra
- * condition adds itself plus a dozen pairings to the multiple-testing
- * problem, and a lab that tests everything discovers nothing.
- */
-export const CONDITIONS: Condition[] = [
-  {
-    id: "ema-stack",
-    label: "均線多頭／空頭排列",
-    rationale: "價格、EMA20、EMA50 三者同向排列 —— 系統目前給權重 2 的主力條件",
-    test: (c, i, d) =>
-      side(d, c.close[i], c.ema20[i]) && side(d, c.ema20[i], c.ema50[i]),
-  },
-  {
-    id: "ema50-side",
-    label: "站在 EMA50 正確側",
-    rationale: "最寬鬆的趨勢過濾，回測分層的第三層就是它",
-    test: (c, i, d) => side(d, c.close[i], c.ema50[i]),
-  },
-  {
-    id: "ema200-side",
-    label: "站在 EMA200 正確側",
-    rationale: "主趨勢方向；比 EMA50 慢，理論上更少但更乾淨的訊號",
-    test: (c, i, d) => Number.isFinite(c.ema200[i]) && side(d, c.close[i], c.ema200[i]),
-  },
-  {
-    id: "macd-agree",
-    label: "MACD 柱狀圖同向",
-    rationale: "動能與方向一致，避免在動能反向時進場",
-    test: (c, i, d) => {
-      const h = c.hist[i];
-      return h !== null && (d === "long" ? h > 0 : h < 0);
-    },
-  },
-  {
-    id: "macd-fresh",
-    label: "MACD 剛翻正／翻負（3 根內）",
-    rationale: "動能剛轉向，理論上比已經翻很久更早進場",
-    test: (c, i, d) => {
-      const now = c.hist[i];
-      if (now === null || (d === "long" ? now <= 0 : now >= 0)) return false;
-      for (let k = 1; k <= 3; k++) {
-        const prev = c.hist[i - k];
-        if (prev !== null && (d === "long" ? prev <= 0 : prev >= 0)) return true;
-      }
-      return false;
-    },
-  },
-  {
-    id: "rsi-side",
-    label: "RSI 在方向側（>50／<50）",
-    rationale: "相對強度與方向一致，回測最強分層的組成之一",
-    test: (c, i, d) => {
-      const v = c.rsi14[i];
-      return v !== null && (d === "long" ? v > 50 : v < 50);
-    },
-  },
-  {
-    id: "rsi-not-extreme",
-    label: "RSI 未進入極端（30–70）",
-    rationale: "避免在超買追高、超賣殺低 —— 常見說法，但值得實測",
-    test: (c, i) => {
-      const v = c.rsi14[i];
-      return v !== null && v > 30 && v < 70;
-    },
-  },
-  {
-    id: "trending",
-    label: "趨勢效率 ER ≥ 0.35",
-    rationale: "走勢夠直才叫趨勢；系統已用它替盤整降權，這裡驗證門檻是否合適",
-    test: (c, i) => (c.er[i] ?? 0) >= 0.35,
-  },
-  {
-    id: "not-choppy",
-    label: "非盤整 ER ≥ 0.18",
-    rationale: "較寬鬆的盤整過濾，看看是不是比 0.35 更划算",
-    test: (c, i) => (c.er[i] ?? 0) >= 0.18,
-  },
-  {
-    id: "pullback",
-    label: "回檔至 EMA20 附近（1×ATR 內）",
-    rationale: "不追價 —— 交易員視角裡最核心的執行紀律，值得單獨驗證",
-    test: (c, i) => {
-      const a = c.atr[i];
-      return a !== null && a > 0 && Math.abs(c.close[i] - c.ema20[i]) <= a;
-    },
-  },
-  {
-    id: "not-extended",
-    label: "未過度乖離（距 EMA50 < 3×ATR）",
-    rationale: "乖離過大時進場，等於買在別人準備獲利了結的位置",
-    test: (c, i) => {
-      const a = c.atr[i];
-      return a !== null && a > 0 && Math.abs(c.close[i] - c.ema50[i]) < a * 3;
-    },
-  },
-  {
-    id: "higher-structure",
-    label: "20 根內創新高／新低",
-    rationale: "最單純的動能突破定義，作為對照組",
-    test: (c, i, d) => {
-      const window = c.candles.slice(Math.max(0, i - 20), i);
-      if (window.length < 10) return false;
-      return d === "long"
-        ? c.close[i] > Math.max(...window.map((b) => b.high))
-        : c.close[i] < Math.min(...window.map((b) => b.low));
-    },
-  },
-];
 
 export interface ConditionResult {
   /** Resolved trades — the denominator of `hitRate`. */
@@ -389,6 +214,32 @@ export function runLab(
   const costFraction = totalCostFraction(cost, HORIZON / 2);
   const split = Math.floor(candles.length * IN_SAMPLE_SHARE);
 
+  /**
+   * Every condition evaluated once per bar, up front.
+   *
+   * Without this an exhaustive search is impossible: each combination would
+   * re-run every one of its conditions over every bar, and conditions that
+   * scan a window would allocate on each call. Precomputed, a combination is
+   * an AND over booleans — which is what makes "try every pairing" a second of
+   * work instead of a minute of it.
+   */
+  const mask = new Map<string, Uint8Array>();
+  for (const condition of CONDITIONS) {
+    const bits = new Uint8Array(candles.length);
+    for (let i = 0; i < candles.length; i++) {
+      let ok = false;
+      try {
+        ok = condition.test(ctx, i, direction);
+      } catch {
+        // A condition that throws on an edge bar is simply not met there. It
+        // must not take the whole sweep down with it.
+        ok = false;
+      }
+      bits[i] = ok ? 1 : 0;
+    }
+    mask.set(condition.id, bits);
+  }
+
   const measure = (accept: (i: number) => boolean) => ({
     inSample: run(ctx, direction, accept, 0, split, costFraction),
     outOfSample: run(ctx, direction, accept, split, candles.length, costFraction),
@@ -396,11 +247,18 @@ export function runLab(
 
   const baseline = measure(() => true);
 
-  const finding = (ids: string[], labels: string[]): LabFinding => {
-    const tests = ids.map((id) => CONDITIONS.find((c) => c.id === id)!);
-    const { inSample, outOfSample } = measure((i) =>
-      tests.every((t) => t.test(ctx, i, direction)),
-    );
+  const label = (id: string) => CONDITIONS.find((c) => c.id === id)!.label;
+
+  const finding = (ids: string[]): LabFinding => {
+    const bits = ids.map((id) => mask.get(id)!);
+    const accept =
+      bits.length === 1
+        ? (i: number) => bits[0][i] === 1
+        : (i: number) => {
+            for (const b of bits) if (b[i] !== 1) return false;
+            return true;
+          };
+    const { inSample, outOfSample } = measure(accept);
     const verified =
       inSample.trades >= MIN_SAMPLE &&
       outOfSample.trades >= MIN_OUT_OF_SAMPLE &&
@@ -410,62 +268,79 @@ export function runLab(
       inSample.hitRate !== null && baseline.inSample.hitRate !== null
         ? Math.round((inSample.hitRate - baseline.inSample.hitRate) * 1000) / 10
         : null;
-    return { ids, labels, inSample, outOfSample, verified, lift };
+    return { ids, labels: ids.map(label), inSample, outOfSample, verified, lift };
   };
 
-  const solo = CONDITIONS.map((c) => finding([c.id], [c.label]))
+  const solo = CONDITIONS.map((c) => finding([c.id]))
     .filter((f) => f.inSample.trades >= MIN_SAMPLE)
     .sort((a, b) => (b.inSample.hitRate ?? 0) - (a.inSample.hitRate ?? 0));
 
-  // Only combine conditions that beat the baseline on their own. Stacking two
-  // conditions that each do nothing is how a search spends its whole budget
-  // on noise — and every extra test makes the false-positive count worse.
-  const promising = solo
-    .filter((f) => (f.lift ?? 0) > 0)
-    .slice(0, 6)
-    .map((f) => f.ids[0]);
-
-  const label = (id: string) => CONDITIONS.find((c) => c.id === id)!.label;
-
   /**
-   * Combinations, grown one condition at a time rather than fixed at two.
+   * Every pairing, then every survivor extended — no pre-selection.
    *
-   * Beam search, not exhaustive: at each depth only the best few survivors
-   * are extended. Enumerating all 3-way and 4-way stacks of twelve
-   * conditions is 715 more hypotheses, and testing 700 things against one
-   * price series guarantees a spectacular-looking winner that means nothing.
-   * The beam keeps the search honest by keeping it small.
+   * The previous search only paired conditions that already beat the baseline
+   * alone, which is a reasonable-sounding rule that throws away the whole point
+   * of combining: a filter can be worthless on its own and decisive as a veto
+   * on someone else's signal. "站在 EMA200 正確側" wins nothing by itself and
+   * may be exactly what a reversal pattern needs. So every pair of conditions
+   * with a real sample is now measured, whatever either did alone.
    *
-   * Growth stops on its own: every added condition cuts how many bars
-   * qualify, so combinations fall below the 100-trade floor after two or
-   * three and are dropped before they can be reported.
+   * What stops this from exploding is the sample floor rather than a heuristic.
+   * Each added condition cuts the qualifying bars, so three- and four-way
+   * stacks fall below 100 trades on their own and are dropped before they can
+   * be reported — and only combinations that survived are extended further.
+   *
+   * The cost is honesty about multiple testing, and it is a real cost: several
+   * hundred hypotheses on one price series will produce impressive-looking
+   * winners by luck. That number is reported next to the findings, and the
+   * hold-out half is what separates the luck from the rest.
    */
-  const BEAM = 5;
-  const MAX_DEPTH = 4;
+  const soloIds = solo.map((f) => f.ids[0]);
   const combos: LabFinding[] = [];
-  let frontier: string[][] = promising.map((id) => [id]);
+  const seen = new Set<string>();
+  let frontier: string[][] = [];
 
-  for (let depth = 2; depth <= MAX_DEPTH; depth++) {
-    const next: LabFinding[] = [];
-    const seen = new Set<string>();
+  for (let a = 0; a < soloIds.length; a++) {
+    for (let b = a + 1; b < soloIds.length; b++) {
+      const ids = [soloIds[a], soloIds[b]];
+      const f = finding(ids);
+      if (f.inSample.trades < MIN_SAMPLE) continue;
+      combos.push(f);
+      seen.add(ids.slice().sort().join("+"));
+      frontier.push(ids);
+    }
+  }
+
+  // Depth 3 and 4, grown only from pairs that kept a real sample. Capped so a
+  // pathological series cannot walk the function past its time limit; the cap
+  // being hit is reported rather than hidden.
+  const MAX_DEPTH = 4;
+  const MAX_FINDINGS = 4000;
+  let truncated = false;
+  for (let depth = 3; depth <= MAX_DEPTH && !truncated; depth++) {
+    const next: string[][] = [];
     for (const base of frontier) {
-      for (const id of promising) {
+      for (const id of soloIds) {
         if (base.includes(id)) continue;
         const ids = [...base, id].sort();
         const key = ids.join("+");
         if (seen.has(key)) continue;
         seen.add(key);
-        const f = finding(ids, ids.map(label));
-        // Below the sample floor it cannot be reported *or* extended: a
-        // thinner stack built on top of it can only have fewer trades.
-        if (f.inSample.trades >= MIN_SAMPLE) next.push(f);
+        if (combos.length >= MAX_FINDINGS) {
+          truncated = true;
+          break;
+        }
+        const f = finding(ids);
+        if (f.inSample.trades < MIN_SAMPLE) continue;
+        combos.push(f);
+        next.push(ids);
       }
+      if (truncated) break;
     }
     if (next.length === 0) break;
-    next.sort((a, b) => (b.inSample.hitRate ?? 0) - (a.inSample.hitRate ?? 0));
-    combos.push(...next);
-    frontier = next.slice(0, BEAM).map((f) => f.ids);
+    frontier = next;
   }
+
   combos.sort((a, b) => (b.inSample.hitRate ?? 0) - (a.inSample.hitRate ?? 0));
   const pairs = combos;
 
@@ -481,9 +356,22 @@ export function runLab(
       `完全沒有參與搜尋，只用來驗證。`,
   );
   notes.push(
-    `共測試 ${tested} 個假設。以 5% 的偶然顯著率估算，約有 ${Math.round(tested * 0.05)} 個` +
-      `會單純因為運氣好看 —— 這就是為什麼只有樣本內外都過門檻的才標為「通過」。`,
+    `共測試 ${tested} 個假設（${CONDITIONS.length} 個條件單獨測，加上所有兩兩配對與能維持樣本數的三、四層疊加）。` +
+      `以 5% 的偶然顯著率估算，約有 ${Math.round(tested * 0.05)} 個會單純因為運氣好看 —— ` +
+      `測得愈多，這個數字愈大，這正是為什麼「樣本內最好的那一個」永遠不能直接拿來用，` +
+      `而只有樣本內外都過門檻的才標為「通過」。`,
   );
+  notes.push(
+    "配對不預先篩選：不管單獨測時表現如何，每一組兩兩搭配都會測。" +
+      "一個條件單獨看可能毫無用處，卻剛好是另一個訊號需要的否決條件 —— " +
+      "先挑「看起來好的」再配對，等於在搜尋之前就先假設了答案。",
+  );
+  if (truncated) {
+    notes.push(
+      `組合數已達上限 ${MAX_FINDINGS}，更深的疊加未全部測完。` +
+        "已測的部分照常報告，但這代表本次搜尋不是窮盡的。",
+    );
+  }
   notes.push(
     `通過門檻：樣本內至少 ${MIN_SAMPLE} 筆、樣本外至少 ${MIN_OUT_OF_SAMPLE} 筆（樣本外只有 30% 的資料，` +
       `按同樣的發生率換算），且兩邊勝率都要達到 ${Math.round(floor * 100)}%。` +

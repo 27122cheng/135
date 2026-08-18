@@ -309,7 +309,9 @@ export default function LabPage() {
       <SiteNav title="實驗室" />
 
       <p className="mb-3 text-[11px] leading-relaxed text-neutral-500">
-        進場條件不靠講理決定，靠量。兩條腿：
+        進場條件不靠講理決定，靠量。條件庫涵蓋 SMC／ICT（結構突破、訂單塊、FVG、流動性掃蕩、折溢價區）、
+        CRT 三根模型、裸K（吞噬、針形、內包突破）、量能行為（量能高潮、有量無價、巨量大實體）、
+        以及商品與外匯的經典設定（唐奇安通道、布林收窄、前日高低、週開盤、整數關卡）。兩條腿：
         <span className="text-neutral-300">前進實驗</span>讓每個條件從今天起各自下單、各自結算，事前登記、事後不能改；
         <span className="text-neutral-300">回測</span>則把同一套條件放到十年日線上重跑一次，先單獨測，
         表現勝過基準的再層層疊加（兩個、三個、四個都試），全部扣掉交易成本。
@@ -637,7 +639,9 @@ export default function LabPage() {
               條件組合（{r.pairs.length}）
             </h2>
             <p className="mb-1.5 text-[10px] leading-relaxed text-neutral-600">
-              只用單獨測試時勝過基準的條件去疊加，從兩個一路試到四個。
+              <span className="text-neutral-400">不預先挑選</span>：每一組兩兩配對都測，
+              不管單獨測的時候表現如何 —— 一個條件單獨看可能沒用，卻剛好是另一個訊號需要的否決條件。
+              兩個測完之後，還有樣本數的再往三個、四個疊。
               每多疊一個條件，符合的 K 棒就更少 —— 掉到 100 筆以下的組合會直接被剔除，
               這正是擋掉「十一筆交易 100% 勝率」這種假發現的機制。
             </p>

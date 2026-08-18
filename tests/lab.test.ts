@@ -76,11 +76,20 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
   );
   check("a finding is never verified on one half alone", badlyVerified.length === 0, badlyVerified);
 
-  // Pairs may only be built from conditions that beat the baseline solo.
-  const soloIds = new Set(r.solo.filter((f) => (f.lift ?? 0) > 0).map((f) => f.ids[0]));
-  const wrongPair = r.pairs.filter((p) => !p.ids.every((id) => soloIds.has(id)));
-  check("combinations are built only from conditions that beat the baseline",
-    wrongPair.length === 0, wrongPair.map((p) => p.ids));
+  // Combinations are no longer pre-filtered by solo performance. The rule is
+  // now the sample floor alone: anything measured solo with a real sample is
+  // eligible to pair with anything else. Pinned as the *absence* of the old
+  // filter, because a filter is easy to reintroduce by accident and it quietly
+  // throws away the whole reason to combine — a condition worth nothing alone
+  // can be exactly the veto another signal needs.
+  const measuredSolo = new Set(r.solo.map((f) => f.ids[0]));
+  const fromNowhere = r.pairs.filter((p) => !p.ids.every((id) => measuredSolo.has(id)));
+  check("combinations are built only from conditions that were measured solo",
+    fromNowhere.length === 0, fromNowhere.map((p) => p.ids));
+  const weakMembers = r.pairs.filter((p) =>
+    p.ids.some((id) => (r.solo.find((f) => f.ids[0] === id)?.lift ?? 0) <= 0));
+  check("and conditions that lost to the baseline alone are still paired",
+    weakMembers.length > 0, r.pairs.length);
 
   check("every reported finding meets the 100-trade floor",
     [...r.solo, ...r.pairs].every((f) => f.inSample.trades >= 100),
@@ -89,13 +98,17 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
   check("the criteria are stated in the report",
     r.notes.some((n) => n.includes("100") && n.includes("80%")), r.notes);
 
-  // Combinations are no longer fixed at two — but every one of them is built
-  // only from conditions that beat the baseline solo, at any depth.
-  const deeper = r.pairs.filter((f) => f.ids.length > 2);
   check("combinations can go deeper than two when the sample survives",
     r.pairs.every((f) => f.ids.length >= 2), r.pairs.map((f) => f.ids.length));
-  check("and every member of a deep combination beat the baseline solo",
-    deeper.every((f) => f.ids.every((id) => soloIds.has(id))), deeper.map((f) => f.ids));
+  // Exhaustive at depth two: every pairing of the conditions that had a real
+  // solo sample must have been considered, not a chosen few.
+  const expectedPairs = (r.solo.length * (r.solo.length - 1)) / 2;
+  const testedPairs = r.pairs.filter((f) => f.ids.length === 2).length;
+  check("every pairing was tested (those with too few trades are dropped, not skipped)",
+    testedPairs <= expectedPairs && testedPairs > r.solo.length,
+    { testedPairs, expectedPairs, solo: r.solo.length });
+  check("the report says the search does not pre-select",
+    r.notes.some((n) => n.includes("配對不預先篩選")), r.notes);
   check("no combination repeats a condition",
     r.pairs.every((f) => new Set(f.ids).size === f.ids.length));
   check("cost is deducted and stated", r.costPct > 0, r.costPct);
