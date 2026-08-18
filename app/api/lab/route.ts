@@ -1,5 +1,5 @@
 import { COMMODITIES } from "@/types/signal";
-import { fetchOHLCV } from "@/lib/data-sources/ohlcv";
+import { fetchDeepD1 } from "@/lib/data-sources/deep-history";
 import { runLab, VERIFY_FLOOR } from "@/lib/analysis/lab";
 import { json } from "@/lib/json-response";
 
@@ -23,23 +23,31 @@ export async function GET(request: Request) {
 
   const gaps: string[] = [];
   try {
-    // D1 — the timeframe the entry rules are written against. H4 would give
-    // more samples and a different question; the lab must measure the rules
-    // the system actually runs.
-    const d1 = await fetchOHLCV(meta, "D1", gaps);
-    if (!d1?.candles?.length) {
+    // D1, and as many years of it as the free sources hold.
+    //
+    // The analysis fetches one year, which cannot carry this measurement: 250
+    // bars leave at most 95 candidate in-sample entries against a 100-trade
+    // floor, so every combination failed on arithmetic rather than on evidence.
+    // See lib/data-sources/deep-history.ts.
+    const deep = await fetchDeepD1(meta, gaps);
+    if (!deep?.candles?.length) {
       return json({ error: "取不到 K 棒，無法進行實驗", gaps }, { status: 502 });
     }
-    const report = runLab(meta, d1.candles, direction, VERIFY_FLOOR);
+    const report = runLab(meta, deep.candles, direction, VERIFY_FLOOR);
     if (!report) {
       return json(
         {
-          error: `K 棒不足（${d1.candles.length} 根）。實驗需要足夠的歷史才能切出樣本內／樣本外兩半。`,
+          error: `K 棒不足（${deep.candles.length} 根）。實驗需要足夠的歷史才能切出樣本內／樣本外兩半。`,
           gaps,
         },
         { status: 422 },
       );
     }
+    report.notes.unshift(
+      `歷史來源：${deep.source === "stooq" ? "Stooq 完整日線" : "行情代理 10 年日線"}，` +
+        `共 ${deep.candles.length} 根、約 ${deep.years} 年（${deep.candles[0].time.slice(0, 10)} 起）。` +
+        `分析頁只取 1 年日線，實驗室刻意另外取深度歷史 —— 一年的資料連 100 筆樣本的門檻都放不下。`,
+    );
     return json({ report, gaps });
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : String(err), gaps }, { status: 502 });

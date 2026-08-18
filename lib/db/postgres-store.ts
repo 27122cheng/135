@@ -3,6 +3,8 @@ import type { SignalRow, TradeSignal } from "@/types/signal";
 import type { JournalEntry, JournalEntryInput } from "@/types/journal";
 import type {
   HistoryFilter,
+  LabTradeFilter,
+  LabTradeRow,
   MonitorRow,
   ReleaseRow,
   SignalStore,
@@ -410,5 +412,100 @@ export function postgresStore(connectionString: string): SignalStore {
         throw explain(err);
       }
     },
+
+    async insertLabTrades(rows: LabTradeRow[]): Promise<number> {
+      if (rows.length === 0) return 0;
+      try {
+        let inserted = 0;
+        // One statement per row: Neon's HTTP driver executes one statement per
+        // request, and the batch is at most 12 conditions × 2 directions on the
+        // one sweep that sees a new daily bar. `do nothing` is what makes a
+        // repeated advance on the same bar cost nothing instead of duplicating.
+        for (const r of rows) {
+          const returned = (await sql`
+            insert into lab_forward (
+              id, symbol, direction, condition_id, entry_bar_time, entry, stop, target,
+              atr, horizon_bars, status, opened_at
+            ) values (
+              ${r.id}, ${r.symbol}, ${r.direction}, ${r.conditionId}, ${r.entryBarTime},
+              ${r.entry}, ${r.stop}, ${r.target}, ${r.atr}, ${r.horizonBars}, ${r.status},
+              ${r.openedAt}
+            )
+            on conflict (id) do nothing
+            returning id
+          `) as unknown as unknown[];
+          inserted += returned.length;
+        }
+        return inserted;
+      } catch (err) {
+        throw explain(err);
+      }
+    },
+
+    async listLabTrades(filter: LabTradeFilter): Promise<LabTradeRow[]> {
+      try {
+        const rows = (await sql`
+          select * from lab_forward
+          where (${filter.symbol ?? null}::text is null or symbol = ${filter.symbol ?? null})
+            and (${filter.direction ?? null}::text is null or direction = ${filter.direction ?? null})
+            and (${filter.status ?? null}::text is null or status = ${filter.status ?? null})
+          order by entry_bar_time desc
+          limit ${filter.limit}
+        `) as unknown as Array<Record<string, unknown>>;
+        return rows.map(toLabTrade);
+      } catch (err) {
+        throw explain(err);
+      }
+    },
+
+    async resolveLabTrades(rows: LabTradeRow[]): Promise<number> {
+      if (rows.length === 0) return 0;
+      try {
+        let updated = 0;
+        for (const r of rows) {
+          // `status = 'open'` in the predicate, not just the id: two sweeps
+          // racing on the same resolution must produce one write, and the
+          // second must know it lost rather than overwrite the first.
+          const returned = (await sql`
+            update lab_forward set
+              status = ${r.status},
+              exit_price = ${r.exitPrice},
+              exit_bar_time = ${r.exitBarTime},
+              bars_held = ${r.barsHeld},
+              closed_at = ${r.closedAt ?? new Date().toISOString()}
+            where id = ${r.id} and status = 'open'
+            returning id
+          `) as unknown as unknown[];
+          updated += returned.length;
+        }
+        return updated;
+      } catch (err) {
+        throw explain(err);
+      }
+    },
+  };
+}
+
+/** Postgres columns are snake_case; the row type is not. */
+function toLabTrade(r: Record<string, unknown>): LabTradeRow {
+  const iso = (v: unknown): string | null =>
+    v === null || v === undefined ? null : new Date(v as string).toISOString();
+  return {
+    id: String(r.id),
+    symbol: String(r.symbol),
+    direction: r.direction === "short" ? "short" : "long",
+    conditionId: String(r.condition_id),
+    entryBarTime: iso(r.entry_bar_time)!,
+    entry: Number(r.entry),
+    stop: Number(r.stop),
+    target: Number(r.target),
+    atr: Number(r.atr),
+    horizonBars: Number(r.horizon_bars),
+    status: r.status as LabTradeRow["status"],
+    exitPrice: r.exit_price === null || r.exit_price === undefined ? null : Number(r.exit_price),
+    exitBarTime: iso(r.exit_bar_time),
+    barsHeld: r.bars_held === null || r.bars_held === undefined ? null : Number(r.bars_held),
+    openedAt: iso(r.opened_at) ?? new Date(0).toISOString(),
+    closedAt: iso(r.closed_at),
   };
 }

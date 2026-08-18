@@ -352,11 +352,19 @@ export async function fetchViaProxy(
   ticker: string,
   timeframe: Timeframe,
   gaps: string[],
+  /**
+   * Overrides the range for this call — the lab asks for a decade of daily
+   * bars, the analysis asks for a year. Both go through the same quota, cache
+   * and stale machinery; the range is part of the cache key, so the two never
+   * overwrite each other's copy.
+   */
+  rangeOverride?: string,
 ): Promise<ProxyResult | null> {
   // H4 is derived: the cache key and the upstream call are both in 1h terms
   // and the resample happens afterwards, so the cached copy is the raw hourly
   // series rather than a derived one.
-  const cfg = INTERVALS[timeframe];
+  const base = INTERVALS[timeframe];
+  const cfg = rangeOverride ? { ...base, range: rangeOverride } : base;
 
   const result = await fetchFree<Candle[]>({
     source: "yahoo",

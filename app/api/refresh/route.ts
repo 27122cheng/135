@@ -4,6 +4,7 @@ import { describeStore, getSignalStore } from "@/lib/db";
 import { notifyAll } from "@/lib/notify";
 import type { IngestedRelease } from "@/lib/analysis/data-release";
 import { runScan, storeScan } from "@/lib/scan";
+import { advanceLedger } from "@/lib/lab-forward-runner";
 import { configuredMinGrade, formatAlert, shouldAlert } from "@/lib/notify/alert";
 import { json } from "@/lib/json-response";
 
@@ -79,6 +80,14 @@ export async function GET(request: Request) {
       releaseNotes.push(...scan.releaseNotes);
       const { storeError: latestError } = await storeScan(signal);
 
+      // 前進實驗 — resolve what the new bars settled, open what this bar
+      // triggers. Idempotent per bar (ids derive from the entry bar), so the
+      // extra sweeps within a day cost two queries and write nothing. It must
+      // never fail the refresh: the ledger is research, the signal is the job.
+      const forward = await advanceLedger(meta, []).catch((err) => ({
+        error: err instanceof Error ? err.message : String(err),
+      }));
+
       // One trade at a time: while the monitor holds an unresolved position
       // on this symbol, new entries and level updates stay off the phone.
       const monitorState = await store.getMonitorState(meta.symbol).catch(() => null);
@@ -105,6 +114,7 @@ export async function GET(request: Request) {
         alerted: decision.alert,
         alertReason: decision.reason,
         notified,
+        forward,
       };
     }),
   );

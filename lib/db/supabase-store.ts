@@ -3,6 +3,8 @@ import type { SignalRow, TradeSignal } from "@/types/signal";
 import type { JournalEntry, JournalEntryInput } from "@/types/journal";
 import type {
   HistoryFilter,
+  LabTradeFilter,
+  LabTradeRow,
   MonitorRow,
   ReleaseRow,
   SignalStore,
@@ -327,5 +329,102 @@ export function supabaseStore(): SignalStore | null {
         );
       if (error) throw new Error(error.message);
     },
+
+    async insertLabTrades(rows: LabTradeRow[]): Promise<number> {
+      if (rows.length === 0) return 0;
+      const client = getSupabaseServerClient();
+      if (!client) throw new Error("缺少 SUPABASE_SERVICE_ROLE_KEY，無法寫入 lab_forward");
+      // ignoreDuplicates is what makes a repeated advance on the same bar a
+      // no-op — the id is derived from the entry bar for exactly that reason.
+      const { data, error } = await client
+        .from("lab_forward")
+        .upsert(rows.map(fromLabTrade), { onConflict: "id", ignoreDuplicates: true })
+        .select("id");
+      if (error) throw new Error(error.message);
+      return (data ?? []).length;
+    },
+
+    async listLabTrades(filter: LabTradeFilter): Promise<LabTradeRow[]> {
+      const client = getSupabaseAnonClient() ?? getSupabaseServerClient();
+      if (!client) throw new Error("缺少 Supabase 金鑰，無法讀取 lab_forward");
+      let query = client
+        .from("lab_forward")
+        .select("*")
+        .order("entry_bar_time", { ascending: false })
+        .limit(filter.limit);
+      if (filter.symbol) query = query.eq("symbol", filter.symbol);
+      if (filter.direction) query = query.eq("direction", filter.direction);
+      if (filter.status) query = query.eq("status", filter.status);
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return (data ?? []).map(toLabTrade);
+    },
+
+    async resolveLabTrades(rows: LabTradeRow[]): Promise<number> {
+      if (rows.length === 0) return 0;
+      const client = getSupabaseServerClient();
+      if (!client) throw new Error("缺少 SUPABASE_SERVICE_ROLE_KEY，無法更新 lab_forward");
+      let updated = 0;
+      for (const r of rows) {
+        // Matching on status too: two sweeps racing on one resolution must
+        // produce a single write, and the loser must not overwrite the winner.
+        const { data, error } = await client
+          .from("lab_forward")
+          .update({
+            status: r.status,
+            exit_price: r.exitPrice,
+            exit_bar_time: r.exitBarTime,
+            bars_held: r.barsHeld,
+            closed_at: r.closedAt ?? new Date().toISOString(),
+          })
+          .eq("id", r.id)
+          .eq("status", "open")
+          .select("id");
+        if (error) throw new Error(error.message);
+        updated += (data ?? []).length;
+      }
+      return updated;
+    },
+  };
+}
+
+/** The table is snake_case; the row type is not. */
+function fromLabTrade(r: LabTradeRow): Record<string, unknown> {
+  return {
+    id: r.id,
+    symbol: r.symbol,
+    direction: r.direction,
+    condition_id: r.conditionId,
+    entry_bar_time: r.entryBarTime,
+    entry: r.entry,
+    stop: r.stop,
+    target: r.target,
+    atr: r.atr,
+    horizon_bars: r.horizonBars,
+    status: r.status,
+    opened_at: r.openedAt,
+  };
+}
+
+function toLabTrade(r: Record<string, unknown>): LabTradeRow {
+  const iso = (v: unknown): string | null =>
+    v === null || v === undefined ? null : new Date(v as string).toISOString();
+  return {
+    id: String(r.id),
+    symbol: String(r.symbol),
+    direction: r.direction === "short" ? "short" : "long",
+    conditionId: String(r.condition_id),
+    entryBarTime: iso(r.entry_bar_time)!,
+    entry: Number(r.entry),
+    stop: Number(r.stop),
+    target: Number(r.target),
+    atr: Number(r.atr),
+    horizonBars: Number(r.horizon_bars),
+    status: r.status as LabTradeRow["status"],
+    exitPrice: r.exit_price === null || r.exit_price === undefined ? null : Number(r.exit_price),
+    exitBarTime: iso(r.exit_bar_time),
+    barsHeld: r.bars_held === null || r.bars_held === undefined ? null : Number(r.bars_held),
+    openedAt: iso(r.opened_at) ?? new Date(0).toISOString(),
+    closedAt: iso(r.closed_at),
   };
 }

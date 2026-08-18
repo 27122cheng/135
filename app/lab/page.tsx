@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { COMMODITIES } from "@/types/signal";
 import type { LabFinding, LabReport } from "@/lib/analysis/lab";
 import type { LabAdoption } from "@/lib/analysis/lab-adoption";
+import type { ForwardStat } from "@/lib/analysis/lab-forward";
+import type { LabTradeRow } from "@/lib/db";
 import { SiteNav } from "@/components/site-nav";
 
 /**
@@ -21,6 +23,15 @@ interface LabResponse {
   report?: LabReport;
   error?: string;
   gaps?: string[];
+}
+
+interface ForwardResponse {
+  stats?: ForwardStat[];
+  recent?: LabTradeRow[];
+  total?: number;
+  open?: number;
+  since?: string | null;
+  error?: string;
 }
 
 interface LiveStatus {
@@ -195,6 +206,30 @@ export default function LabPage() {
     }
   }, [symbol, direction]);
 
+  const [forward, setForward] = useState<ForwardResponse | null>(null);
+  const [advancing, setAdvancing] = useState(false);
+
+  const loadForward = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/lab/forward?symbol=${symbol}&direction=${direction}`, {
+        cache: "no-store",
+      });
+      setForward(await res.json());
+    } catch (err) {
+      setForward({ error: err instanceof Error ? err.message : String(err) });
+    }
+  }, [symbol, direction]);
+
+  const advance = useCallback(async () => {
+    setAdvancing(true);
+    try {
+      await fetch(`/api/lab/forward?symbol=${symbol}`, { method: "POST" });
+      await loadForward();
+    } finally {
+      setAdvancing(false);
+    }
+  }, [symbol, loadForward]);
+
   const loadAdoptions = useCallback(async () => {
     try {
       const res = await fetch("/api/lab/adopt", { cache: "no-store" });
@@ -211,6 +246,10 @@ export default function LabPage() {
   useEffect(() => {
     void loadAdoptions();
   }, [loadAdoptions]);
+
+  useEffect(() => {
+    void loadForward();
+  }, [loadForward]);
 
   const onAdopt = useCallback(
     async (ids: string[]) => {
@@ -270,9 +309,10 @@ export default function LabPage() {
       <SiteNav title="實驗室" />
 
       <p className="mb-3 text-[11px] leading-relaxed text-neutral-500">
-        進場條件不靠講理決定，靠量。每個條件<span className="text-neutral-300">單獨測</span>，
-        表現勝過基準的再<span className="text-neutral-300">層層疊加</span>（兩個、三個、四個都試，
-        疊到樣本數不足為止），全部扣掉交易成本。
+        進場條件不靠講理決定，靠量。兩條腿：
+        <span className="text-neutral-300">前進實驗</span>讓每個條件從今天起各自下單、各自結算，事前登記、事後不能改；
+        <span className="text-neutral-300">回測</span>則把同一套條件放到十年日線上重跑一次，先單獨測，
+        表現勝過基準的再層層疊加（兩個、三個、四個都試），全部扣掉交易成本。
         採用標準：<span className="text-neutral-300">樣本數 ≥100 筆、勝率 ≥80%</span>，
         而且只用最舊的 70% 歷史搜尋 —— 最新的 30% 完全不參與搜尋，只用來驗證，兩邊都要達標。
       </p>
@@ -393,6 +433,119 @@ export default function LabPage() {
               );
             })}
           </ul>
+        )}
+      </section>
+
+      {/* 前進實驗 — the ledger. Above the backtest because it is the harder
+          evidence: these trades were registered before the outcome existed. */}
+      <section className="mb-4 rounded-xl border border-neutral-800 bg-neutral-900/40 p-3">
+        <div className="mb-1.5 flex flex-wrap items-center gap-2">
+          <h2 className="text-xs font-medium text-neutral-300">
+            前進實驗 · {symbol} {direction === "long" ? "做多" : "做空"}
+          </h2>
+          {forward?.total !== undefined && (
+            <span className="text-[10px] text-neutral-500">
+              累計 {forward.total} 筆．進行中 {forward.open ?? 0}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => void advance()}
+            disabled={advancing}
+            className="ml-auto rounded-lg border border-neutral-700 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+          >
+            {advancing ? "推進中…" : "立即推進"}
+          </button>
+        </div>
+        <p className="mb-2 text-[10px] leading-relaxed text-neutral-500">
+          每個條件<span className="text-neutral-300">各自獨立</span>下單：條件成立就以當根收盤價進場，
+          停損 1×ATR、停利 1.5×ATR、最多持有 20 根，同一個條件同時只留一筆未結倉。
+          進出場條件在開倉當下就寫進資料庫，之後只能結算、不能修改 ——
+          這是<span className="text-neutral-300">事前登記</span>，和回測「事後翻歷史」是兩件事。
+          每 4 小時的自動掃描會推進一次。
+        </p>
+        {forward?.error && <p className="text-[11px] text-amber-400">{forward.error}</p>}
+        {forward?.stats && forward.stats.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="text-left text-[10px] text-neutral-600">
+                  <th className="py-1 font-normal">條件</th>
+                  <th className="py-1 text-right font-normal">前進勝率</th>
+                  <th className="py-1 text-right font-normal">勝／敗</th>
+                  <th className="py-1 text-right font-normal">逾時</th>
+                  <th className="py-1 text-right font-normal">進行中</th>
+                </tr>
+              </thead>
+              <tbody>
+                {forward.stats.map((s) => (
+                  <tr key={`${s.direction}:${s.conditionId}`} className="border-t border-neutral-800">
+                    <td className="py-1.5 pr-2 text-[11px] text-neutral-300">{s.label}</td>
+                    <td
+                      className={`py-1.5 text-right font-mono text-[11px] ${
+                        s.hitRate === null
+                          ? "text-neutral-600"
+                          : s.hitRate >= 0.8
+                            ? "text-emerald-400"
+                            : "text-neutral-400"
+                      }`}
+                    >
+                      {pct(s.hitRate)}
+                      <span className="ml-1 text-[10px] text-neutral-600">n={s.resolved}</span>
+                    </td>
+                    <td className="py-1.5 text-right font-mono text-[11px] text-neutral-500">
+                      {s.wins}／{s.losses}
+                    </td>
+                    <td className="py-1.5 text-right font-mono text-[11px] text-neutral-600">
+                      {s.expired}
+                    </td>
+                    <td className="py-1.5 text-right font-mono text-[11px] text-neutral-500">
+                      {s.open}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          !forward?.error && (
+            <p className="text-[10px] leading-relaxed text-neutral-600">
+              還沒有前進紀錄。第一次推進之後，每根新的日線都會讓條件各自開倉、結算，
+              數字會從零開始累積 —— 這段等待正是它比回測可信的原因：它沒辦法作弊。
+            </p>
+          )
+        )}
+        {forward?.recent && forward.recent.length > 0 && (
+          <details className="mt-2">
+            <summary className="cursor-pointer text-[10px] text-neutral-600">
+              最近 {forward.recent.length} 筆逐筆紀錄
+            </summary>
+            <ul className="mt-1 flex flex-col gap-0.5">
+              {forward.recent.map((t) => (
+                <li key={t.id} className="font-mono text-[10px] text-neutral-500">
+                  {t.entryBarTime.slice(0, 10)} {t.conditionId} {t.direction === "long" ? "多" : "空"}{" "}
+                  進 {t.entry.toFixed(2)} 損 {t.stop.toFixed(2)} 利 {t.target.toFixed(2)}{" "}
+                  <span
+                    className={
+                      t.status === "win"
+                        ? "text-emerald-400"
+                        : t.status === "loss"
+                          ? "text-red-400"
+                          : "text-neutral-600"
+                    }
+                  >
+                    {t.status === "open"
+                      ? "進行中"
+                      : t.status === "win"
+                        ? `停利（持有 ${t.barsHeld} 根）`
+                        : t.status === "loss"
+                          ? `停損（持有 ${t.barsHeld} 根）`
+                          : `逾時出場 ${t.exitPrice?.toFixed(2)}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
         )}
       </section>
 

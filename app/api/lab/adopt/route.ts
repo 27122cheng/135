@@ -1,5 +1,5 @@
 import { COMMODITIES } from "@/types/signal";
-import { fetchOHLCV } from "@/lib/data-sources/ohlcv";
+import { fetchDeepD1 } from "@/lib/data-sources/deep-history";
 import { VERIFY_FLOOR, runLab } from "@/lib/analysis/lab";
 import {
   ADOPTED_KEY,
@@ -143,11 +143,11 @@ export async function POST(request: Request) {
   try {
     // Re-measure. The report the page is showing may be stale, and this is the
     // moment the combination starts governing real entries.
-    const d1 = await fetchOHLCV(meta, "D1", gaps);
-    if (!d1?.candles?.length) {
+    const deep = await fetchDeepD1(meta, gaps);
+    if (!deep?.candles?.length) {
       return json({ error: "取不到 K 棒，無法在採用前重新驗證", gaps }, { status: 502 });
     }
-    const report = runLab(meta, d1.candles, direction, VERIFY_FLOOR);
+    const report = runLab(meta, deep.candles, direction, VERIFY_FLOOR);
     if (!report) {
       return json({ error: "K 棒不足，無法重新驗證", gaps }, { status: 422 });
     }
@@ -179,7 +179,7 @@ export async function POST(request: Request) {
       adoptions: next,
       // Checked against the same candles the verification just used, so the
       // operator sees immediately whether the condition holds right now.
-      now: evaluateAdoption(adoption, d1.candles),
+      now: evaluateAdoption(adoption, deep.candles),
       gaps,
     });
   } catch (err) {

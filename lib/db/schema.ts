@@ -225,6 +225,58 @@ create table if not exists public.source_cache (
 );
 
 alter table public.source_cache enable row level security;
+
+-- ─────────────────────────────────────────────────────────────────
+-- 實驗室前進測試: one paper trade per condition, opened before the
+-- outcome is known and resolved on later bars.
+--
+-- The lab's backtest and this table answer different questions. A backtest
+-- asks what a condition would have done on history that already existed when
+-- the condition was written; no amount of hold-out splitting fully removes the
+-- fact that the search and the data met. This table asks what the condition
+-- does on bars nobody had seen when the row was written -- each entry is a
+-- pre-registration, timestamped, with its stop and target fixed at entry and
+-- never adjusted afterwards.
+--
+-- One open trade per (symbol, direction, condition) at a time, so a condition
+-- that stays true for thirty bars produces a sequence a person could actually
+-- have traded rather than thirty overlapping positions. The id is derived from
+-- the entry bar, which makes re-running the advance on the same bar a no-op.
+-- ─────────────────────────────────────────────────────────────────
+
+create table if not exists public.lab_forward (
+  -- symbol:direction:condition:entry_bar_time -- deterministic, so a repeated
+  -- run inserts nothing rather than duplicating the trade.
+  id text primary key,
+  symbol text not null,
+  direction text not null check (direction in ('long', 'short')),
+  condition_id text not null,
+  -- The bar whose close triggered the entry.
+  entry_bar_time timestamptz not null,
+  entry double precision not null,
+  stop double precision not null,
+  target double precision not null,
+  -- The ATR the geometry was built from, kept so a resolved trade can be
+  -- re-checked without recomputing indicators over the whole series.
+  atr double precision not null,
+  horizon_bars integer not null,
+  status text not null check (status in ('open', 'win', 'loss', 'expired')),
+  exit_price double precision,
+  exit_bar_time timestamptz,
+  -- Bars held at resolution; null while open.
+  bars_held integer,
+  opened_at timestamptz not null default now(),
+  closed_at timestamptz
+);
+
+create index if not exists lab_forward_status_idx on public.lab_forward (status);
+create index if not exists lab_forward_scope_idx on public.lab_forward (symbol, direction, condition_id);
+
+alter table public.lab_forward enable row level security;
+
+drop policy if exists "Public read access" on public.lab_forward;
+create policy "Public read access" on public.lab_forward
+  for select using (true);
 `;
 
 /**
@@ -265,4 +317,5 @@ export const REQUIRED_TABLES = [
   "app_settings",
   "latest_signal",
   "source_cache",
+  "lab_forward",
 ] as const;

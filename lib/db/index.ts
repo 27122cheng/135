@@ -57,7 +57,10 @@ export interface SignalStore {
    * — enough to walk a 0.5GB Neon allowance into a wall in weeks, and a full
    * database fails writes, which this project has already spent days
    * diagnosing once. The journal is deliberately untouched: resolved trades
-   * are the track record, and the track record is forever.
+   * are the track record, and the track record is forever. `lab_forward` is
+   * untouched for the same reason — a forward test that deletes its own oldest
+   * results is not a forward test — and it stays small by construction: one
+   * open trade per condition and direction, a few thousand rows a year.
    */
   prune?(): Promise<{ signals: number; cache: number }>;
 
@@ -126,6 +129,49 @@ export interface SignalStore {
    */
   readCache(key: string): Promise<{ payload: unknown; fetchedAt: string } | null>;
   writeCache(key: string, payload: unknown): Promise<void>;
+
+  /**
+   * 實驗室前進測試 — the paper trades each condition is running live.
+   *
+   * `insertLabTrades` must be a no-op for an id that already exists: the
+   * advance runs on every sweep and the id is derived from the entry bar, so
+   * the second sweep of the same day must not open the trade again.
+   */
+  insertLabTrades(rows: LabTradeRow[]): Promise<number>;
+  listLabTrades(filter: LabTradeFilter): Promise<LabTradeRow[]>;
+  /** Writes the resolution of trades that reached their stop, target or horizon. */
+  resolveLabTrades(rows: LabTradeRow[]): Promise<number>;
+}
+
+export type LabTradeStatus = "open" | "win" | "loss" | "expired";
+
+/** One paper trade taken by one condition, on its own, in the forward test. */
+export interface LabTradeRow {
+  /** symbol:direction:condition:entryBarTime — deterministic, hence idempotent. */
+  id: string;
+  symbol: string;
+  direction: "long" | "short";
+  conditionId: string;
+  entryBarTime: string;
+  entry: number;
+  stop: number;
+  target: number;
+  atr: number;
+  horizonBars: number;
+  status: LabTradeStatus;
+  exitPrice: number | null;
+  exitBarTime: string | null;
+  barsHeld: number | null;
+  openedAt: string;
+  closedAt: string | null;
+}
+
+export interface LabTradeFilter {
+  symbol?: string | null;
+  direction?: "long" | "short" | null;
+  /** "open" narrows to unresolved trades — what the advance needs. */
+  status?: LabTradeStatus | null;
+  limit: number;
 }
 
 /** One row of `data_release` — a single macro print. */
