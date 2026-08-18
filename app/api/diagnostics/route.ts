@@ -82,6 +82,14 @@ export async function GET() {
       "Twelve Data 報價 (需金鑰)",
       "https://api.twelvedata.com/quote?symbol=EUR/USD&apikey=demo",
     ),
+    probe(
+      "FMP 報價 (需金鑰)",
+      "https://financialmodelingprep.com/api/v3/quote/EURUSD?apikey=demo",
+    ),
+    probe(
+      "Binance 24 小時對照 (免金鑰)",
+      "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1m&limit=1",
+    ),
     probe("Stooq CSV 備援 (免金鑰)", "https://stooq.com/q/d/l/?s=xauusd&i=d", {
       headers: { "User-Agent": "Mozilla/5.0" },
     }),

@@ -10,6 +10,7 @@ import { detectAllPatterns, patternContributions } from "./analysis/patterns";
 import { dedupeBiasItems } from "./analysis/evidence";
 import { describeProximity, isNearEntry } from "./analysis/proximity";
 import { marketStatus } from "./market-hours";
+import { driftWarning, fetchWitness, refineClosedReason } from "./data-sources/binance-witness";
 import { analyzeFundamental } from "./analysis/fundamental";
 import { analyzePositioning } from "./analysis/positioning";
 import { analyzeNews } from "./analysis/news";
@@ -320,9 +321,33 @@ async function buildSignalForSymbol(
     barAgeMinutes,
     meta.category,
   );
-  if (market.closed && market.reason) gaps.push(market.reason);
+
+  // 24 小時對照證人 — asked only when it can change what we say.
+  //
+  // Two questions no other source here can answer: whether a 休市中 verdict is
+  // the market being shut or our feeds being dark, and whether a quote that
+  // *looks* fresh has actually frozen. A frozen feed keeps answering with a
+  // current timestamp and a stale price, which is invisible to every staleness
+  // check — but not to an instrument that never stops trading and has since
+  // moved. It never supplies a price; see the module for why.
+  const witness =
+    market.basis === "stale-quote" || quote !== null
+      ? await fetchWitness(meta.symbol, gaps).catch(() => null)
+      : null;
+
+  if (market.closed && market.reason) {
+    if (market.basis === "stale-quote") {
+      const refined = refineClosedReason(market.reason, witness);
+      market.reason = refined.reason;
+    }
+    gaps.push(market.reason);
+  }
 
   const currentPrice = quote && quoteBeatsBar ? quote.price : (lastClose ?? quote?.price);
+  // The drift check runs on whatever price the analysis is about to use, not
+  // on the quote — a frozen candle is as wrong as a frozen quote.
+  const drift = currentPrice != null ? driftWarning(currentPrice, witness) : null;
+  if (drift) gaps.push(drift);
   const priceBasis =
     quote && quoteBeatsBar
       ? `即時報價 ${round(quote.price)}（${Math.round(quote.ageMinutes)} 分鐘前）`

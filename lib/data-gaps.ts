@@ -21,6 +21,8 @@ export const KEY_SOURCES: Record<string, string> = {
   EIA_API_KEY: "eia.gov/opendata（選用，庫存已由 FRED WCESTUS1 供應）",
   TWELVEDATA_API_KEY:
     "twelvedata.com/pricing（免費 800 次/日，第三個即時報價來源，九個商品全支援）",
+  FMP_API_KEY:
+    "site.financialmodelingprep.com/developer/docs（免費 250 次/日，第四個報價來源，前面全掛才會用到）",
 };
 
 /**

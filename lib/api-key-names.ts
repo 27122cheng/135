@@ -28,6 +28,8 @@ export const USER_SETTABLE_KEYS = [
   // nor Stooq. Without it the chain still works; with it, a Yahoo freeze stops
   // meaning "yesterday's close or nothing".
   "TWELVEDATA_API_KEY",
+  // Fourth quote witness, asked only when everything above it has failed.
+  "FMP_API_KEY",
 ] as const;
 
 export type UserSettableKey = (typeof USER_SETTABLE_KEYS)[number];

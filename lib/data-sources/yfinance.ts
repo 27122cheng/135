@@ -4,6 +4,7 @@ import { fetchFree } from "./free-source";
 import { fetchJson } from "./http";
 import { fetchStooqText } from "./stooq-fetch";
 import { fetchTwelveDataQuote } from "./twelvedata";
+import { fetchFmpQuote } from "./fmp";
 
 /**
  * The self-hosted yfinance proxy's engine.
@@ -166,6 +167,7 @@ export interface LatestPrice {
     | "yahoo-direct"
     | "stooq"
     | "twelvedata"
+    | "fmp"
     | "proxy-bar"
     | "fred"
     | "er-api"
@@ -274,6 +276,14 @@ export async function fetchLatestPrice(
   if (symbol) {
     const td = await fetchTwelveDataQuote({ symbol }, gaps).catch(() => null);
     if (td) live.push(td);
+    // Fourth witness. Behind Twelve Data rather than beside it: its free
+    // allowance is a third of the size, so it is asked only once nothing above
+    // has produced anything at all — the day this path matters, 250 calls is
+    // more than enough, and on every other day it spends none of them.
+    if (live.length === 0) {
+      const fmp = await fetchFmpQuote({ symbol }, gaps).catch(() => null);
+      if (fmp) live.push(fmp);
+    }
   }
 
   // Freshest live answer wins, and if it is genuinely recent nothing further

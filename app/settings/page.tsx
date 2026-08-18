@@ -50,6 +50,16 @@ const KEYS: KeyInfo[] = [
     priority: "high",
   },
   {
+    name: "FMP_API_KEY",
+    label: "Financial Modeling Prep（選填）",
+    what:
+      "第四個報價來源。免費 250 次/日，額度較小，所以只有在上面全部都拿不到當下價格時才會被呼叫 —— " +
+      "平常完全不消耗。多一家獨立供應商，就多一層「兩家同時掛掉」才會失去價格的保險。",
+    where: "註冊後 Dashboard → API Keys",
+    url: "https://site.financialmodelingprep.com/developer/docs",
+    priority: "low",
+  },
+  {
     name: "FINNHUB_API_KEY",
     label: "Finnhub（選填）",
     what: "額外新聞來源＋美股財報日曆。新聞面已由 GDELT 免費供應，優先度低。",
