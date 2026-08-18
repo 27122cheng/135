@@ -3,16 +3,23 @@ import { fetchBackupPrice } from "./backup-price";
 import { fetchFree } from "./free-source";
 import { fetchJson } from "./http";
 import { fetchStooqText } from "./stooq-fetch";
+import { fetchTwelveDataQuote } from "./twelvedata";
 
 /**
  * The self-hosted yfinance proxy's engine.
  *
- * "Self-hosted proxy" rather than a vendor API because every hosted quote
- * service that covers FX + indices + commodities at once is now paid: Twelve
- * Data's free plan only opens 3 markets, Alpha Vantage's is down to ~25
- * requests a day. The Yahoo chart endpoint that the `yfinance` library wraps
- * covers all nine tickers for free — so we call it from our own server, cache
- * it for 30 minutes, and spend a self-imposed budget against it.
+ * "Self-hosted proxy" rather than a vendor API because no hosted quote service
+ * covers FX + indices + commodities at once for free and without a key: Twelve
+ * Data's free plan gates by market and needs an account, Alpha Vantage's is
+ * down to ~25 requests a day. The Yahoo chart endpoint that the `yfinance`
+ * library wraps covers all nine tickers for free — so we call it from our own
+ * server, cache it for 30 minutes, and spend a self-imposed budget against it.
+ *
+ * Twelve Data is now wired in as an *optional* extra witness for the live
+ * quote (see ./twelvedata.ts): a key makes it a third company on the live
+ * chain, no key changes nothing. It is a backup, not the primary — the whole
+ * point of the proxy is that the site works for someone who has pasted no keys
+ * at all.
  *
  * Two consequences worth being explicit about:
  *  - This is an undocumented endpoint with no SLA. It can change shape or
@@ -155,7 +162,14 @@ export interface LatestPrice {
   /** How stale it is right now, in minutes. */
   ageMinutes: number;
   /** Which feed answered — direct quote, Stooq, a third-witness source, or the candle proxy's newest bar. */
-  source?: "yahoo-direct" | "stooq" | "proxy-bar" | "fred" | "er-api" | "gold-api";
+  source?:
+    | "yahoo-direct"
+    | "stooq"
+    | "twelvedata"
+    | "proxy-bar"
+    | "fred"
+    | "er-api"
+    | "gold-api";
 }
 
 /**
@@ -240,9 +254,33 @@ export async function fetchLatestPrice(
   // timestamp reads up to two hours *fresher* than reality — harmless for the
   // staleness gate (the weekend clock covers the close, and two hours is under
   // every threshold here) and preferable to a timezone table that rots.
+  const live: LatestPrice[] = direct ? [direct] : [];
   if (stooqTicker) {
     const stooq = await fetchStooqQuote(stooqTicker, gaps).catch(() => null);
-    if (stooq && (!direct || stooq.ageMinutes < direct.ageMinutes)) return stooq;
+    if (stooq) live.push(stooq);
+  }
+
+  // Third live witness, third company — and the only one of the three that is
+  // a paid-grade vendor rather than an endpoint we are borrowing. Optional: no
+  // key, no call, and the chain behaves exactly as it did before. It matters
+  // most for GER40, which has no keyless third source of any kind (FRED's DAX
+  // series is discontinued), and on the days Yahoo freezes — the failure that
+  // put nine trading instruments on 休市中 for a day and a half.
+  //
+  // Reached only once Yahoo's own answer is over three hours old (the early
+  // return above), so a normal day spends none of the 800-call daily budget on
+  // it. That is deliberate: a backup that burns its allowance while the primary
+  // is healthy is not available on the day the primary fails.
+  if (symbol) {
+    const td = await fetchTwelveDataQuote({ symbol }, gaps).catch(() => null);
+    if (td) live.push(td);
+  }
+
+  // Freshest live answer wins, and if it is genuinely recent nothing further
+  // is asked. The daily sources below exist for when every live feed is dark.
+  if (live.length > 0) {
+    const freshest = live.reduce((best, c) => (c.ageMinutes < best.ageMinutes ? c : best));
+    if (freshest.ageMinutes <= 3 * 60 || freshest !== direct) return freshest;
   }
 
   // Third witness, third company. FRED publishes the US index closes and the

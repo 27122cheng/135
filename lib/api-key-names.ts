@@ -24,6 +24,10 @@ export const USER_SETTABLE_KEYS = [
   "FINNHUB_API_KEY",
   "FRED_API_KEY",
   "EIA_API_KEY",
+  // Optional fourth quote source, and the only live one that is neither Yahoo
+  // nor Stooq. Without it the chain still works; with it, a Yahoo freeze stops
+  // meaning "yesterday's close or nothing".
+  "TWELVEDATA_API_KEY",
 ] as const;
 
 export type UserSettableKey = (typeof USER_SETTABLE_KEYS)[number];

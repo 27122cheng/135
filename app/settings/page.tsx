@@ -40,6 +40,16 @@ const KEYS: KeyInfo[] = [
     priority: "low",
   },
   {
+    name: "TWELVEDATA_API_KEY",
+    label: "Twelve Data（建議填）",
+    what:
+      "第三個即時報價來源，九個商品全支援。Yahoo 與 Stooq 都停更時（發生過，整整一天半所有商品顯示休市中），" +
+      "這是唯一還能給出當下價格的來源；GER40 更是除此之外沒有第三個來源。免費 800 次/日，只在主來源超過 3 小時沒更新時才會用到。",
+    where: "註冊後 Dashboard 直接顯示 API Key",
+    url: "https://twelvedata.com/pricing",
+    priority: "high",
+  },
+  {
     name: "FINNHUB_API_KEY",
     label: "Finnhub（選填）",
     what: "額外新聞來源＋美股財報日曆。新聞面已由 GDELT 免費供應，優先度低。",

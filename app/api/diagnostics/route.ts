@@ -78,6 +78,10 @@ export async function GET() {
       "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=1d&range=5d",
       { headers: { "User-Agent": "Mozilla/5.0" } },
     ),
+    probe(
+      "Twelve Data 報價 (需金鑰)",
+      "https://api.twelvedata.com/quote?symbol=EUR/USD&apikey=demo",
+    ),
     probe("Stooq CSV 備援 (免金鑰)", "https://stooq.com/q/d/l/?s=xauusd&i=d", {
       headers: { "User-Agent": "Mozilla/5.0" },
     }),

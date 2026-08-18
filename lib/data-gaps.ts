@@ -19,6 +19,8 @@ export const KEY_SOURCES: Record<string, string> = {
   FRED_API_KEY: "fred.stlouisfed.org（選用，已改用 FRED 免金鑰 CSV 端點）",
   FINNHUB_API_KEY: "finnhub.io（選用，新聞已由 GDELT 免金鑰供應）",
   EIA_API_KEY: "eia.gov/opendata（選用，庫存已由 FRED WCESTUS1 供應）",
+  TWELVEDATA_API_KEY:
+    "twelvedata.com/pricing（免費 800 次/日，第三個即時報價來源，九個商品全支援）",
 };
 
 /**
