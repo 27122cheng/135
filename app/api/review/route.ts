@@ -1,4 +1,6 @@
-import { getSignalStore } from "@/lib/db";
+import { getSignalStore, type LabTradeRow } from "@/lib/db";
+import { censusOf } from "@/lib/analysis/blockers";
+import { summariseForward } from "@/lib/analysis/lab-forward";
 import { buildRiskAdvice } from "@/lib/journal/advice";
 import { computeReviewStats, computeTrackRecord } from "@/lib/journal/stats";
 import { summariseTags, triggeredTags } from "@/lib/journal/interventions";
@@ -23,6 +25,24 @@ export async function GET(request: Request) {
   try {
     const entries = await store.listJournal({ symbol, limit: 500 });
     const stats = computeReviewStats(entries);
+
+    // 卡在哪一關 — the census over the signals currently in force.
+    //
+    // Answers the question the journal cannot while it is empty: with almost
+    // nothing ever entering, "勝率" has no denominator and the page reads as
+    // broken. The distribution of *rejections* is real data from the first
+    // scan onward, and it is what says which threshold is worth arguing about.
+    const latest = await store.latestPerSymbol().catch(() => []);
+    const scoped = symbol ? latest.filter((s) => s.symbol === symbol) : latest;
+    const census = censusOf(scoped);
+    // Forward-test results: real resolved trades, per condition, accumulating
+    // whether or not any signal ever cleared the gates.
+    const labTrades = await store
+      .listLabTrades({ symbol, limit: 4000 })
+      .catch(() => [] as LabTradeRow[]);
+    const labStats = summariseForward(labTrades);
+    const labResolved = labStats.reduce((n, s) => n + s.resolved, 0);
+    const labWins = labStats.reduce((n, s) => n + s.wins, 0);
     // Which tags are currently tightening new signals, so the page can show
     // the live consequence of the history above it.
     const tagStats = summariseTags(entries);
@@ -33,6 +53,14 @@ export async function GET(request: Request) {
       activeInterventions: active,
       recentTagStats: tagStats,
       riskAdvice: buildRiskAdvice(tagStats, active),
+      blockers: { census, scanned: scoped.length },
+      forward: {
+        conditions: labStats.slice(0, 8),
+        resolved: labResolved,
+        wins: labWins,
+        hitRate: labResolved > 0 ? Math.round((labWins / labResolved) * 1000) / 1000 : null,
+        open: labTrades.filter((t) => t.status === "open").length,
+      },
     });
   } catch (err) {
     return json(

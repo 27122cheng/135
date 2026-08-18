@@ -162,7 +162,7 @@ function Interventions({ items }: { items: AppliedIntervention[] }) {
 }
 
 function DataGaps({ gaps }: { gaps: string[] }) {
-  const { missingKeys, keyRelated, other, permanent, informational } = groupDataGaps(gaps);
+  const { missingKeys, keyRelated, other, stale, permanent, informational } = groupDataGaps(gaps);
   // The headline count covers only what someone could actually fix. Permanent
   // limitations are still listed, just not counted as warnings — a number that
   // can never reach zero is a number people stop reading.
@@ -174,9 +174,9 @@ function DataGaps({ gaps }: { gaps: string[] }) {
         {missingKeys.length > 0 && (
           <span className="ml-1 text-amber-500/70">（{missingKeys.length} 個金鑰未設定）</span>
         )}
-        {actionable === 0 && permanent.length + informational.length > 0 && (
+        {actionable === 0 && stale.length + permanent.length + informational.length > 0 && (
           <span className="ml-1 text-neutral-500">
-            （{permanent.length + informational.length} 項說明，無需處理）
+            （{stale.length + permanent.length + informational.length} 項說明，無需處理）
           </span>
         )}
       </summary>
@@ -208,6 +208,18 @@ function DataGaps({ gaps }: { gaps: string[] }) {
             <p className="mb-1.5 text-xs font-medium text-amber-300">本次取得失敗</p>
             <ul className="list-inside list-disc space-y-1 text-xs leading-relaxed text-amber-300/70">
               {other.map((g, i) => (
+                <li key={i}>{g}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {stale.length > 0 && (
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-neutral-400">
+              資料不是即時（有拿到，只是舊的）
+            </p>
+            <ul className="list-inside list-disc space-y-1 text-xs leading-relaxed text-neutral-500">
+              {stale.map((g, i) => (
                 <li key={i}>{g}</li>
               ))}
             </ul>
@@ -1048,6 +1060,15 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
   // score reads. Older stored signals have none, so fall back to computing.
   const overallConfidence: Confidence = signal.confidence ?? planConfidence(signal);
   const tradeable = clearsEntryBar(overallConfidence.score);
+  /**
+   * Whether any price on this card was *chosen* rather than merely computed.
+   *
+   * A plan that enters has been through every screen. 參考價位 has been through
+   * the same selection at a lower bar. Anything else is raw structure, and raw
+   * structure must not be displayed as a price list — see the block below.
+   */
+  const showLevels =
+    (tradeable && signal.trade_plan.stance === "enter") || signal.reference_plan != null;
   const noPrice = hasNoPrice(signal);
   const entryLabel = noPrice
     ? "無資料"
@@ -1151,6 +1172,26 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
         )}
         <AsOfNotice signal={signal} />
         <ReferencePlan signal={signal} />
+        {/* 沒過門檻就是無交易，不給價位。
+            The levels used to be printed here regardless — the mid of the entry
+            zone, the nearest protecting structure, the nearest obstacles —
+            under a heading that said 未達可交易門檻. Nothing had chosen among
+            them: no hit-rate screen, no risk-reward floor, no backtest. A row
+            of prices reads as a recommendation no matter what the heading says,
+            and the one part of the card with no selection behind it was the
+            part being traded from. So when neither the plan nor 參考價位
+            cleared the floor (backtest ≥55% and ≥1:1.5), this says so and shows
+            nothing. */}
+        {!showLevels ? (
+          <div className="rounded-lg border border-neutral-800 bg-neutral-950/50 px-3 py-3">
+            <p className="text-xs font-medium text-neutral-300">無交易</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
+              這個方向上，沒有任何進場／停損／停利組合通過門檻（歷史回測勝率 ≥55%、風報比 ≥1:1.5），
+              因此不提供價位。分析本身仍在下方 —— 方向、結構、六面向都算完了，
+              只是沒有一組價位值得掛單。
+            </p>
+          </div>
+        ) : (
         <div className="rounded-lg border border-neutral-800 bg-neutral-950/50 px-3">
             <PriceRow
               label="進場"
@@ -1184,6 +1225,7 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
               ))
           )}
         </div>
+        )}
       </Section>
 
       {/* Regime first: what kind of market this is decides how much every

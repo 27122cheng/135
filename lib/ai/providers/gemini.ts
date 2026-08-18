@@ -1,6 +1,7 @@
 import { getKey } from "@/lib/api-keys";
 import { postJson } from "../http";
 import { isModelError, isPerModelQuotaError, modelCandidates, rememberModel } from "../model-fallback";
+import { discoverGeminiModels, mergeModelPreference } from "../model-discovery";
 import { AIProviderError, type AIProvider, type CompleteOptions, type ResponseSchema } from "../provider";
 
 /**
@@ -40,7 +41,16 @@ export function geminiProvider(): AIProvider {
     ): Promise<T> {
       const apiKey = getKey("GEMINI_API_KEY");
       if (!apiKey) throw new AIProviderError("gemini", "未設定 GEMINI_API_KEY");
-      const models = modelCandidates("gemini", getKey("GEMINI_MODEL"), DEFAULT_MODELS);
+      // The account's own catalogue decides what is callable; the list above
+      // only decides the order. Google renames Flash models faster than anyone
+      // redeploys, and a per-model daily quota (limit: 20 on the free tier)
+      // makes having *more* reachable ids the difference between an analysis
+      // and a fallback paragraph.
+      const override = getKey("GEMINI_MODEL");
+      const preference = override
+        ? DEFAULT_MODELS
+        : mergeModelPreference(DEFAULT_MODELS, await discoverGeminiModels(apiKey));
+      const models = modelCandidates("gemini", override, preference);
 
       let body: GeminiResponse | null = null;
       let lastModelError: string | null = null;

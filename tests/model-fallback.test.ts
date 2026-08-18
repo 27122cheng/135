@@ -8,6 +8,7 @@ import {
   retryAfterMs,
 } from "@/lib/ai/model-fallback";
 import { completeAI, testAIProviders, textSchema } from "@/lib/ai";
+import { clearDiscoveryCache } from "@/lib/ai/model-discovery";
 
 /**
  * 「AI 供應商一直呼叫失敗」— and the keys were fine.
@@ -31,6 +32,9 @@ function reset() {
   for (const k of ["GEMINI_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "AI_PROVIDER_ORDER"]) {
     delete process.env[k];
   }
+  // Discovery is cached per process for an hour; one case's catalogue must not
+  // decide the next case's model list.
+  clearDiscoveryCache();
 }
 
 async function main() {
@@ -58,7 +62,14 @@ async function main() {
     );
     const r = await completeAI("p", S, []);
     check("a retired default falls through to the next id", r?.provider === "gemini", r);
-    check("both ids were tried", seen.filter((u) => u.includes("googleapis")).length === 2, seen);
+    // Counted on the generate call specifically: the provider now also asks
+    // the account which models it may call, and that lookup is a googleapis
+    // URL too. The invariant is unchanged — a retired id costs a hop, not the
+    // provider — but the URL that proves it is the generateContent one.
+    check("both ids were tried",
+      seen.filter((u) => u.includes(":generateContent")).length === 2, seen);
+    check("and the account's own model catalogue was consulted first",
+      seen[0] === "https://generativelanguage.googleapis.com/v1beta/models", seen[0]);
 
     // The working id is remembered: the next call must not re-probe the dead one.
     __resetCacheForTests();
@@ -89,8 +100,11 @@ async function main() {
     );
     const r = await completeAI("p", S, []);
     check("a 429 hops providers, not model ids", r?.provider === "groq", r);
+    // The generate call, once — a per-minute limit is provider-wide, so
+    // walking model ids would only spend the quota it is already out of. The
+    // catalogue lookup that precedes it is not a generate call.
     check("gemini was asked exactly once",
-      seen.filter((u) => u.includes("googleapis")).length === 1, seen);
+      seen.filter((u) => u.includes(":generateContent")).length === 1, seen);
   }
 
   // ── every id dead names the cure ────────────────────────────────

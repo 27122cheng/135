@@ -10,8 +10,38 @@ import { JournalForm } from "@/components/journal-form";
 import type { RiskAdvice } from "@/lib/journal/advice";
 import { SiteNav } from "@/components/site-nav";
 
+interface BlockerRow {
+  id: string;
+  label: string;
+  count: number;
+  share: number;
+  tunable: boolean;
+  symbols: string[];
+}
+
+interface ForwardCondition {
+  conditionId: string;
+  label: string;
+  direction: "long" | "short";
+  open: number;
+  wins: number;
+  losses: number;
+  expired: number;
+  resolved: number;
+  hitRate: number | null;
+  taken: number;
+}
+
 interface ReviewResponse extends ReviewStats {
   trackRecord?: TrackRecord;
+  blockers?: { census: BlockerRow[]; scanned: number };
+  forward?: {
+    conditions: ForwardCondition[];
+    resolved: number;
+    wins: number;
+    hitRate: number | null;
+    open: number;
+  };
   activeInterventions: TagStat[];
   recentTagStats: TagStat[];
   riskAdvice?: RiskAdvice[];
@@ -105,6 +135,103 @@ export default function ReviewPage() {
               </p>
             )}
           </Section>
+
+          {/* 為什麼沒有訊號 — the distribution of rejections.
+              With almost nothing entering, the hit-rate table above has no
+              denominator and the page reads as empty. This is real data from
+              the first scan onward, and it is what says which threshold is
+              actually costing the volume. */}
+          {stats.blockers && stats.blockers.census.length > 0 && (
+            <Section title={`目前 ${stats.blockers.scanned} 個商品卡在哪一關`}>
+              <p className="mb-2 text-[11px] leading-relaxed text-neutral-500">
+                「訊號太少」不是一個可以直接修的東西，「62% 卡在找不到停利結構」才是。
+                標<span className="text-amber-400">可調</span>的是本系統自己訂的門檻，
+                沒標的是市場本身就沒有給的條件 —— 那個調了也沒用。
+              </p>
+              <table className="w-full">
+                <thead>
+                  <tr className="text-left text-[10px] text-neutral-600">
+                    <th className="py-1 font-normal">關卡</th>
+                    <th className="py-1 text-right font-normal">數量</th>
+                    <th className="py-1 text-right font-normal">佔比</th>
+                    <th className="py-1 pl-2 font-normal">商品</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.blockers.census.map((b) => (
+                    <tr key={b.id} className="border-t border-neutral-800">
+                      <td className="py-1.5 pr-2 text-[11px] text-neutral-300">
+                        {b.label}
+                        {b.tunable && (
+                          <span className="ml-1 rounded bg-amber-500/15 px-1 py-0.5 text-[9px] text-amber-400">
+                            可調
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-[11px] text-neutral-400">
+                        {b.count}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-[11px] text-neutral-500">
+                        {b.share}%
+                      </td>
+                      <td className="py-1.5 pl-2 text-[10px] text-neutral-600">
+                        {b.symbols.join("、")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Section>
+          )}
+
+          {/* 前進實驗 — the other track record, and the one that fills up
+              whether or not the gates ever let a signal through. */}
+          {stats.forward && (stats.forward.resolved > 0 || stats.forward.open > 0) && (
+            <Section title="前進實驗的實際結果（每個進場條件各自下單）">
+              <p className="mb-2 text-[11px] leading-relaxed text-neutral-500">
+                累計結算 {stats.forward.resolved} 筆、進行中 {stats.forward.open} 筆，
+                整體勝率{" "}
+                <span className="font-mono text-neutral-300">
+                  {stats.forward.hitRate === null
+                    ? "—"
+                    : `${Math.round(stats.forward.hitRate * 100)}%`}
+                </span>
+                。這些單子在開倉當下就登記好進場、停損、停利，事後不能改。
+              </p>
+              <table className="w-full">
+                <thead>
+                  <tr className="text-left text-[10px] text-neutral-600">
+                    <th className="py-1 font-normal">條件</th>
+                    <th className="py-1 text-right font-normal">勝率</th>
+                    <th className="py-1 text-right font-normal">勝／敗</th>
+                    <th className="py-1 text-right font-normal">進行中</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.forward.conditions.map((c) => (
+                    <tr key={`${c.direction}:${c.conditionId}`} className="border-t border-neutral-800">
+                      <td className="py-1.5 pr-2 text-[11px] text-neutral-300">
+                        {c.label}
+                        <span className="ml-1 text-[10px] text-neutral-600">
+                          {c.direction === "long" ? "多" : "空"}
+                        </span>
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-[11px] text-neutral-400">
+                        {c.hitRate === null ? "—" : `${Math.round(c.hitRate * 100)}%`}
+                        <span className="ml-1 text-[10px] text-neutral-600">n={c.resolved}</span>
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-[11px] text-neutral-500">
+                        {c.wins}／{c.losses}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-[11px] text-neutral-600">
+                        {c.open}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Section>
+          )}
 
           {stats.riskAdvice && stats.riskAdvice.length > 0 && (
             <Section title="風控與停損建議">

@@ -101,6 +101,29 @@ export function isInformational(gap: string): boolean {
   return INFORMATIONAL_PATTERNS.some((p) => p.test(gap));
 }
 
+/**
+ * A source that answered from cache **answered**.
+ *
+ * The dimension scored, the number reached the analysis, and the only
+ * difference from a live fetch is that the reading is a few hours old — which
+ * the message already says. Listing that under 本次取得失敗, beside sources
+ * that returned nothing at all, is what makes the panel read as a wall of
+ * failures: "GDELT 新聞 HTTP 429，改用 12 小時前的快取結果" is a footnote.
+ *
+ * Its own bucket rather than the informational one, deliberately. Informational
+ * lines are free — the confidence score does not count them — and a stale
+ * reading is not free: it still costs a point, because a number that is twelve
+ * hours old is worse evidence than one that is current. Quieter, not weightless.
+ *
+ * A source with no cache to fall back on does not match: that one really did
+ * come back empty, and stays in `other`.
+ */
+const STALE_PATTERNS = [/改用 .*前的快取結果/, /資料非即時/, /\(stale/, /（stale/];
+
+export function isStaleServed(gap: string): boolean {
+  return STALE_PATTERNS.some((p) => p.test(gap));
+}
+
 export interface GroupedGaps {
   /** Unique env var names that would close one or more gaps. */
   missingKeys: string[];
@@ -108,6 +131,8 @@ export interface GroupedGaps {
   keyRelated: string[];
   /** This run failed to get something it could normally get — actionable. */
   other: string[];
+  /** Served, but from cache — the data is there, just not current. */
+  stale: string[];
   /** Known limitations of the data landscape — informational, not actionable. */
   permanent: string[];
   /** The system explaining its own behaviour — nothing is missing. */
@@ -144,8 +169,35 @@ const CASCADES: Array<{ match: RegExp; keep: RegExp; label: string }> = [
   },
 ];
 
+/**
+ * One source being down is one problem, however many things asked it.
+ *
+ * The circuit breaker writes its notice per *call site*, so a single Finnhub
+ * outage printed "Finnhub 新聞 … 目前連線不穩" and "Finnhub 財經日曆 … 目前連線
+ * 不穩" as two separate gaps — two lines, two confidence penalties, one fact.
+ * Grouped by the source name the breaker itself names, so a future source gets
+ * the same treatment without being listed anywhere.
+ */
+function collapseBreakerNotices(gaps: string[]): string[] {
+  const BREAKER = /([A-Za-z0-9_.-]+) 目前連線不穩/;
+  const bySource = new Map<string, string[]>();
+  const rest: string[] = [];
+  for (const gap of gaps) {
+    const source = gap.match(BREAKER)?.[1];
+    if (!source) {
+      rest.push(gap);
+      continue;
+    }
+    bySource.set(source, [...(bySource.get(source) ?? []), gap]);
+  }
+  const collapsed = [...bySource.values()].map((lines) =>
+    lines.length === 1 ? lines[0] : `${lines[0]}（同一來源另有 ${lines.length - 1} 項請求受影響）`,
+  );
+  return [...rest, ...collapsed];
+}
+
 export function collapseCascades(gaps: string[]): string[] {
-  let remaining = [...new Set(gaps)];
+  let remaining = collapseBreakerNotices([...new Set(gaps)]);
   for (const cascade of CASCADES) {
     const hit = remaining.filter((g) => cascade.match.test(g));
     if (hit.length <= 1) continue;
@@ -162,6 +214,7 @@ export function groupDataGaps(gaps: string[]): GroupedGaps {
   const missingKeys = new Set<string>();
   const keyRelated: string[] = [];
   const other: string[] = [];
+  const stale: string[] = [];
   const permanent: string[] = [];
   const informational: string[] = [];
 
@@ -174,10 +227,12 @@ export function groupDataGaps(gaps: string[]): GroupedGaps {
       informational.push(gap);
     } else if (isPermanent(gap)) {
       permanent.push(gap);
+    } else if (isStaleServed(gap)) {
+      stale.push(gap);
     } else {
       other.push(gap);
     }
   }
 
-  return { missingKeys: [...missingKeys], keyRelated, other, permanent, informational };
+  return { missingKeys: [...missingKeys], keyRelated, other, stale, permanent, informational };
 }

@@ -83,6 +83,9 @@ function buildRegistry(): Map<string, AIProvider> {
         "qwen/qwen-2.5-72b-instruct:free",
       ],
       extraHeaders: { "x-title": "multi-commodity-signal" },
+      // OpenRouter publishes per-token pricing, so "free" is checkable rather
+      // than a naming convention that keeps being withdrawn.
+      freeOnly: true,
     }),
     anthropicProvider(),
   ];

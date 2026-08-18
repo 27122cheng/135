@@ -8,6 +8,7 @@ import {
   rememberModel,
   retryAfterMs,
 } from "../model-fallback";
+import { discoverOpenAICompatibleModels, mergeModelPreference } from "../model-discovery";
 import { AIProviderError, type AIProvider, type CompleteOptions, type ResponseSchema } from "../provider";
 
 /**
@@ -34,6 +35,12 @@ export interface OpenAICompatibleConfig {
   defaultModels: string[];
   /** Extra headers — OpenRouter asks callers to identify themselves. */
   extraHeaders?: Record<string, string>;
+  /**
+   * Whether the catalogue must be filtered to models that cost nothing.
+   * OpenRouter's is mostly paid; Groq's free tier publishes no pricing at all,
+   * so filtering there would empty the list.
+   */
+  freeOnly?: boolean;
 }
 
 export function openAICompatibleProvider(config: OpenAICompatibleConfig): AIProvider {
@@ -48,7 +55,22 @@ export function openAICompatibleProvider(config: OpenAICompatibleConfig): AIProv
     ): Promise<T> {
       const apiKey = getKey(config.apiKeyName);
       if (!apiKey) throw new AIProviderError(config.name, `未設定 ${config.apiKeyName}`);
-      const models = modelCandidates(config.name, getKey(config.modelKeyName), config.defaultModels);
+      // Ask the account what it can actually call, then rank by preference.
+      // The committed list alone is what died here: every id on it 404'd or
+      // came back "unavailable for free", and no amount of guessing a newer
+      // name fixes an account whose catalogue simply moved.
+      const override = getKey(config.modelKeyName);
+      let preference = config.defaultModels;
+      if (!override) {
+        const discovered = await discoverOpenAICompatibleModels(
+          config.baseUrl,
+          apiKey,
+          config.freeOnly ?? false,
+          config.extraHeaders,
+        );
+        preference = mergeModelPreference(config.defaultModels, discovered);
+      }
+      const models = modelCandidates(config.name, override, preference);
 
       let body: ChatResponse | null = null;
       let lastModelError: string | null = null;
@@ -107,7 +129,7 @@ export function openAICompatibleProvider(config: OpenAICompatibleConfig): AIProv
         throw new AIProviderError(
           config.name,
           freeWithdrawn
-            ? `此帳戶目前沒有可用的免費模型（官方回覆：free 版已停用、僅剩付費版）。` +
+            ? `此帳戶目前沒有可用的免費模型（已直接向 ${config.name} 查詢型號清單，仍無免費可用）。` +
               `這不是設定錯誤 —— 其他 AI 供應商正常時可忽略此項；要用 ${config.name} 就儲值後以 ` +
               `${config.modelKeyName} 指定付費型號（最後嘗試：${lastModelError}）`
             : `可用模型皆已下架或改名（${lastModelError ?? "無回應"}），可在設定頁以 ${config.modelKeyName} 指定新型號`,
