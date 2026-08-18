@@ -477,6 +477,16 @@ export interface CommodityMeta {
    * 403. Left in place for user-added US equities, which the free tier does serve.
    */
   finnhubSymbol?: string | null;
+  /**
+   * 這個代號講的是期貨還是現貨。
+   *
+   * Declared rather than implied, because the sources disagree and the
+   * difference is real money: gold was mapped to the COMEX futures contract
+   * while every fallback served spot, so the site quoted 4,448 against a
+   * broker's 4,391 — above a spot high that day of 4,436. See
+   * lib/data-sources/instrument-basis.ts.
+   */
+  contractBasis: "spot" | "futures";
   /** Whether the signal pipeline is wired for this symbol (all true as of Stage 2). */
   implemented: boolean;
 }
@@ -488,6 +498,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "forex",
     yfinanceSymbol: "EURUSD=X",
     stooqSymbol: "eurusd",
+    contractBasis: "spot",
     implemented: true,
   },
   {
@@ -496,6 +507,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "forex",
     yfinanceSymbol: "JPY=X",
     stooqSymbol: "usdjpy",
+    contractBasis: "spot",
     implemented: true,
   },
   {
@@ -504,14 +516,22 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "forex",
     yfinanceSymbol: "GBPUSD=X",
     stooqSymbol: "gbpusd",
+    contractBasis: "spot",
     implemented: true,
   },
   {
     symbol: "XAUUSD",
     label: "XAU/USD (黃金)",
     category: "metal",
-    yfinanceSymbol: "GC=F",
+    // Spot, not GC=F. The futures contract was quoting 1.28% above spot — a
+    // number above the day's actual high — while Stooq, Twelve Data and
+    // gold-api all served spot, so which instrument you saw depended on which
+    // source answered. Gold trades 24/5 as spot, so none of the "the cash
+    // market goes silent overnight" reasoning that justifies futures for the
+    // index CFDs applies here.
+    yfinanceSymbol: "XAUUSD=X",
     stooqSymbol: "xauusd",
+    contractBasis: "spot",
     implemented: true,
   },
   {
@@ -520,6 +540,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "index",
     yfinanceSymbol: "NQ=F",
     stooqSymbol: "^ndx",
+    contractBasis: "futures",
     implemented: true,
   },
   {
@@ -528,6 +549,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "index",
     yfinanceSymbol: "^GDAXI",
     stooqSymbol: "^dax",
+    contractBasis: "futures",
     implemented: true,
   },
   {
@@ -540,6 +562,7 @@ export const COMMODITIES: CommodityMeta[] = [
     // The futures contract is also what a CFD actually tracks.
     yfinanceSymbol: "YM=F",
     stooqSymbol: "^dji",
+    contractBasis: "futures",
     implemented: true,
   },
   {
@@ -548,6 +571,7 @@ export const COMMODITIES: CommodityMeta[] = [
     category: "energy",
     yfinanceSymbol: "CL=F",
     stooqSymbol: "cl.f",
+    contractBasis: "futures",
     implemented: true,
   },
   {
@@ -558,6 +582,7 @@ export const COMMODITIES: CommodityMeta[] = [
     // NYSE session and read as a closed market for two thirds of every day.
     yfinanceSymbol: "ES=F",
     stooqSymbol: "^spx",
+    contractBasis: "futures",
     implemented: true,
   },
 ];

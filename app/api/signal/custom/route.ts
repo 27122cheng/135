@@ -69,6 +69,9 @@ export async function POST(request: Request) {
     category: "index",
     yfinanceSymbol: yahooSymbol,
     stooqSymbol: stooqSymbol || yahooSymbol,
+    // User-added targets are quoted as whatever the ticker is; spot is the
+    // safe default because no basis note is then invented for them.
+    contractBasis: "spot",
     implemented: true,
   };
   const config = defaultFundamentals(symbol, {

@@ -1069,6 +1069,24 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
    */
   const showLevels =
     (tradeable && signal.trade_plan.stance === "enter") || signal.reference_plan != null;
+  /**
+   * The one set of levels this card is actually about.
+   *
+   * Null only when the plan entered and therefore已 has its own block above.
+   * Everything else on the card must agree with this — a second entry price
+   * further down the same card is not extra information, it is a contradiction
+   * the reader has to resolve at the moment they are least able to.
+   */
+  const inForce = signal.reference_plan
+    ? {
+        entry: signal.reference_plan.entry,
+        stopLoss: signal.reference_plan.stop_loss,
+        takeProfit: signal.reference_plan.take_profit,
+        entryReason: `${signal.reference_plan.entry_reason}\n選法：${signal.reference_plan.basis}`,
+        stopReason: signal.reference_plan.stop_reason,
+        targetReason: signal.reference_plan.target_reason,
+      }
+    : null;
   const noPrice = hasNoPrice(signal);
   const entryLabel = noPrice
     ? "無資料"
@@ -1182,6 +1200,14 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
             part being traded from. So when neither the plan nor 參考價位
             cleared the floor (backtest ≥55% and ≥1:1.5), this says so and shows
             nothing. */}
+        {/* 一張卡上只能有一個進場價。
+            The screenshot that forced this showed 進場 4,370.73 in the
+            selected-plan block and 進場區 4,436.15 – 4,459.85 in the rows
+            below it — two different entries for one trade, four lines apart.
+            The rows were rendering `entry_zone`, which is the raw ±0.15×ATR
+            band around the scan price and was never what the search chose. The
+            rows now follow whatever is actually in force: the plan's levels
+            when it enters, the reference plan's when that is what survived. */}
         {!showLevels ? (
           <div className="rounded-lg border border-neutral-800 bg-neutral-950/50 px-3 py-3">
             <p className="text-xs font-medium text-neutral-300">無交易</p>
@@ -1195,17 +1221,35 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
         <div className="rounded-lg border border-neutral-800 bg-neutral-950/50 px-3">
             <PriceRow
               label="進場"
-              value={entryLabel}
-              detail={signal.entry_zone.reason}
+              value={inForce ? formatPrice(inForce.entry) : entryLabel}
+              detail={inForce ? inForce.entryReason : signal.entry_zone.reason}
               tone="entry"
             />
             <PriceRow
               label="停損"
-              value={noPrice ? "無資料" : formatPrice(signal.stop_loss.price)}
-              detail={`${signal.stop_loss.reason}\n結構：${signal.stop_loss.structure}\n失效條件：${signal.stop_loss.invalidation}`}
+              value={
+                inForce
+                  ? formatPrice(inForce.stopLoss)
+                  : noPrice
+                    ? "無資料"
+                    : formatPrice(signal.stop_loss.price)
+              }
+              detail={
+                inForce
+                  ? inForce.stopReason
+                  : `${signal.stop_loss.reason}\n結構：${signal.stop_loss.structure}\n失效條件：${signal.stop_loss.invalidation}`
+              }
               tone="sl"
             />
-            {signal.take_profits.length === 0 ? (
+            {inForce ? (
+              <PriceRow
+                label="停利"
+                value={formatPrice(inForce.takeProfit)}
+                detail={inForce.targetReason}
+                tone="tp"
+                confidence={takeProfitConfidence(signal, 0, overallConfidence)}
+              />
+            ) : signal.take_profits.length === 0 ? (
               <PriceRow
                 label="停利"
                 value="無"

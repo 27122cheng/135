@@ -66,6 +66,9 @@ export function toCommodityMeta(s: CustomSymbol): CommodityMeta {
     category: "index",
     yfinanceSymbol: s.yahooSymbol,
     stooqSymbol: s.stooqSymbol || s.yahooSymbol,
+    // User-added targets are quoted as whatever the ticker is; spot is the
+    // safe default because no basis note is then invented for them.
+    contractBasis: "spot",
     implemented: true,
   };
 }

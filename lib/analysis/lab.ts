@@ -1,5 +1,5 @@
 import type { Candle } from "../data-sources/ohlcv";
-import { CONDITIONS, buildContext, type Condition, type LabContext } from "./lab-conditions";
+import { CONDITIONS, buildContext, type LabContext } from "./lab-conditions";
 import { totalCostFraction, tradingCostFor } from "@/config/trading-costs";
 import type { CommodityMeta } from "@/types/signal";
 

@@ -60,8 +60,12 @@ async function main() {
   __resetCacheForTests();
   __resetQuotaForTests();
   const { setCached } = await import("@/lib/data-sources/cache");
+  // Keyed off the meta rather than a literal: gold moved from the COMEX
+  // futures contract to spot, and a hardcoded ticker here turned that into
+  // three failures in a test that has nothing to do with which contract we
+  // quote.
   setCached(
-    "yahoo:GC=F:1d:1y",
+    `yahoo:${gold.yfinanceSymbol}:1d:1y`,
     [{ time: "2026-07-31T00:00:00.000Z", open: 1, high: 2, low: 0.5, close: 1.5, volume: 10 }],
     // Already expired, but still inside the stale window.
     -1000,

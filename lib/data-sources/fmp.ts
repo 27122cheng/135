@@ -28,7 +28,8 @@ const FMP_SYMBOL: Partial<Record<SupportedSymbol, string>> = {
   EURUSD: "EURUSD",
   USDJPY: "USDJPY",
   GBPUSD: "GBPUSD",
-  XAUUSD: "GCUSD",
+  // Spot, matching the symbol's declared basis — GCUSD is the futures contract.
+  XAUUSD: "XAUUSD",
   WTI: "CLUSD",
   NAS100: "^NDX",
   US30: "^DJI",

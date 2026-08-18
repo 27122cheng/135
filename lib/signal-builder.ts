@@ -11,6 +11,7 @@ import { dedupeBiasItems } from "./analysis/evidence";
 import { describeProximity, isNearEntry } from "./analysis/proximity";
 import { marketStatus } from "./market-hours";
 import { driftWarning, fetchWitness, refineClosedReason } from "./data-sources/binance-witness";
+import { basisNote } from "./data-sources/instrument-basis";
 import { analyzeFundamental } from "./analysis/fundamental";
 import { analyzePositioning } from "./analysis/positioning";
 import { analyzeNews } from "./analysis/news";
@@ -348,6 +349,15 @@ async function buildSignalForSymbol(
   // on the quote — a frozen candle is as wrong as a frozen quote.
   const drift = currentPrice != null ? driftWarning(currentPrice, witness) : null;
   if (drift) gaps.push(drift);
+
+  // 期貨還是現貨 —— the source that answered may not be quoting the instrument
+  // this symbol is about. Gold's quote was the COMEX futures contract while
+  // every fallback served spot, so the site showed 4,448 against a broker's
+  // 4,391 — a number above the day's actual high. The price is still used; the
+  // difference is stated so it is not read as an error in one of the two.
+  const mismatch =
+    quote && quoteBeatsBar ? basisNote(meta.symbol, meta.contractBasis, quote.source) : null;
+  if (mismatch) gaps.push(mismatch);
   const priceBasis =
     quote && quoteBeatsBar
       ? `即時報價 ${round(quote.price)}（${Math.round(quote.ageMinutes)} 分鐘前）`
