@@ -62,14 +62,13 @@ async function main() {
     );
     const r = await completeAI("p", S, []);
     check("a retired default falls through to the next id", r?.provider === "gemini", r);
-    // Counted on the generate call specifically: the provider now also asks
-    // the account which models it may call, and that lookup is a googleapis
-    // URL too. The invariant is unchanged — a retired id costs a hop, not the
-    // provider — but the URL that proves it is the generateContent one.
     check("both ids were tried",
       seen.filter((u) => u.includes(":generateContent")).length === 2, seen);
-    check("and the account's own model catalogue was consulted first",
-      seen[0] === "https://generativelanguage.googleapis.com/v1beta/models", seen[0]);
+    // The catalogue lookup is a repair, not a preflight: it must not run while
+    // a committed id still answers. Doing it up front cost a round trip on
+    // every cold invocation, inside a 60-second function ceiling.
+    check("and the catalogue was not consulted — a known id worked",
+      !seen.some((u) => u.endsWith("/v1beta/models")), seen);
 
     // The working id is remembered: the next call must not re-probe the dead one.
     __resetCacheForTests();
@@ -105,6 +104,50 @@ async function main() {
     // catalogue lookup that precedes it is not a generate call.
     check("gemini was asked exactly once",
       seen.filter((u) => u.includes(":generateContent")).length === 1, seen);
+  }
+
+  // ── all known ids dead: ask the catalogue, then use it ──────────
+  //
+  // The failure this repairs, verbatim from the live site: Groq answered
+  // "The model `llama-3.1-8b-instant` does not exist or you do not have
+  // access to it" for every name the repo knew. No amount of guessing a newer
+  // slug fixes an account whose catalogue moved; asking it does.
+  {
+    reset();
+    process.env.GROQ_API_KEY = "x";
+    const seen = stubFetch((url) => {
+      if (url.endsWith("/v1/models")) {
+        return { status: 200, json: { data: [{ id: "some-new-model-2027" }] } };
+      }
+      if (url.includes("chat/completions")) {
+        // Only the discovered id works; every committed one is gone.
+        return { status: 404, json: { error: { message: "does not exist" } } };
+      }
+      return { status: 500, body: "no" };
+    });
+    await completeAI("p", S, []);
+    check("the catalogue is consulted once the known ids are exhausted",
+      seen.some((u) => u.endsWith("/v1/models")), seen);
+    check("and it is asked after them, not before",
+      seen.findIndex((u) => u.endsWith("/v1/models")) > 0, seen);
+
+    // And the discovered id is actually called.
+    reset();
+    process.env.GROQ_API_KEY = "x";
+    const seen2 = stubFetch((url, init) => {
+      if (url.endsWith("/v1/models")) {
+        return { status: 200, json: { data: [{ id: "brand-new-id" }] } };
+      }
+      const body = typeof init?.body === "string" ? init.body : "";
+      if (body.includes("brand-new-id")) {
+        return { status: 200, json: { choices: [{ message: { content: "OK" } }] } };
+      }
+      return { status: 404, json: { error: { message: "does not exist" } } };
+    });
+    const r = await completeAI("p", S, []);
+    check("a model only the catalogue knew about answers", r?.provider === "groq", r);
+    check("without needing a redeploy or a GROQ_MODEL override",
+      seen2.some((u) => u.includes("chat/completions")), seen2.length);
   }
 
   // ── every id dead names the cure ────────────────────────────────

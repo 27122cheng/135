@@ -55,28 +55,23 @@ export function openAICompatibleProvider(config: OpenAICompatibleConfig): AIProv
     ): Promise<T> {
       const apiKey = getKey(config.apiKeyName);
       if (!apiKey) throw new AIProviderError(config.name, `未設定 ${config.apiKeyName}`);
-      // Ask the account what it can actually call, then rank by preference.
-      // The committed list alone is what died here: every id on it 404'd or
-      // came back "unavailable for free", and no amount of guessing a newer
-      // name fixes an account whose catalogue simply moved.
       const override = getKey(config.modelKeyName);
-      let preference = config.defaultModels;
-      if (!override) {
-        const discovered = await discoverOpenAICompatibleModels(
-          config.baseUrl,
-          apiKey,
-          config.freeOnly ?? false,
-          config.extraHeaders,
-        );
-        preference = mergeModelPreference(config.defaultModels, discovered);
-      }
-      const models = modelCandidates(config.name, override, preference);
 
-      let body: ChatResponse | null = null;
+      /** Set by `attempt` when a model answered — see the note below on why. */
+      const answer: { body: ChatResponse | null; answered: boolean } = {
+        body: null,
+        answered: false,
+      };
       let lastModelError: string | null = null;
       /** One short wait per call, not per model — see retryAfterMs. */
       let waited = false;
+      const tried = new Set<string>();
+
+      /** Walks a candidate list; returns true when one of them answered. */
+      const attempt = async (models: string[]): Promise<boolean> => {
       for (const model of models) {
+        if (tried.has(model)) continue;
+        tried.add(model);
         const ask = () =>
           postJson(
             `${config.baseUrl}/chat/completions`,
@@ -116,10 +111,39 @@ export function openAICompatibleProvider(config: OpenAICompatibleConfig): AIProv
         }
 
         rememberModel(config.name, model);
-        body = res.json as ChatResponse | null;
-        break;
+        answer.body = res.json as ChatResponse | null;
+        answer.answered = true;
+        return true;
       }
-      if (body === null) {
+      return false;
+      };
+
+      await attempt(modelCandidates(config.name, override, config.defaultModels));
+
+      // Only now ask the account what it can actually call.
+      //
+      // Discovery was originally done up front, and that was a latency bug: on
+      // a cold serverless invocation the per-process cache is empty, so every
+      // scan paid a catalogue lookup per provider before its first token — and
+      // /api/scan lives inside a 60-second ceiling that a nine-symbol board was
+      // already brushing against. The healthy path now costs nothing extra: the
+      // committed list is tried first and almost always answers. The lookup
+      // happens only once every id on it has been refused, which is exactly the
+      // failure it exists to repair (Groq: "the model does not exist or you do
+      // not have access to it", for every name we knew).
+      if (!answer.answered && !override) {
+        const discovered = await discoverOpenAICompatibleModels(
+          config.baseUrl,
+          apiKey,
+          config.freeOnly ?? false,
+          config.extraHeaders,
+        );
+        if (discovered.length > 0) {
+          await attempt(mergeModelPreference(config.defaultModels, discovered));
+        }
+      }
+
+      if (!answer.answered) {
         // OpenRouter's answer changed meaning in Aug 2026: five :free ids
         // across five vendors all came back "unavailable for free. The paid
         // version is available" — that is the free program (or this account's
@@ -135,7 +159,7 @@ export function openAICompatibleProvider(config: OpenAICompatibleConfig): AIProv
             : `可用模型皆已下架或改名（${lastModelError ?? "無回應"}），可在設定頁以 ${config.modelKeyName} 指定新型號`,
         );
       }
-      const text = body?.choices?.[0]?.message?.content ?? "";
+      const text = answer.body?.choices?.[0]?.message?.content ?? "";
       const parsed = schema.parse(text);
       if (parsed === null) {
         throw new AIProviderError(config.name, `回應不符合 ${schema.name} 格式`);

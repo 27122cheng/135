@@ -815,6 +815,28 @@ async function buildSignalForSymbol(
 
   applyLabGate(signal, adoptions, d1?.candles);
 
+  // 信心度過低就連參考價位都不給。
+  //
+  // 參考價位 already has to clear its own floors — the geometry search only
+  // returns one when the backtest says ≥55% and the payoff ≥1:1.5. But those
+  // floors are about the *levels*; the confidence score is about whether the
+  // evidence behind the whole signal arrived at all. GBP/USD came back with a
+  // confidence of 5 out of 60 and five data gaps, and still printed an entry,
+  // a stop and three targets — levels computed on a third of the inputs,
+  // presented in the same shape as a plan.
+  //
+  // "低" is the existing vocabulary for that (below 45, see levelFor), not a
+  // new threshold invented here. Above it, a signal that merely failed the
+  // entry bar still shows its reference levels — that is what they are for.
+  if (signal.reference_plan && signal.confidence?.level === "low") {
+    signal.reference_plan = null;
+    signal.data_gaps = [
+      ...signal.data_gaps,
+      `本次不提供參考價位：信心度 ${signal.confidence.score} 屬「低」，` +
+        `代表這次分析的證據本身不足，價位算得出來也不值得看`,
+    ];
+  }
+
   return signal;
 }
 

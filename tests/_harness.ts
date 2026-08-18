@@ -39,13 +39,17 @@ export function report(suite: string): void {
  * test can assert which upstreams were (and were not) contacted.
  */
 export function stubFetch(
-  handler: (url: string) => { status: number; body: string } | { status: number; json: unknown },
+  handler: (
+    url: string,
+    /** The request itself, for stubs that must answer differently per body. */
+    init?: RequestInit,
+  ) => { status: number; body: string } | { status: number; json: unknown },
 ): string[] {
   const seen: string[] = [];
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     seen.push(url);
-    const res = handler(url);
+    const res = handler(url, init);
     const body = "body" in res ? res.body : JSON.stringify(res.json);
     return {
       ok: res.status >= 200 && res.status < 300,

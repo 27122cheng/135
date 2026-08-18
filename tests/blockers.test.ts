@@ -137,4 +137,24 @@ function signal(over: Partial<TradeSignal> = {}): TradeSignal {
     rows.reduce((n, r) => n + r.count, 0) === 4, rows);
 }
 
+// ── 信心度過低時，參考價位也不該出現 ──────────────────────────────
+//
+// The rule lives in the signal builder (it needs the computed confidence), so
+// what is pinned here is the consequence the two pages read: a low-confidence
+// signal carries no reference_plan, and therefore no page can render levels
+// for it. Both the board and the card gate on that one field.
+{
+  const lowConfidence = signal({
+    confidence: { score: 5, level: "low", factors: ["評等 C（基準 40）", "5 項資料缺口（-15）"] },
+    reference_plan: null,
+    data_gaps: ["本次不提供參考價位：信心度 5 屬「低」，代表這次分析的證據本身不足，價位算得出來也不值得看"],
+  });
+  check("a low-confidence signal carries no reference plan",
+    lowConfidence.reference_plan === null);
+  check("and says why, in the gaps",
+    lowConfidence.data_gaps.some((g) => g.includes("信心度")), lowConfidence.data_gaps);
+  check("the blocker is still attributed to confidence, not to the missing levels",
+    classifyBlocker(lowConfidence).id === "confidence", classifyBlocker(lowConfidence));
+}
+
 report("卡關統計");
