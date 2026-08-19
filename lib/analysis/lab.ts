@@ -182,6 +182,71 @@ export interface LabFinding {
   lift: number | null;
 }
 
+/**
+ * 接近通過 — a finding that failed verification by margins small enough that
+ * new data could plausibly close them.
+ *
+ * ## Why this list exists
+ *
+ * Under a hard floor, "78% out-of-sample" and "40% out-of-sample" both render
+ * as the same absence from the verified table, and the operator's only options
+ * are to re-run the lab daily and eyeball the big tables, or to lose track of
+ * the combinations worth watching. This names them, with the exact shortfall,
+ * so waiting is a decision rather than a default.
+ *
+ * ## What it must never become
+ *
+ * A recommendation. A near miss is a hypothesis that has not cleared the bar —
+ * the gap may close with new bars or widen, and both outcomes are informative.
+ * The adopt endpoint re-verifies against a fresh run regardless, so nothing in
+ * this list can be promoted by wishing.
+ */
+export interface NearMiss extends LabFinding {
+  /** Each unmet criterion, with the distance stated. */
+  shortfalls: string[];
+}
+
+/** A hit rate may miss the floor by at most this much to count as "near". */
+export const NEAR_HIT_RATE_MARGIN = 0.05;
+/** A sample count must reach at least this share of its requirement. */
+export const NEAR_SAMPLE_SHARE = 0.7;
+
+/**
+ * The unmet criteria, in words — or null when the finding is verified or too
+ * far off for "near" to be honest.
+ *
+ * The reported lists already guarantee 100+ in-sample trades (the search
+ * drops anything below the floor before it can be reported), so the criteria
+ * that can be short here are the two hit rates and the out-of-sample count.
+ * The count genuinely improves with the calendar — every new D1 bar lands in
+ * the newest 30% — which is what makes "wait" a meaningful instruction.
+ */
+export function shortfallsOf(f: LabFinding, floor: number): string[] | null {
+  if (f.verified) return null;
+  const out: string[] = [];
+
+  for (const [half, result] of [["樣本內", f.inSample], ["樣本外", f.outOfSample]] as const) {
+    const rate = result.hitRate;
+    if (rate === null) return null;
+    if (rate < floor) {
+      if (rate < floor - NEAR_HIT_RATE_MARGIN) return null;
+      // The epsilon absorbs float dust: 0.8 − 0.77 is 0.030000…027 in IEEE754,
+      // and a bare ceil would report a 3-point gap as 4.
+      out.push(`${half}勝率 ${Math.round(rate * 100)}%，差 ${Math.ceil((floor - rate) * 100 - 1e-9)} 個百分點`);
+    }
+  }
+
+  if (f.outOfSample.trades < MIN_OUT_OF_SAMPLE) {
+    if (f.outOfSample.trades < MIN_OUT_OF_SAMPLE * NEAR_SAMPLE_SHARE) return null;
+    out.push(
+      `樣本外 ${f.outOfSample.trades} 筆，還差 ${MIN_OUT_OF_SAMPLE - f.outOfSample.trades} 筆結算` +
+        `（新的日線 K 棒會落在樣本外那一半，樣本會隨時間長大）`,
+    );
+  }
+
+  return out.length > 0 ? out : null;
+}
+
 export interface LabReport {
   symbol: string;
   direction: "long" | "short";
@@ -191,6 +256,8 @@ export interface LabReport {
   pairs: LabFinding[];
   /** Verified findings, best out-of-sample hit rate first. */
   verified: LabFinding[];
+  /** Failed by a small margin, with the distance stated. Never a recommendation. */
+  nearMisses: NearMiss[];
   /** How many hypotheses were tested — the multiple-testing denominator. */
   tested: number;
   /** Roughly how many of them would look good by luck alone. */
@@ -349,6 +416,18 @@ export function runLab(
     .filter((f) => f.verified)
     .sort((a, b) => (b.outOfSample.hitRate ?? 0) - (a.outOfSample.hitRate ?? 0));
 
+  // 接近通過 — capped, because with ~2,000 hypotheses the band just under the
+  // floor is exactly where the luckiest non-discoveries pile up, and a long
+  // list of them reads as a menu.
+  const nearMisses: NearMiss[] = [...solo, ...pairs]
+    .map((f) => {
+      const shortfalls = shortfallsOf(f, floor);
+      return shortfalls ? { ...f, shortfalls } : null;
+    })
+    .filter((f): f is NearMiss => f !== null)
+    .sort((a, b) => (b.outOfSample.hitRate ?? 0) - (a.outOfSample.hitRate ?? 0))
+    .slice(0, 6);
+
   const notes: string[] = [];
   notes.push(
     `樣本內取最舊的 ${Math.round(IN_SAMPLE_SHARE * 100)}%（${split} 根 K 棒）搜尋，` +
@@ -401,6 +480,7 @@ export function runLab(
     solo,
     pairs,
     verified,
+    nearMisses,
     tested,
     expectedFalsePositives: Math.round(tested * 0.05),
     floor,

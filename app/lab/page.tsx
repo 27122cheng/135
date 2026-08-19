@@ -621,6 +621,37 @@ export default function LabPage() {
             </section>
           )}
 
+          {r.nearMisses.length > 0 && (
+            <section className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-3">
+              <h2 className="mb-1.5 text-xs font-medium text-neutral-300">
+                接近通過（{r.nearMisses.length}）—— 值得繼續觀察，不是建議
+              </h2>
+              <p className="mb-2 text-[10px] leading-relaxed text-neutral-500">
+                差距很小的落選者，差在哪裡寫在旁邊。勝率不足的要等新資料自己證明；
+                樣本外筆數不足的會隨新 K 棒累積（新資料都落在樣本外那一半）。
+                差距可能縮小也可能擴大 —— 兩種結果都是資訊。按「採用」時伺服器一律重新驗證，
+                沒通過的照樣會被拒絕。
+              </p>
+              <ul className="flex flex-col gap-2">
+                {r.nearMisses.map((f) => (
+                  <li key={f.ids.join("+")} className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-2">
+                    <div className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="text-[11px] text-neutral-200">{f.labels.join(" ＋ ")}</span>
+                      <span className="ml-auto font-mono text-[10px] text-neutral-500">
+                        內 {pct(f.inSample.hitRate)}／外 {pct(f.outOfSample.hitRate)}
+                      </span>
+                    </div>
+                    <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                      {f.shortfalls.map((line, i) => (
+                        <li key={i} className="text-[10px] text-amber-400/80">· {line}</li>
+                      ))}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           <section>
             <h2 className="mb-1.5 text-xs font-medium text-neutral-300">
               單一條件（{r.solo.length}）

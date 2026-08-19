@@ -1,5 +1,12 @@
 import { check, report } from "./_harness";
-import { CONDITIONS, VERIFY_FLOOR, buildContext, runLab } from "@/lib/analysis/lab";
+import {
+  CONDITIONS,
+  VERIFY_FLOOR,
+  buildContext,
+  runLab,
+  shortfallsOf,
+  type LabFinding,
+} from "@/lib/analysis/lab";
 import type { Candle } from "@/lib/data-sources/ohlcv";
 
 /**
@@ -164,6 +171,60 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
 // ── too little history is refused, not guessed at ─────────────────
 {
   check("a short series returns null", runLab(meta, bars((i) => 100 + i, 50), "long") === null);
+}
+
+// ── 接近通過 says exactly what is missing, and only when "near" is honest ──
+{
+  const result = (trades: number, hitRate: number) => ({
+    trades,
+    wins: Math.round(trades * hitRate),
+    hitRate,
+    expectancyR: 0,
+    entries: trades,
+    unresolved: 0,
+  });
+  const finding = (inRate: number, outRate: number, outTrades: number, verified = false): LabFinding => ({
+    ids: ["a"],
+    labels: ["A"],
+    inSample: result(120, inRate),
+    outOfSample: result(outTrades, outRate),
+    verified,
+    lift: 1,
+  });
+
+  check("a verified finding is never a near miss",
+    shortfallsOf(finding(0.85, 0.85, 50, true), 0.8) === null);
+
+  const rate = shortfallsOf(finding(0.85, 0.77, 50), 0.8);
+  check("a hit rate 3 points short is named, with the distance",
+    rate !== null && rate.length === 1 && rate[0].includes("77%") && rate[0].includes("3 個百分點"),
+    rate);
+
+  check("a hit rate more than 5 points short is not 'near'",
+    shortfallsOf(finding(0.85, 0.70, 50), 0.8) === null);
+
+  const sample = shortfallsOf(finding(0.85, 0.85, 38), 0.8);
+  check("a thin out-of-sample count is named, with the count remaining",
+    sample !== null && sample[0].includes("38 筆") && sample[0].includes("差 5 筆"), sample);
+
+  check("a sample below 70% of the requirement is not 'near'",
+    shortfallsOf(finding(0.85, 0.85, 20), 0.8) === null);
+
+  const both = shortfallsOf(finding(0.78, 0.77, 38), 0.8);
+  check("multiple small shortfalls are all listed",
+    both !== null && both.length === 3, both);
+
+  check("one criterion far off disqualifies even when the others are close",
+    shortfallsOf(finding(0.85, 0.60, 38), 0.8) === null);
+
+  // On a real report: never a verified finding, and the shortfalls must obey
+  // the same margins the classifier promises.
+  const r = runLab(meta, bars((i) => 100 + i * 0.4 + Math.sin(i / 5) * 3, 400), "long")!;
+  check("the report carries the list", Array.isArray(r.nearMisses));
+  check("no near miss is verified", r.nearMisses.every((f) => !f.verified));
+  check("every near miss states at least one shortfall",
+    r.nearMisses.every((f) => f.shortfalls.length > 0));
+  check("the list is capped so it cannot become a menu", r.nearMisses.length <= 6);
 }
 
 report("實驗室");
