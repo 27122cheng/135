@@ -104,6 +104,16 @@ export interface BoardRow {
    * that stood aside. Null only when the symbol has never been scanned.
    */
   reference: BoardReference | null;
+  /**
+   * When `reference` is null: the reason the signal itself recorded, verbatim.
+   *
+   * The board used to assert its own reason ("沒有任何組合通過 55% 門檻") —
+   * a guess dressed as a fact, and wrong whenever the reference was withheld
+   * by the low-confidence rule instead. The builder writes the real reason
+   * into data_gaps at the moment it decides; this carries that line through
+   * so the board can only ever quote, never invent.
+   */
+  referenceNote: string | null;
   generatedAt: string | null;
   /** How many data gaps the scan reported — a count, not the list. */
   gapCount: number;
@@ -169,6 +179,7 @@ export function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | 
       summary: null,
       waitFor: null,
       reference: null,
+      referenceNote: null,
       generatedAt: null,
       gapCount: 0,
       trendPhase: null,
@@ -199,6 +210,9 @@ export function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | 
     summary: plan?.summary ?? null,
     waitFor: plan?.wait_for ?? null,
     reference: toReference(row),
+    referenceNote: Array.isArray(row.data_gaps)
+      ? ((row.data_gaps as string[]).find((g) => g.startsWith("本次不提供參考價位")) ?? null)
+      : null,
     generatedAt: row.generated_at,
     gapCount: Array.isArray(row.data_gaps)
       ? // The board chip counts what someone could act on — behaviour notes and

@@ -156,7 +156,12 @@ function ReferenceLevels({ row }: { row: BoardRow }) {
     if (row.generatedAt === null) return null;
     return (
       <p className="mt-2.5 text-[11px] leading-relaxed text-neutral-600">
-        無交易：沒有任何進場／停損／停利組合通過門檻（回測勝率 ≥55%、風報比 ≥1:1.5），因此不提供價位。
+        {/* Two floors, in order: the trade recommendation needs a backtested
+            ≥70% combination; 參考價位 is the consolation tier at ≥55%. A row
+            with neither failed BOTH — saying only "the 55% floor" made the
+            two messages on one row look like they disagreed about the rule. */}
+        無交易：交易建議的門檻（回測勝率 ≥70%）沒有組合通過，連較低的參考價位門檻（≥55%）也沒有 ——
+        {row.referenceNote ? `${row.referenceNote}。` : "因此不提供任何價位。"}
       </p>
     );
   }

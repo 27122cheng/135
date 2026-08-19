@@ -1226,9 +1226,16 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
           <div className="rounded-lg border border-neutral-800 bg-neutral-950/50 px-3 py-3">
             <p className="text-xs font-medium text-neutral-300">無交易</p>
             <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
-              這個方向上，沒有任何進場／停損／停利組合通過門檻（歷史回測勝率 ≥55%、風報比 ≥1:1.5），
-              因此不提供價位。分析本身仍在下方 —— 方向、結構、六面向都算完了，
-              只是沒有一組價位值得掛單。
+              {/* Two floors, named in order — the pair of messages on one card
+                  used to quote 70% and 55% without saying they belong to
+                  different tiers, which read as the site contradicting itself. */}
+              這個方向上有兩層門檻，都沒有組合通過：
+              <span className="text-neutral-400">交易建議</span>要求歷史回測勝率 ≥70%、
+              <span className="text-neutral-400">參考價位</span>（僅供觀察、非建議）門檻較低，也要 ≥55%，
+              風報比兩層都要 ≥1:1.5。
+              {(signal.data_gaps ?? []).find((g) => g.startsWith("本次不提供參考價位")) ??
+                "因此不提供任何價位。"}
+              分析本身仍在下方 —— 方向、結構、六面向都算完了，只是沒有一組價位值得掛單。
             </p>
           </div>
         ) : (
