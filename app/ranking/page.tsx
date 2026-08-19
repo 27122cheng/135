@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { BoardRow } from "@/app/api/board/route";
+import type { CorrelationReport } from "@/lib/analysis/correlation";
+import { COMMODITIES } from "@/types/signal";
 import { SiteNav } from "@/components/site-nav";
 
 /**
@@ -24,6 +26,10 @@ interface BoardResponse {
   rows?: BoardRow[];
   error?: string;
   next?: string;
+}
+
+function labelOf(symbol: string): string {
+  return COMMODITIES.find((c) => c.symbol === symbol)?.label ?? symbol;
 }
 
 const CATEGORIES: { id: string; label: string }[] = [
@@ -62,6 +68,10 @@ export default function RankingPage() {
   const [rows, setRows] = useState<BoardRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState("all");
+  const [correlation, setCorrelation] = useState<{
+    report?: CorrelationReport;
+    error?: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -79,6 +89,24 @@ export default function RankingPage() {
     const timer = setInterval(() => void load(), 60_000);
     return () => clearInterval(timer);
   }, [load]);
+
+  useEffect(() => {
+    // Once per visit: correlations are computed over 60 daily sessions, so a
+    // one-minute refresh would re-fetch an answer that cannot have changed.
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/correlation", { cache: "no-store" });
+        const body = (await res.json()) as { report?: CorrelationReport; error?: string };
+        if (!cancelled) setCorrelation(res.ok ? { report: body.report } : { error: body.error ?? "讀取失敗" });
+      } catch {
+        if (!cancelled) setCorrelation({ error: "相關性讀取失敗" });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const ranked = useMemo(() => {
     const filtered = rows.filter((r) => category === "all" || r.category === category);
@@ -196,6 +224,109 @@ export default function RankingPage() {
           </tbody>
         </table>
       </div>
+
+      {/* 相關性檢查 — the check this page's nav hint has always promised.
+          A ranking sorted by trend quality quietly invites taking the top
+          three at once; when two of them correlate at 0.9 that is one trade
+          at double size wearing two names, and nothing else on the page can
+          see it. */}
+      <section className="mb-5">
+        <h2 className="mb-2 text-sm font-medium text-neutral-300">相關性檢查</h2>
+        {correlation === null ? (
+          <p className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-3 text-xs text-neutral-600">
+            計算中…（用最近 60 個共同交易日的日報酬）
+          </p>
+        ) : correlation.error ? (
+          <p className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-400">
+            {correlation.error}
+          </p>
+        ) : (
+          <>
+            {correlation.report!.clusters.length > 0 ? (
+              <div className="mb-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+                <p className="mb-1.5 text-xs font-medium text-amber-300">
+                  實質上是同一筆交易（|r| ≥ 0.7）
+                </p>
+                <ul className="flex flex-col gap-1">
+                  {correlation.report!.clusters.map((p) => (
+                    <li key={`${p.a}-${p.b}`} className="flex items-center gap-2 text-xs">
+                      <span className="text-neutral-200">
+                        {labelOf(p.a)} ↔ {labelOf(p.b)}
+                      </span>
+                      <span
+                        className={`ml-auto font-mono ${
+                          (p.r ?? 0) > 0 ? "text-amber-400" : "text-sky-400"
+                        }`}
+                      >
+                        r = {p.r?.toFixed(2)}
+                      </span>
+                      <span className="text-[10px] text-neutral-600">n={p.overlap}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1.5 text-[10px] leading-relaxed text-amber-500/70">
+                  同時持有這兩個、方向又對應同一個宏觀觀點時，部位要當一筆來算 ——
+                  各下 1% 風險等於對同一個看法下 2%。負相關（藍色）則是反向對沖，同向持有會互相抵消。
+                </p>
+              </div>
+            ) : (
+              <p className="mb-2 rounded-xl border border-neutral-800 bg-neutral-900/40 p-3 text-xs text-neutral-600">
+                目前沒有任何一組商品的相關性達到 0.7 —— 各商品可以視為獨立部位。
+              </p>
+            )}
+
+            <details className="rounded-xl border border-neutral-800 bg-neutral-900/40">
+              <summary className="cursor-pointer px-3 py-2 text-[11px] text-neutral-500">
+                完整矩陣（{correlation.report!.symbols.length} 個商品）
+              </summary>
+              <div className="overflow-x-auto px-3 pb-3">
+                <table className="w-full">
+                  <thead>
+                    <tr>
+                      <th className="py-1 text-left text-[9px] font-normal text-neutral-600"></th>
+                      {correlation.report!.symbols.map((s) => (
+                        <th key={s} className="px-1 py-1 text-right text-[9px] font-normal text-neutral-600">
+                          {s.slice(0, 6)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {correlation.report!.symbols.map((s, i) => (
+                      <tr key={s}>
+                        <td className="py-0.5 text-[9px] text-neutral-500">{s}</td>
+                        {correlation.report!.matrix[i].map((r, j) => (
+                          <td
+                            key={j}
+                            className={`px-1 py-0.5 text-right font-mono text-[10px] ${
+                              i === j
+                                ? "text-neutral-700"
+                                : r === null
+                                  ? "text-neutral-700"
+                                  : Math.abs(r) >= 0.7
+                                    ? r > 0
+                                      ? "text-amber-400"
+                                      : "text-sky-400"
+                                    : Math.abs(r) >= 0.4
+                                      ? "text-neutral-300"
+                                      : "text-neutral-600"
+                            }`}
+                          >
+                            {i === j ? "—" : r === null ? "·" : r.toFixed(2)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="mt-2 text-[10px] leading-relaxed text-neutral-600">
+                  {correlation.report!.note}
+                </p>
+              </div>
+            </details>
+          </>
+        )}
+      </section>
 
       <section>
         <h2 className="mb-2 text-sm font-medium text-neutral-300">反轉機會</h2>
