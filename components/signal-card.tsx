@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { GradeBadge } from "@/components/grade-badge";
 import { DimensionBars } from "@/components/dimension-bars";
 import { TradePlanCard } from "@/components/trade-plan-card";
+import { PositionSizing } from "@/components/position-sizing";
 import { formatPrice, formatTime } from "@/lib/format";
 import { groupDataGaps, KEY_SOURCES } from "@/lib/data-gaps";
 import { summariseRegime } from "@/lib/analysis/regime-summary";
@@ -1146,6 +1147,19 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
 
       {/* The answer: one entry, one stop, one target. */}
       <TradePlanCard plan={signal.trade_plan} backtest={signal.plan_backtest} />
+
+      {/* 這筆該下多少 — only under a plan that actually enters. Sizing a
+          non-recommendation would invite trading it. */}
+      {signal.trade_plan.stance === "enter" &&
+        signal.trade_plan.entry !== null &&
+        signal.trade_plan.stop_loss !== null && (
+          <PositionSizing
+            symbol={signal.symbol}
+            direction={signal.direction}
+            entry={signal.trade_plan.entry}
+            stopLoss={signal.trade_plan.stop_loss}
+          />
+        )}
 
       {/* Directly under the plan: when the plan is a wait, this is often why. */}
       {signal.lab_gate && <LabGateCard gate={signal.lab_gate} />}

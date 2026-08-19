@@ -198,7 +198,11 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   const added = step(2021, entered.memory);
   check("reaching an add-on reports it", added.events.some((e) => e.kind === "add_on"));
   check("and moves the stop", added.events.some((e) => e.kind === "stop_moved"));
-  check("the stop actually changes", added.memory.activeStop === 1995, added.memory.activeStop);
+  // 2021 is past 1R (entry 2000, risk 20), so the breakeven rule lifts the
+  // stop to the entry — and the add-on's suggested 1995 must NOT drag it back
+  // down. A stop only ever moves toward safety; the tighter of the two stands.
+  check("the stop actually changes — to the tighter of breakeven and the add-on's",
+    added.memory.activeStop === 2000, added.memory.activeStop);
   check("the fill is remembered", added.memory.addOnsFilled === 1);
 
   const addedAgain = step(2025, added.memory);
@@ -262,7 +266,12 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
     direction: "short", plan: shortPlan, price: 1975, priceAgeMinutes: 5, memory: shortEntered.memory,
   });
   check("short add-on triggers below", shortAdd.memory.addOnsFilled === 1);
-  check("short stop moves down", shortAdd.memory.activeStop === 2005, shortAdd.memory.activeStop);
+  // Price 1975 is past 1R for this short (entry 2000, risk 20 → 1R at 1980),
+  // so the breakeven rule has already brought the stop to 2000 — tighter than
+  // the add-on's suggested 2005. The tighter stop stands; a stop never
+  // retreats toward risk.
+  check("short stop moves down — to the tighter of breakeven and the add-on's",
+    shortAdd.memory.activeStop === 2000, shortAdd.memory.activeStop);
 }
 
 // ── message ───────────────────────────────────────────────────────
@@ -271,7 +280,9 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   const text = formatMonitorAlert("XAUUSD", "long", events, 14.6, "https://x.app");
   check("names the symbol and direction", text.includes("XAUUSD") && text.includes("做多"));
   check("carries the add-on headline", text.includes("加倉點到達"));
-  check("carries the stop move", text.includes("停損上移"));
+  // At 2021 the stop move is the breakeven one (1R reached before the add-on's
+  // 1995 could apply), so the alert carries that headline.
+  check("carries the stop move", text.includes("保本") || text.includes("停損上移"), text);
   // The delay is the thing that must never be hidden.
   check("states the price delay", text.includes("延遲約 15 分鐘"), text);
   check("warns it is not for intraday", text.includes("H4/D1"));

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { loadUserKeys, saveUserKeys, userKeyHeaders, type UserKeys } from "@/lib/user-keys-client";
 import type { UserSettableKey } from "@/lib/api-key-names";
 import { SiteNav } from "@/components/site-nav";
+import { loadSizingConfig, saveSizingConfig, DEFAULT_SIZING } from "@/lib/sizing-client";
 
 interface KeyInfo {
   name: UserSettableKey;
@@ -142,6 +143,76 @@ const PRIORITY_STYLE: Record<KeyInfo["priority"], string> = {
   medium: "border-neutral-700",
   low: "border-neutral-800",
 };
+
+/**
+ * 部位計算設定 — the two numbers the sizing panel needs.
+ *
+ * Stored in this device's localStorage only, like the API keys above but for
+ * a stronger reason: an account size is about the person, not a market, and
+ * has no business in a database whose tables are mostly public-read. The
+ * trade-off is the same as the keys' and stated the same way — it does not
+ * follow you to another device.
+ */
+function SizingSection() {
+  const [config, setConfig] = useState(DEFAULT_SIZING);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setConfig(loadSizingConfig());
+  }, []);
+
+  const update = (next: typeof config) => {
+    setConfig(next);
+    saveSizingConfig(next);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  };
+
+  return (
+    <div className="mb-5 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
+      <div className="mb-1 flex items-baseline gap-2">
+        <h2 className="text-sm font-medium text-neutral-200">部位計算</h2>
+        {saved && <span className="text-[10px] text-emerald-400">已儲存</span>}
+      </div>
+      <p className="mb-3 text-[11px] leading-relaxed text-neutral-500">
+        填了之後，每個進場計畫下方會直接算出該下多少（風險金額 ÷ 停損距離），
+        已持有高相關部位時自動建議減半。這兩個數字
+        <span className="text-neutral-300">只存在這台裝置</span>，不會上傳到伺服器或資料庫。
+      </p>
+      <div className="flex flex-wrap gap-3">
+        <label className="flex flex-col gap-1 text-[11px] text-neutral-400">
+          帳戶規模（USD 或你的帳戶幣別）
+          <input
+            type="number"
+            min={0}
+            value={config.accountSize ?? ""}
+            placeholder="例如 10000"
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              update({ ...config, accountSize: Number.isFinite(v) && v > 0 ? v : null });
+            }}
+            className="w-40 rounded-lg border border-neutral-700 bg-neutral-950 px-2.5 py-1.5 font-mono text-sm text-neutral-100"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-[11px] text-neutral-400">
+          單筆風險 %（預設 1）
+          <input
+            type="number"
+            min={0.1}
+            max={10}
+            step={0.1}
+            value={config.riskPct}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              if (Number.isFinite(v) && v > 0 && v <= 10) update({ ...config, riskPct: v });
+            }}
+            className="w-28 rounded-lg border border-neutral-700 bg-neutral-950 px-2.5 py-1.5 font-mono text-sm text-neutral-100"
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const [keys, setKeys] = useState<UserKeys>({});
@@ -293,6 +364,8 @@ export default function SettingsPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 py-5">
       <SiteNav title="API 金鑰設定" />
+
+      <SizingSection />
 
       <div className="mb-5 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
         <p className="text-xs leading-relaxed text-neutral-400">

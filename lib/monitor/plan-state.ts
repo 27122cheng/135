@@ -156,6 +156,41 @@ export function advancePlan(input: MonitorInput): MonitorResult {
     };
   }
 
+  // 保本移停 — at 1R in favour, the stop moves to the entry.
+  //
+  // The single biggest driver of the stop-out rate is trades that travel well
+  // into profit and then return all the way to the original stop. Once price
+  // has moved one full risk distance in the plan's favour, the market has paid
+  // for the trade; from there the worst case becomes breakeven instead of −1R.
+  // The cost is real and accepted: some winners get scratched at entry on a
+  // pullback that would have recovered. That trade-off is the one every
+  // risk-management text makes, and it cuts realised stop-outs directly.
+  //
+  // No new state is needed — the rule is naturally idempotent: it fires only
+  // while the active stop is still on the risk side of the entry, and firing
+  // moves the stop *to* the entry, so it can never fire twice. An add-on that
+  // already lifted the stop past entry suppresses it the same way.
+  if (
+    (state === "entered" || state === "added") &&
+    plan.take_profit !== null &&
+    (direction === "long" ? activeStop < plan.entry : activeStop > plan.entry)
+  ) {
+    const risk = Math.abs(plan.entry - plan.stop_loss);
+    const oneR = direction === "long" ? plan.entry + risk : plan.entry - risk;
+    if (risk > 0 && reached(direction, price, oneR)) {
+      activeStop = plan.entry;
+      events.push({
+        kind: "stop_moved",
+        headline: "已達 1R，停損移至進場價（保本）",
+        detail:
+          `價格 ${fmt(price)} 已朝有利方向走完一個風險距離（1R = ${fmt(risk)}）。` +
+          `停損由 ${fmt(memory.activeStop ?? plan.stop_loss)} 移至進場價 ${fmt(plan.entry)} —— ` +
+          `這筆交易從此最差是打平。代價是回檔到進場價會被洗出場，那是保本規則接受的成本。`,
+        newStop: plan.entry,
+      });
+    }
+  }
+
   // Add-ons fire in order. Skipping straight to level 3 on a gap would announce
   // fills at prices that were never offered in sequence, so each is reported.
   const pending: AddOnLevel[] = plan.add_ons
@@ -174,8 +209,15 @@ export function advancePlan(input: MonitorInput): MonitorResult {
     });
     // The stop moves with every add-on. This is the part that must not be
     // skipped: more size on the same stop is more risk on a trade that has
-    // already paid.
-    if (level.new_stop_loss !== activeStop) {
+    // already paid. But it may only ever move toward safety — the breakeven
+    // rule can have already lifted the stop past the add-on's suggestion, and
+    // "adjusting" it back to the risk side would be the one thing no rule in
+    // this file is allowed to do. The tighter of the two stands.
+    const improves =
+      direction === "long"
+        ? level.new_stop_loss > activeStop
+        : level.new_stop_loss < activeStop;
+    if (improves) {
       activeStop = level.new_stop_loss;
       events.push({
         kind: "stop_moved",

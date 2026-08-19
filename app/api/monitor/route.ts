@@ -3,6 +3,7 @@ import { getSignalStore, type MonitorRow, type TrackedPlan } from "@/lib/db";
 import { readLatest } from "@/lib/latest-signals";
 import { fetchLatestPrice } from "@/lib/data-sources/yfinance";
 import { notifyAll } from "@/lib/notify";
+import { upcomingHighImpactEvent } from "@/lib/analysis/timing";
 import { formatReleaseAlert } from "@/lib/notify/alert";
 import { ingestReleases } from "@/lib/analysis/data-release";
 import { withUserKeys } from "@/lib/api-keys";
@@ -302,6 +303,49 @@ export async function GET(request: Request) {
           error: s.reason instanceof Error ? s.reason.message : String(s.reason),
         },
   );
+
+  // 數據前的持倉警告 — the S4 intervention downgrades *new* signals ahead of
+  // NFP and FOMC; nothing was telling the person already in a trade. When a
+  // clock-derivable release is inside two hours and real positions are open,
+  // one push lists them with the standard playbook (reduce or tighten).
+  //
+  // Deduped through the release table's first-writer-wins insert — the same
+  // mechanism that stops a CPI print being announced twice — because this
+  // route runs every five minutes and a two-hour window would otherwise fire
+  // twenty-four times. One row per event occurrence, not per symbol: one push
+  // naming all held symbols beats nine phones buzzing separately.
+  let eventWarning: string | null = null;
+  try {
+    const event = upcomingHighImpactEvent(new Date(), 2 * 60 * 60 * 1000);
+    const held = results.filter(
+      (r): r is typeof r & { symbol: string; state: string; paper: boolean } =>
+        "state" in r &&
+        (r.state === "entered" || r.state === "added") &&
+        "paper" in r &&
+        r.paper === false,
+    );
+    if (event && held.length > 0) {
+      const receipt = await store.recordRelease({
+        seriesId: "event-warning",
+        period: event.at.toISOString(),
+        value: 0,
+        previousValue: null,
+        estimate: null,
+      });
+      if (receipt.isNew) {
+        const hours = Math.floor(event.minutesAway / 60);
+        const minutes = event.minutesAway % 60;
+        eventWarning =
+          `⚠️ ${hours > 0 ? `${hours} 小時 ` : ""}${minutes} 分鐘後公布${event.label}。` +
+          `目前持倉中：${held.map((h) => h.symbol).join("、")}。` +
+          `數據前後的行情不是技術面能預測的 —— 考慮減半部位或把停損收緊到保本，` +
+          `不要在公布前加倉。`;
+        await notifyAll(eventWarning);
+      }
+    }
+  } catch {
+    // A failed warning must not fail the monitoring that just ran.
+  }
 
   // 即時數據公布. Checked here rather than only in the 4-hourly refresh because
   // "即時" is the whole point: a CPI print that lands at 20:30 would otherwise

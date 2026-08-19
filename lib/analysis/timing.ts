@@ -63,6 +63,43 @@ const FOMC_2026_DECISIONS: ReadonlyArray<{ date: string; utcHour: number }> = [
   { date: "2026-12-09", utcHour: 19 },
 ];
 
+/**
+ * The next clock-derivable high-impact release inside `horizonMs`, or null.
+ *
+ * For the monitor's pre-event warning on *held* positions. The S4 intervention
+ * already downgrades new signals ahead of these releases; nothing was telling
+ * the person already in a trade. Only NFP and FOMC qualify — the two whose
+ * schedule is arithmetic — for the same reason the countdown card lists only
+ * those two: a wrong "CPI in 2 hours" is worse than none.
+ */
+export function upcomingHighImpactEvent(
+  now: Date,
+  horizonMs: number,
+): { label: string; at: Date; minutesAway: number } | null {
+  const candidates: Array<{ label: string; at: Date }> = [];
+  const thisMonth = nfpTimeFor(now.getUTCFullYear(), now.getUTCMonth());
+  const nfp =
+    thisMonth.getTime() >= now.getTime()
+      ? thisMonth
+      : nfpTimeFor(now.getUTCFullYear(), now.getUTCMonth() + 1);
+  candidates.push({ label: "美國非農就業（NFP）", at: nfp });
+  for (const at of fomcTimes()) {
+    if (at.getTime() >= now.getTime()) {
+      candidates.push({ label: "FOMC 利率決策", at });
+      break;
+    }
+  }
+  const within = candidates
+    .filter((c) => c.at.getTime() - now.getTime() <= horizonMs && c.at.getTime() > now.getTime())
+    .sort((a, b) => a.at.getTime() - b.at.getTime());
+  if (within.length === 0) return null;
+  const first = within[0];
+  return {
+    ...first,
+    minutesAway: Math.round((first.at.getTime() - now.getTime()) / 60000),
+  };
+}
+
 export function fomcTimes(): Date[] {
   return FOMC_2026_DECISIONS.map(
     (m) => new Date(`${m.date}T${String(m.utcHour).padStart(2, "0")}:00:00Z`),
