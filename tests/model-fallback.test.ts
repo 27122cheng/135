@@ -150,6 +150,27 @@ async function main() {
       seen2.some((u) => u.includes("chat/completions")), seen2.length);
   }
 
+  // ── the clock bounds the walk, not just each call ───────────────
+  //
+  // The per-request timeout bounded one call and nothing else. Four providers
+  // × six model ids × 25 seconds is minutes of wall clock inside a function
+  // Vercel kills at sixty — which is exactly how three symbols came back
+  // "分析超過 60 秒，Vercel 中斷了這次請求" with every individual timeout
+  // looking perfectly reasonable.
+  {
+    reset();
+    process.env.GEMINI_API_KEY = "x";
+    process.env.GROQ_API_KEY = "x";
+    const seen = stubFetch(() => ({ status: 200, json: geminiOk }));
+    const gaps: string[] = [];
+    const r = await completeAI("p", S, gaps, { budgetMs: 1 });
+    check("an exhausted budget stops the chain before any provider is called",
+      seen.length === 0, seen);
+    check("and returns null so the local rules take over", r === null);
+    check("saying it was the time budget, not a provider failure",
+      gaps.some((g) => g.includes("時間預算")), gaps);
+  }
+
   // ── every id dead names the cure ────────────────────────────────
   {
     reset();

@@ -49,6 +49,8 @@ export function geminiProvider(): AIProvider {
       };
       let lastModelError: string | null = null;
       const tried = new Set<string>();
+      /** See CompleteOptions.budgetMs — bounds the walk, not just one call. */
+      const deadline = Date.now() + (options.budgetMs ?? 20000);
       const ask = (model: string, withThinking: boolean) =>
         postJson(
           `${ENDPOINT}/${encodeURIComponent(model)}:generateContent`,
@@ -64,12 +66,16 @@ export function geminiProvider(): AIProvider {
               ...(withThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
             },
           },
-          options.timeoutMs ?? 25000,
+          Math.max(3000, Math.min(options.timeoutMs ?? 15000, deadline - Date.now())),
         );
       const attempt = async (models: string[]): Promise<void> => {
       for (const model of models) {
         if (answer.answered) return;
         if (tried.has(model)) continue;
+        if (Date.now() > deadline) {
+          lastModelError = `${lastModelError ?? ""}（已用盡 gemini 的時間預算，未再試其餘型號）`;
+          return;
+        }
         tried.add(model);
         let res = await ask(model, true);
         // Not every Flash generation accepts thinkingConfig; the ones that

@@ -210,10 +210,29 @@ export async function buildSignalFor(
   return buildSignalForSymbol(meta, config);
 }
 
+/**
+ * The scan's own clock.
+ *
+ * /api/scan declares `maxDuration = 60` and Vercel enforces it by killing the
+ * request — which produces nothing at all, not even a degraded signal. Three
+ * symbols died that way in one sweep. Every market fetch already has its own
+ * timeout, but timeouts compose by addition and nothing was watching the sum.
+ *
+ * So the expensive optional stage — the two AI calls — is told how much of the
+ * budget is left rather than being given a fixed allowance of its own. When the
+ * data layer has had a bad day the model is skipped and the deterministic rules
+ * answer, which is a worse analysis and an infinitely better outcome than a
+ * killed function.
+ */
+const SCAN_BUDGET_MS = 46_000;
+
 async function buildSignalForSymbol(
   meta: CommodityMeta,
   config: FundamentalsConfig,
 ): Promise<TradeSignal> {
+  const startedAt = Date.now();
+  /** What the AI may still spend, after everything already spent. */
+  const aiBudget = () => Math.max(0, SCAN_BUDGET_MS - (Date.now() - startedAt));
   const gaps: string[] = [];
 
   // OHLCV and the five non-technical dimensions don't depend on each other,
@@ -228,6 +247,11 @@ async function buildSignalForSymbol(
   // 實驗室已採用條件 — same story, and the settings cache makes nine symbols
   // in one scan cost one round trip.
   const adoptionsPromise = loadAdoptionsFor(meta.symbol, gaps);
+  // 24 小時對照證人 — a diagnostic, so it rides alongside the market calls
+  // rather than after them. It was costing the critical path five seconds for
+  // an answer nothing downstream waits on, inside a 60-second ceiling three
+  // symbols had already hit.
+  const witnessPromise = fetchWitness(meta.symbol, gaps).catch(() => null);
   const nonTechnicalPromise = (async () => {
     // Positioning first — fundFlow reuses its COT reports instead of re-fetching.
     const positioning = await analyzePositioning(meta, config, gaps);
@@ -239,11 +263,12 @@ async function buildSignalForSymbol(
     return { positioning, fundamentalItems, news, fundFlowItems };
   })();
 
-  const [[d1, h4, w1], nonTechnical, effects, adoptions] = await Promise.all([
+  const [[d1, h4, w1], nonTechnical, effects, adoptions, witness] = await Promise.all([
     ohlcvPromise,
     nonTechnicalPromise,
     interventionsPromise,
     adoptionsPromise,
+    witnessPromise,
   ]);
   const { positioning, fundamentalItems, news, fundFlowItems } = nonTechnical;
   const interventions: AppliedIntervention[] = [...effects.applied];
@@ -322,19 +347,6 @@ async function buildSignalForSymbol(
     barAgeMinutes,
     meta.category,
   );
-
-  // 24 小時對照證人 — asked only when it can change what we say.
-  //
-  // Two questions no other source here can answer: whether a 休市中 verdict is
-  // the market being shut or our feeds being dark, and whether a quote that
-  // *looks* fresh has actually frozen. A frozen feed keeps answering with a
-  // current timestamp and a stale price, which is invisible to every staleness
-  // check — but not to an instrument that never stops trading and has since
-  // moved. It never supplies a price; see the module for why.
-  const witness =
-    market.basis === "stale-quote" || quote !== null
-      ? await fetchWitness(meta.symbol, gaps).catch(() => null)
-      : null;
 
   if (market.closed && market.reason) {
     if (market.basis === "stale-quote") {
@@ -596,7 +608,7 @@ async function buildSignalForSymbol(
     })),
   };
   const narrative = gradeAllowsEntry(grade)
-    ? await generateNarrative(narrativeInput, gaps, meta.symbol)
+    ? await generateNarrative(narrativeInput, gaps, meta.symbol, aiBudget())
     : ruleNarrative(narrativeInput, `評等 ${grade} 不可交易，未動用 AI 額度`);
 
   // The single actionable recommendation. Candidates come from the real
@@ -642,6 +654,10 @@ async function buildSignalForSymbol(
       // prompt embeds live prices, so hashing it made every hourly scan a
       // fresh question and the 4-hour cache never once hit.
       aiCacheKey: meta.symbol,
+      // Whatever is left after the fetches and the narrative. The plan is the
+      // last AI call, so it inherits the smallest share — correctly: by then
+      // the alternative to skipping it is not a better plan, it is no response.
+      aiBudgetMs: aiBudget(),
     },
     gaps,
   );

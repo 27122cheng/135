@@ -66,11 +66,18 @@ export function openAICompatibleProvider(config: OpenAICompatibleConfig): AIProv
       /** One short wait per call, not per model — see retryAfterMs. */
       let waited = false;
       const tried = new Set<string>();
+      // See CompleteOptions.budgetMs: the per-request timeout bounds one call,
+      // not the walk over six candidate ids.
+      const deadline = Date.now() + (options.budgetMs ?? 20000);
 
       /** Walks a candidate list; returns true when one of them answered. */
       const attempt = async (models: string[]): Promise<boolean> => {
       for (const model of models) {
         if (tried.has(model)) continue;
+        if (Date.now() > deadline) {
+          lastModelError = `${lastModelError ?? ""}（已用盡 ${config.name} 的時間預算，未再試其餘型號）`;
+          break;
+        }
         tried.add(model);
         const ask = () =>
           postJson(
@@ -82,7 +89,9 @@ export function openAICompatibleProvider(config: OpenAICompatibleConfig): AIProv
               max_tokens: options.maxTokens ?? 900,
               temperature: options.temperature ?? 0.2,
             },
-            options.timeoutMs ?? 25000,
+            // Bounded by whatever is left of the budget, so the last attempt
+            // cannot overrun it by a full timeout.
+            Math.max(3000, Math.min(options.timeoutMs ?? 15000, deadline - Date.now())),
           );
         let res = await ask();
 

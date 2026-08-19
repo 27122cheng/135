@@ -54,6 +54,18 @@ export const AI_LIMITS: Record<string, QuotaLimit> = {
 
 const DEFAULT_ORDER = ["gemini", "groq", "openrouter", "anthropic"];
 
+/**
+ * How long one AI question may take, across every provider and model id.
+ *
+ * /api/scan runs under a 60-second Vercel ceiling and makes two AI calls (the
+ * narrative and the trade plan) on top of every market fetch. 22 seconds each
+ * leaves room for the rest; past that the local rules produce a usable answer
+ * and a killed function produces none.
+ */
+const AI_CHAIN_BUDGET_MS = 22_000;
+/** And no single provider may spend the whole chain's clock. */
+const PER_PROVIDER_BUDGET_MS = 12_000;
+
 function buildRegistry(): Map<string, AIProvider> {
   const providers: AIProvider[] = [
     geminiProvider(),
@@ -219,6 +231,18 @@ export async function completeAI<T>(
   const providers = orderedProviders();
   const configured = providers.filter((p) => p.isConfigured());
 
+  /**
+   * One clock for the whole chain, not one per provider.
+   *
+   * Four configured providers, each walking up to six model ids, each id
+   * allowed its own timeout, is minutes of wall clock inside a sixty-second
+   * function. The per-provider budget below bounds each walk; this bounds the
+   * walk over providers, so a scan cannot be spent entirely on discovering
+   * that the AI is down. The local rule fallback is always available and is a
+   * better outcome than a killed request that produces nothing at all.
+   */
+  const chainDeadline = Date.now() + (options?.budgetMs ?? AI_CHAIN_BUDGET_MS);
+
   if (configured.length === 0) {
     gaps.push(
       "未設定任何 AI 金鑰（GEMINI_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY），AI 環節改用本地規則",
@@ -233,13 +257,23 @@ export async function completeAI<T>(
 
   const failures: string[] = [];
   for (const provider of configured) {
+    const left = chainDeadline - Date.now();
+    if (left <= 2000) {
+      failures.push(`${provider.name}：本次掃描的 AI 時間預算已用盡，未嘗試`);
+      continue;
+    }
     const decision = tryConsume(provider.name, AI_LIMITS[provider.name] ?? {});
     if (!decision.ok) {
       failures.push(decision.reason);
       continue;
     }
     try {
-      const value = await provider.complete(prompt, schema, options);
+      // Each provider gets what is left, never more — so the last one in the
+      // list cannot overrun the chain's clock by its own full budget.
+      const value = await provider.complete(prompt, schema, {
+        ...options,
+        budgetMs: Math.min(options?.budgetMs ?? PER_PROVIDER_BUDGET_MS, left),
+      });
       recordSuccess(provider.name);
       const result = { value, provider: provider.name };
       setCached(cacheKey, result, AI_CACHE_TTL_MS);

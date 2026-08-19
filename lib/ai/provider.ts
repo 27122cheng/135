@@ -46,6 +46,20 @@ export interface CompleteOptions {
   temperature?: number;
   timeoutMs?: number;
   /**
+   * Wall clock for the whole provider, across every model id it may walk.
+   *
+   * The per-request timeout alone was not a bound on anything. A provider may
+   * try six candidate ids, and a *timeout* on each stacks: six × 25s is two
+   * and a half minutes inside a function whose ceiling is sixty seconds. Three
+   * symbols died that way — "分析超過 60 秒，Vercel 中斷了這次請求" — while
+   * every individual timeout looked reasonable in isolation.
+   *
+   * Once this is spent the candidate walk stops where it is. A provider that
+   * has not answered in twenty seconds is not going to save the scan; the next
+   * provider, or the local fallback, is the better use of what remains.
+   */
+  budgetMs?: number;
+  /**
    * A stable identity for "this question, this bar" — overrides the default
    * hash-of-the-prompt cache key.
    *

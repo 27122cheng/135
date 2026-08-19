@@ -57,13 +57,15 @@ export async function generateNarrative(
   gaps: string[],
   /** `symbol:h4BarTime` — see CompleteOptions.cacheKey for why. */
   cacheKey?: string,
+  /** What is left of the scan's own clock; see CompleteOptions.budgetMs. */
+  budgetMs?: number,
 ): Promise<string> {
   const prompt =
     `你是交易訊號的綜合分析助手。以下是結構化 JSON 資料，請只根據這些資料進行推論並指出潛在衝突` +
     `（例如某個面向的方向與整體訊號方向相反）。不准補充未提供的事實或數字，不准臆測未包含在資料中的消息。\n\n` +
     JSON.stringify(input, null, 2);
 
-  const result = await completeAI(prompt, SCHEMA, gaps, { maxTokens: 700, cacheKey });
+  const result = await completeAI(prompt, SCHEMA, gaps, { maxTokens: 700, cacheKey, budgetMs });
   if (!result) {
     gaps.push("AI 綜合敘述改用本地備援文字");
     return fallbackNarrative(input);

@@ -56,6 +56,8 @@ export interface TradePlanInput {
    * sweep inside one H4 bar asks the model once rather than four times.
    */
   aiCacheKey?: string;
+  /** What is left of the scan's own clock; see CompleteOptions.budgetMs. */
+  aiBudgetMs?: number;
 }
 
 /** The day profile with the calibration bump applied, capped below certainty. */
@@ -733,6 +735,7 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
   let unavailable: AiUnavailable | null = null;
   const result = await completeAI(buildPrompt(input), PLAN_SCHEMA, gaps, {
     cacheKey: input.aiCacheKey,
+    budgetMs: input.aiBudgetMs,
     maxTokens: 900,
     onUnavailable: (why) => {
       unavailable = why;

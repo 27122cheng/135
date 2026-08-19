@@ -77,7 +77,8 @@ export async function fetchFmpQuote(
       const data = await fetchJson<FmpQuote[] | FmpError>(
         `https://financialmodelingprep.com/api/v3/quote/${encodeURIComponent(ticker)}?apikey=${encodeURIComponent(apiKey)}`,
         undefined,
-        12000,
+        // Short on purpose — see twelvedata.ts.
+        7000,
       );
       if (!data) return null;
       // Like Twelve Data, the vendor answers HTTP 200 with an error object for

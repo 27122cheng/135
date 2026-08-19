@@ -81,7 +81,7 @@ export async function fetchWitness(
       const rows = await fetchJson<unknown[][]>(
         `https://api.binance.com/api/v3/klines?symbol=${proxy.pair}&interval=1m&limit=1`,
         undefined,
-        8000,
+        5000,
       );
       const row = Array.isArray(rows) ? rows[0] : null;
       if (!Array.isArray(row)) return null;

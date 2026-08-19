@@ -112,7 +112,9 @@ export async function fetchTwelveDataQuote(
       const data = await fetchJson<QuoteResponse>(
         `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(ticker)}&apikey=${encodeURIComponent(apiKey)}`,
         undefined,
-        12000,
+        // Short on purpose: this is a fallback reached when the primary is
+        // already slow, inside a function with a hard 60-second ceiling.
+        7000,
       );
       if (!data) return null;
       // The vendor answers 200 with an error body, so a plan limit or a bad

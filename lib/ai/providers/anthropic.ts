@@ -46,7 +46,7 @@ export function anthropicProvider(): AIProvider {
           temperature: options.temperature ?? 0.2,
           messages: [{ role: "user", content: `${prompt}\n\n${schema.instruction}` }],
         },
-        options.timeoutMs ?? 25000,
+        Math.min(options.timeoutMs ?? 15000, options.budgetMs ?? 20000),
       );
 
       if (!res.ok) {

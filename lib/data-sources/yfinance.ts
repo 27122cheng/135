@@ -256,35 +256,21 @@ export async function fetchLatestPrice(
   // timestamp reads up to two hours *fresher* than reality — harmless for the
   // staleness gate (the weekend clock covers the close, and two hours is under
   // every threshold here) and preferable to a timezone table that rots.
-  const live: LatestPrice[] = direct ? [direct] : [];
-  if (stooqTicker) {
-    const stooq = await fetchStooqQuote(stooqTicker, gaps).catch(() => null);
-    if (stooq) live.push(stooq);
-  }
-
-  // Third live witness, third company — and the only one of the three that is
-  // a paid-grade vendor rather than an endpoint we are borrowing. Optional: no
-  // key, no call, and the chain behaves exactly as it did before. It matters
-  // most for GER40, which has no keyless third source of any kind (FRED's DAX
-  // series is discontinued), and on the days Yahoo freezes — the failure that
-  // put nine trading instruments on 休市中 for a day and a half.
+  // The three live fallbacks, asked together rather than one after another.
   //
-  // Reached only once Yahoo's own answer is over three hours old (the early
-  // return above), so a normal day spends none of the 800-call daily budget on
-  // it. That is deliberate: a backup that burns its allowance while the primary
-  // is healthy is not available on the day the primary fails.
-  if (symbol) {
-    const td = await fetchTwelveDataQuote({ symbol }, gaps).catch(() => null);
-    if (td) live.push(td);
-    // Fourth witness. Behind Twelve Data rather than beside it: its free
-    // allowance is a third of the size, so it is asked only once nothing above
-    // has produced anything at all — the day this path matters, 250 calls is
-    // more than enough, and on every other day it spends none of them.
-    if (live.length === 0) {
-      const fmp = await fetchFmpQuote({ symbol }, gaps).catch(() => null);
-      if (fmp) live.push(fmp);
-    }
-  }
+  // Serially they were 8 + 12 + 12 seconds of timeout stacked inside a
+  // 60-second function — and this path is reached precisely when the primary
+  // is slow or broken, which is when every one of them is most likely to be
+  // slow too. Three symbols hit the ceiling that way. Concurrently the cost is
+  // the slowest of the three, not their sum, and the freshest answer wins
+  // exactly as before.
+  const live: LatestPrice[] = direct ? [direct] : [];
+  const [stooq, td, fmp] = await Promise.all([
+    stooqTicker ? fetchStooqQuote(stooqTicker, gaps).catch(() => null) : null,
+    symbol ? fetchTwelveDataQuote({ symbol }, gaps).catch(() => null) : null,
+    symbol ? fetchFmpQuote({ symbol }, gaps).catch(() => null) : null,
+  ]);
+  for (const candidate of [stooq, td, fmp]) if (candidate) live.push(candidate);
 
   // Freshest live answer wins, and if it is genuinely recent nothing further
   // is asked. The daily sources below exist for when every live feed is dark.
