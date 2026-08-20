@@ -1230,8 +1230,9 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
                   used to quote 70% and 55% without saying they belong to
                   different tiers, which read as the site contradicting itself. */}
               這個方向上有兩層門檻，都沒有組合通過：
-              <span className="text-neutral-400">交易建議</span>要求歷史回測勝率 ≥70%、
-              <span className="text-neutral-400">參考價位</span>（僅供觀察、非建議）門檻較低，也要 ≥55%，
+              <span className="text-neutral-400">交易建議</span>要求歷史回測勝率達到與風報比連動的門檻
+              （每單位風險期望 ≥ +0.75R：1:1.5 需 ≥70%、1:2 需 ≥58%，賠率越高要求越低，絕對下限 55%）、
+              <span className="text-neutral-400">參考價位</span>（僅供觀察、非建議）門檻固定 ≥55%，
               風報比兩層都要 ≥1:1.5。
               {(signal.data_gaps ?? []).find((g) => g.startsWith("本次不提供參考價位")) ??
                 "因此不提供任何價位。"}

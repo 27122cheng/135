@@ -2,6 +2,9 @@ import { check, report } from "./_harness";
 import {
   DAY_PROFILE,
   SWING_PROFILE,
+  REFERENCE_PROFILE,
+  effectiveDayProfile,
+  requiredHitRate,
   buildTradePlan,
   selectSwingVariant,
 } from "@/lib/analysis/trade-plan";
@@ -61,9 +64,41 @@ async function main() {
     check("the day horizon reaches less far",
       DAY_PROFILE.maxTargetAtr < SWING_PROFILE.maxTargetAtr,
       { DAY_PROFILE, SWING_PROFILE });
-    check("both horizons carry the operator's 70% floor",
-      DAY_PROFILE.minHitRate === 0.7 && SWING_PROFILE.minHitRate === 0.7,
+    check("both horizons carry the same RR-aware floor",
+      DAY_PROFILE.minExpectancyR === 0.75 && SWING_PROFILE.minExpectancyR === 0.75 &&
+      DAY_PROFILE.minHitRate === 0.55 && SWING_PROFILE.minHitRate === 0.55,
       { DAY_PROFILE, SWING_PROFILE });
+  }
+
+  // ── the floor scales with the payoff ────────────────────────────
+  //
+  // The flat 70% was the reason Telegram went silent: it refused a
+  // demonstrated 58% at 1:2.51 (+1.04R per trade) while passing 70% at 1:1.5
+  // (+0.75R). The RR-aware floor keeps the operator's exact bar at the
+  // minimum payoff and lets better payoffs qualify with fewer wins.
+  {
+    check("at the 1:1.5 minimum payoff the bar is still exactly 70%",
+      requiredHitRate(DAY_PROFILE, 1.5) === 0.7, requiredHitRate(DAY_PROFILE, 1.5));
+    check("at 1:2 it eases to ~58%",
+      Math.abs(requiredHitRate(DAY_PROFILE, 2) - 7 / 12) < 1e-3,
+      requiredHitRate(DAY_PROFILE, 2));
+    check("the 58% @ 1:2.51 that Telegram never saw now clears",
+      0.58 >= requiredHitRate(DAY_PROFILE, 2.51), requiredHitRate(DAY_PROFILE, 2.51));
+    check("the absolute 55% floor never relaxes, whatever the payoff",
+      requiredHitRate(DAY_PROFILE, 10) === 0.55, requiredHitRate(DAY_PROFILE, 10));
+    check("the reference tier stays a flat 55%",
+      requiredHitRate(REFERENCE_PROFILE, 1.5) === 0.55 &&
+      requiredHitRate(REFERENCE_PROFILE, 5) === 0.55,
+      REFERENCE_PROFILE);
+    // 實績校準 raises the whole curve, not just the absolute floor.
+    const bumped = effectiveDayProfile(0.1);
+    check("the calibration bump raises every threshold together",
+      requiredHitRate(bumped, 1.5) === 0.8 &&
+      Math.abs(requiredHitRate(bumped, 2.51) - 0.65) < 1e-9,
+      { at15: requiredHitRate(bumped, 1.5), at251: requiredHitRate(bumped, 2.51) });
+    check("and caps below certainty",
+      requiredHitRate(effectiveDayProfile(0.2), 1.5) === 0.9,
+      requiredHitRate(effectiveDayProfile(0.2), 1.5));
   }
 
   // ── the swing may reach what the day plan excludes ──────────────

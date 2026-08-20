@@ -95,7 +95,7 @@ export interface InterventionEffects {
   /** S8: force no-trade when COT is at an extreme opposing the signal. */
   noTradeOnPositioningConflict: boolean;
   /**
-   * 實績校準 — extra hit rate demanded on top of the 70% day floor when the
+   * 實績校準 — extra hit rate demanded on top of the day floor when the
    * realized win rate of auto-tracked real entries falls well short of what
    * the backtest floor promised. Not tied to any S-tag: the trigger is the
    * scoreboard itself. Only ever ≥ 0, and it releases on its own — a window
@@ -188,7 +188,8 @@ export function computeInterventions(history: JournalEntry[]): InterventionEffec
   }
 
   // ── 實績校準 ─────────────────────────────────────────────────────
-  // Every real entry passed a backtest floor promising ≥70% — so the
+  // Every real entry passed a backtest floor tied to its payoff (70% at the
+  // 1:1.5 minimum, easing toward 55% as the payoff improves) — so the
   // realized win rate of those same entries is a direct audit of the
   // backtest's honesty. When enough have resolved and the audit fails, new
   // entries must clear a higher bar until the scoreboard recovers. Real
@@ -208,10 +209,10 @@ export function computeInterventions(history: JournalEntry[]): InterventionEffec
       effects.dayHitRateFloorBump = bump;
       effects.applied.push({
         tag: null,
-        effect: `當沖回測勝率門檻 +${Math.round(bump * 100)} 個百分點（70% → ${Math.round((0.7 + bump) * 100)}%）`,
+        effect: `當沖回測勝率門檻整體 +${Math.round(bump * 100)} 個百分點（各風報比對應的門檻一併提高）`,
         evidence:
           `實績校準：最近 ${real.length} 筆正式進場實際勝率僅 ${Math.round(realized * 100)}%，` +
-          `遠低於回測門檻承諾的 70% —— 回測偏樂觀時，新進場需要更高的安全邊際`,
+          `遠低於回測門檻承諾的水準（依風報比 55–70%）—— 回測偏樂觀時，新進場需要更高的安全邊際`,
         triggered_by: real.slice(0, 5).map((e) => e.closed_at.slice(0, 10)),
       });
     }
