@@ -243,7 +243,10 @@ create table if not exists public.lab_forward (
   entry_bar_time timestamptz not null,
   entry double precision not null,
   stop double precision not null,
-  target double precision not null,
+  -- Null when no overhead pressure existed at entry: the trade is managed by
+  -- its (trailing) stop alone. Was "not null" under the old fixed geometry;
+  -- the alter below relaxes already-created tables and is a no-op afterwards.
+  target double precision,
   -- The ATR the geometry was built from, kept so a resolved trade can be
   -- re-checked without recomputing indicators over the whole series.
   atr double precision not null,
@@ -256,6 +259,8 @@ create table if not exists public.lab_forward (
   opened_at timestamptz not null default now(),
   closed_at timestamptz
 );
+
+alter table public.lab_forward alter column target drop not null;
 
 create index if not exists lab_forward_status_idx on public.lab_forward (status);
 create index if not exists lab_forward_scope_idx on public.lab_forward (symbol, direction, condition_id);

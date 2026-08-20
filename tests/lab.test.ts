@@ -1,14 +1,14 @@
 import { check, report } from "./_harness";
 import {
   CONDITIONS,
-  LAB_GEOMETRY_RR,
+  LAB_MIN_EXPECTANCY_R,
   VERIFY_FLOOR,
   buildContext,
   runLab,
   shortfallsOf,
   type LabFinding,
 } from "@/lib/analysis/lab";
-import { DAY_PROFILE, requiredHitRate } from "@/lib/analysis/trade-plan";
+import { DAY_PROFILE, TRADE_MIN_EXPECTANCY_R } from "@/lib/analysis/trade-plan";
 import type { Candle } from "@/lib/data-sources/ohlcv";
 
 /**
@@ -38,17 +38,20 @@ function bars(fn: (i: number) => number, n: number): Candle[] {
 
 const meta = { symbol: "XAUUSD", category: "metal" as const };
 
-// ── the lab's floor is coupled to the live trade floor ────────────
+// ── the lab's floors are coupled to the live trade floors ─────────
 //
 // Adopted lab conditions become a hard gate over live entries, so the lab's
-// adoption bar must never fall below what a live trade at the lab's own
-// geometry has to demonstrate. The trade floor is RR-aware now; if either
-// side is tuned again, this is the invariant that must survive.
+// adoption bar must never fall below what the live trades themselves must
+// demonstrate. Both floors are in the same units now — expectancy in R and a
+// followability hit rate — and if either side is tuned again, this is the
+// invariant that must survive.
 {
-  check("the lab measures at the operator's minimum payoff", LAB_GEOMETRY_RR === 1.5);
-  check("its adoption floor sits at or above the trade floor at that payoff",
-    VERIFY_FLOOR >= requiredHitRate(DAY_PROFILE, LAB_GEOMETRY_RR),
-    { VERIFY_FLOOR, tradeFloor: requiredHitRate(DAY_PROFILE, LAB_GEOMETRY_RR) });
+  check("the lab demands at least the live trades' expectancy",
+    LAB_MIN_EXPECTANCY_R >= TRADE_MIN_EXPECTANCY_R,
+    { LAB_MIN_EXPECTANCY_R, TRADE_MIN_EXPECTANCY_R });
+  check("and at least the live absolute hit-rate floor",
+    VERIFY_FLOOR >= DAY_PROFILE.minHitRate,
+    { VERIFY_FLOOR, live: DAY_PROFILE.minHitRate });
 }
 
 // ── the conditions are well-formed ────────────────────────────────
@@ -94,7 +97,10 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
   const badlyVerified = [...r.solo, ...r.pairs].filter(
     (f) =>
       f.verified &&
-      ((f.inSample.hitRate ?? 0) < r.floor || (f.outOfSample.hitRate ?? 0) < r.floor),
+      ((f.inSample.hitRate ?? 0) < r.floor ||
+        (f.outOfSample.hitRate ?? 0) < r.floor ||
+        (f.inSample.expectancyR ?? -1) < r.minExpectancyR ||
+        (f.outOfSample.expectancyR ?? -1) < r.minExpectancyR),
   );
   check("a finding is never verified on one half alone", badlyVerified.length === 0, badlyVerified);
 
@@ -116,9 +122,13 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
   check("every reported finding meets the 100-trade floor",
     [...r.solo, ...r.pairs].every((f) => f.inSample.trades >= 100),
     [...r.solo, ...r.pairs].filter((f) => f.inSample.trades < 100).map((f) => f.inSample.trades));
-  check("the adoption floor is 80%", r.floor === 0.8 && VERIFY_FLOOR === 0.8, r.floor);
+  check("the adoption floors are expectancy +1R and 55% followability",
+    r.floor === 0.55 && VERIFY_FLOOR === 0.55 && r.minExpectancyR === 1,
+    { floor: r.floor, minExpectancyR: r.minExpectancyR });
   check("the criteria are stated in the report",
-    r.notes.some((n) => n.includes("100") && n.includes("80%")), r.notes);
+    r.notes.some((n) => n.includes("100") && n.includes("R") && n.includes("55%")), r.notes);
+  check("the managed exits are described, with the honest news limitation",
+    r.notes.some((n) => n.includes("保本") && n.includes("CHoCH") && n.includes("新聞")), r.notes);
 
   check("combinations can go deeper than two when the sample survives",
     r.pairs.every((f) => f.ids.length >= 2), r.pairs.map((f) => f.ids.length));
@@ -135,27 +145,29 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
     r.pairs.every((f) => new Set(f.ids).size === f.ids.length));
   check("cost is deducted and stated", r.costPct > 0, r.costPct);
 
-  // 結算率 — every entry the walk took is accounted for, not only the ones
-  // that reached a stop or a target. A hit rate over a self-selected subset is
-  // the quiet way a backtest flatters itself.
+  // 可交易率 — every bar the condition accepted is accounted for, including
+  // the ones refused for lack of a structural stop. A rate over a
+  // self-selected subset is the quiet way a backtest flatters itself.
   const all = [r.baseline.inSample, r.baseline.outOfSample, ...r.solo.map((f) => f.inSample)];
-  check("every entry taken is counted, resolved or not",
+  check("every fire is counted, tradeable or not",
     all.every((s) => s.entries >= s.trades && s.unresolved === s.entries - s.trades), all);
-  check("and a condition never reports more resolutions than entries",
+  check("and a condition never reports more trades than fires",
     [...r.solo, ...r.pairs].every((f) => f.inSample.trades <= f.inSample.entries));
-  check("the resolution rate is stated in the report",
-    r.notes.some((n) => n.includes("結算率")), r.notes);
+  check("the tradeable rate is stated in the report",
+    r.notes.some((n) => n.includes("可交易率")), r.notes);
 }
 
 // ── a relentless uptrend should favour long conditions ────────────
 //
 // Not a claim about markets — a sanity check that the machinery measures
 // what it says it measures. If a strictly rising series does not produce a
-// high long hit rate, the walk is wrong.
+// high long hit rate under the managed exits, the walk is wrong.
 {
   const up = runLab(meta, bars((i) => 100 * 1.004 ** i, 400), "long")!;
   check("a rising series gives longs a high baseline",
     (up.baseline.inSample.hitRate ?? 0) > 0.8, up.baseline.inSample);
+  check("and a positive expectancy",
+    (up.baseline.inSample.expectancyR ?? -9) > 0, up.baseline.inSample);
   const down = runLab(meta, bars((i) => 100 * 1.004 ** i, 400), "short")!;
   check("and shorts a low one", (down.baseline.inSample.hitRate ?? 1) < 0.2, down.baseline.inSample);
 }
@@ -190,47 +202,60 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
 
 // ── 接近通過 says exactly what is missing, and only when "near" is honest ──
 {
-  const result = (trades: number, hitRate: number) => ({
+  const result = (trades: number, hitRate: number, expectancyR = 1.2) => ({
     trades,
     wins: Math.round(trades * hitRate),
     hitRate,
-    expectancyR: 0,
+    expectancyR,
     entries: trades,
     unresolved: 0,
   });
-  const finding = (inRate: number, outRate: number, outTrades: number, verified = false): LabFinding => ({
+  const finding = (
+    inRate: number,
+    outRate: number,
+    outTrades: number,
+    verified = false,
+    outExp = 1.2,
+  ): LabFinding => ({
     ids: ["a"],
     labels: ["A"],
     inSample: result(120, inRate),
-    outOfSample: result(outTrades, outRate),
+    outOfSample: result(outTrades, outRate, outExp),
     verified,
     lift: 1,
   });
 
   check("a verified finding is never a near miss",
-    shortfallsOf(finding(0.85, 0.85, 50, true), 0.8) === null);
+    shortfallsOf(finding(0.6, 0.6, 50, true), 0.55) === null);
 
-  const rate = shortfallsOf(finding(0.85, 0.77, 50), 0.8);
+  const rate = shortfallsOf(finding(0.6, 0.52, 50), 0.55);
   check("a hit rate 3 points short is named, with the distance",
-    rate !== null && rate.length === 1 && rate[0].includes("77%") && rate[0].includes("3 個百分點"),
+    rate !== null && rate.length === 1 && rate[0].includes("52%") && rate[0].includes("3 個百分點"),
     rate);
 
   check("a hit rate more than 5 points short is not 'near'",
-    shortfallsOf(finding(0.85, 0.70, 50), 0.8) === null);
+    shortfallsOf(finding(0.6, 0.45, 50), 0.55) === null);
 
-  const sample = shortfallsOf(finding(0.85, 0.85, 38), 0.8);
+  const exp = shortfallsOf(finding(0.6, 0.6, 50, false, 0.9), 0.55);
+  check("an expectancy just short is named in R",
+    exp !== null && exp.length === 1 && exp[0].includes("0.9R") && exp[0].includes("0.1R"), exp);
+
+  check("an expectancy far short is not 'near'",
+    shortfallsOf(finding(0.6, 0.6, 50, false, 0.7), 0.55) === null);
+
+  const sample = shortfallsOf(finding(0.6, 0.6, 38), 0.55);
   check("a thin out-of-sample count is named, with the count remaining",
     sample !== null && sample[0].includes("38 筆") && sample[0].includes("差 5 筆"), sample);
 
   check("a sample below 70% of the requirement is not 'near'",
-    shortfallsOf(finding(0.85, 0.85, 20), 0.8) === null);
+    shortfallsOf(finding(0.6, 0.6, 20), 0.55) === null);
 
-  const both = shortfallsOf(finding(0.78, 0.77, 38), 0.8);
+  const both = shortfallsOf(finding(0.53, 0.52, 38), 0.55);
   check("multiple small shortfalls are all listed",
     both !== null && both.length === 3, both);
 
   check("one criterion far off disqualifies even when the others are close",
-    shortfallsOf(finding(0.85, 0.60, 38), 0.8) === null);
+    shortfallsOf(finding(0.6, 0.35, 38), 0.55) === null);
 
   // On a real report: never a verified finding, and the shortfalls must obey
   // the same margins the classifier promises.

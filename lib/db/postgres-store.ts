@@ -498,7 +498,7 @@ function toLabTrade(r: Record<string, unknown>): LabTradeRow {
     entryBarTime: iso(r.entry_bar_time)!,
     entry: Number(r.entry),
     stop: Number(r.stop),
-    target: Number(r.target),
+    target: r.target === null || r.target === undefined ? null : Number(r.target),
     atr: Number(r.atr),
     horizonBars: Number(r.horizon_bars),
     status: r.status as LabTradeRow["status"],

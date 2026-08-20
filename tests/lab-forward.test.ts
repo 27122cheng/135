@@ -17,8 +17,9 @@ import type { LabTradeRow } from "@/lib/db";
  * The ledger's value rests entirely on properties that must hold every time,
  * not on any particular result: a trade is registered before its outcome
  * exists, the same bar cannot be traded twice, a condition never holds two
- * open positions at once, and a trade that reached neither level is recorded
- * as expired rather than quietly counted as a win or dropped.
+ * open positions at once, and every closed trade carries a real exit — the
+ * managed walk (structural stop, breakeven, trailing, CHoCH exit, horizon
+ * close at the market) classifies it by the sign of its net R.
  */
 
 function bars(fn: (i: number) => number, n: number, from = 0): Candle[] {
@@ -41,9 +42,12 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
 
 // ── opening ───────────────────────────────────────────────────────
 {
-  const up = bars((i) => 100 * 1.004 ** i, 200);
+  // The series needs real pullbacks: stops hang off confirmed swings now, and
+  // a strictly monotonic series never confirms a pivot.
+  const wave = (i: number) => 100 * 1.004 ** i * (1 + 0.012 * Math.sin(i / 4));
+  const up = bars(wave, 200);
   const opened = openForwardTrades(meta, up, []);
-  check("an uptrend opens trades", opened.length > 0, opened.length);
+  check("a trending series with pullbacks opens trades", opened.length > 0, opened.length);
   check("every trade names one condition and one direction",
     opened.every((t) => t.conditionId.length > 0 && (t.direction === "long" || t.direction === "short")));
   check("all of them enter at the newest bar's close",
@@ -51,12 +55,20 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
   check("and are open, with nothing filled in yet",
     opened.every((t) => t.status === "open" && t.exitPrice === null && t.barsHeld === null));
 
-  // The geometry is the lab's, or the two columns are not comparable.
-  const long = opened.find((t) => t.direction === "long")!;
-  check("the stop sits 1×ATR the wrong side of entry",
-    Math.abs(long.entry - long.stop - long.atr) < 1e-9, { entry: long.entry, stop: long.stop, atr: long.atr });
-  check("and the target beyond 1.5×ATR, cost included",
-    long.target > long.entry + long.atr * 1.5, { target: long.target, atr: long.atr });
+  // The levels are structural, screened the same way the live plans screen.
+  check("every stop sits on the losing side, outside the noise and near enough to protect",
+    opened.every((t) => {
+      const dist = t.direction === "long" ? t.entry - t.stop : t.stop - t.entry;
+      return dist >= t.atr * 0.6 - 1e-9 && dist <= t.atr * 2.5 + 1e-9;
+    }),
+    opened.map((t) => (t.entry - t.stop) / t.atr));
+  check("every registered target is real overhead pressure or absent",
+    opened.every(
+      (t) =>
+        t.target === null ||
+        (t.direction === "long" ? t.target > t.entry : t.target < t.entry),
+    ),
+    opened.map((t) => t.target));
 
   check("no condition opens twice on one bar",
     new Set(opened.map((t) => `${t.direction}:${t.conditionId}`)).size === opened.length);
@@ -66,7 +78,7 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
     openForwardTrades(meta, up, opened).length === 0);
 
   // One open position per condition, even on a later bar.
-  const next = [...up, ...bars((i) => 100 * 1.004 ** (200 + i), 1, 200)];
+  const next = [...up, ...bars((i) => wave(200 + i), 1, 200)];
   check("a condition already holding a position does not open another",
     openForwardTrades(meta, next, opened).every(
       (t) => !opened.some((o) => o.direction === t.direction && o.conditionId === t.conditionId)),
@@ -76,8 +88,11 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
     openForwardTrades(meta, bars((i) => 100 + i, WARMUP), []).length === 0);
 
   // The id is what makes the whole ledger idempotent.
+  const anyTrade = opened[0];
   check("the id is derived from symbol, direction, condition and entry bar",
-    long.id === forwardTradeId("XAUUSD", "long", long.conditionId, long.entryBarTime), long.id);
+    anyTrade.id ===
+      forwardTradeId("XAUUSD", anyTrade.direction, anyTrade.conditionId, anyTrade.entryBarTime),
+    anyTrade.id);
 }
 
 // ── resolving ─────────────────────────────────────────────────────
@@ -124,9 +139,16 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
 
   const flat = Array.from({ length: FORWARD_HORIZON }, (_, k) => at(k, 101, 99));
   const timedOut = resolveForwardTrade(base, flat)!;
-  check("out of time is 逾時, not a loss", timedOut.status === "expired", timedOut);
+  check("out of time closes at the market and classifies by its R",
+    timedOut.status === "loss", timedOut);
   check("and exits at the last bar's close, not at a level",
     timedOut.exitPrice === flat[flat.length - 1].close, timedOut);
+
+  // 保本移停: 1R in favour moves the stop to the entry, so the pullback
+  // scratches at breakeven instead of riding back to −1R.
+  const scratched = resolveForwardTrade(base, [at(0, 102.5, 99.5), at(1, 101, 99.9)])!;
+  check("after 1R in favour a pullback exits at the entry, not the old stop",
+    scratched.exitPrice === 100 && scratched.status === "loss", scratched);
 
   // Bars before the entry must never resolve it — the one bug that would turn
   // this ledger into a lie.
@@ -146,13 +168,14 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
 
 // ── one full advance ──────────────────────────────────────────────
 {
-  const series = bars((i) => 100 * 1.004 ** i, 200);
+  const wave = (i: number) => 100 * 1.004 ** i * (1 + 0.012 * Math.sin(i / 4));
+  const series = bars(wave, 200);
   const first = advanceForward(meta, series, []);
   check("the first advance opens without resolving anything",
     first.opened.length > 0 && first.resolved.length === 0);
 
-  // Twenty more bars: everything either resolved or is legitimately still open.
-  const later = [...series, ...bars((i) => 100 * 1.004 ** (200 + i), 25, 200)];
+  // Twenty-five more bars: everything either resolved or is still open.
+  const later = [...series, ...bars((i) => wave(200 + i), 25, 200)];
   const second = advanceForward(meta, later, first.opened);
   check("a later advance resolves the trades the new bars settled",
     second.resolved.length > 0, second.resolved.length);
@@ -192,9 +215,11 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
     row({ status: "win", direction: "short" }),
   ]);
   const long = stats.find((s) => s.direction === "long")!;
-  check("wins, losses, expiries and open trades are counted separately",
+  check("wins, losses, legacy expiries and open trades are counted separately",
     long.wins === 3 && long.losses === 1 && long.expired === 1 && long.open === 1, long);
   check("the hit rate is over resolved trades only", long.hitRate === 0.75, long.hitRate);
+  check("and the expectancy is measured in R, net of costs",
+    long.expectancyR !== null && long.expectancyR > 0, long.expectancyR);
   check("but every trade ever taken is still reported", long.taken === 6, long.taken);
   check("directions are kept apart", stats.length === 2, stats.map((s) => s.direction));
   check("a condition with nothing resolved reports no hit rate",

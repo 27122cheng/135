@@ -155,7 +155,8 @@ export interface LabTradeRow {
   entryBarTime: string;
   entry: number;
   stop: number;
-  target: number;
+  /** Null when no overhead pressure existed at entry — managed by the stop alone. */
+  target: number | null;
   atr: number;
   horizonBars: number;
   status: LabTradeStatus;

@@ -1,10 +1,12 @@
 import type { Candle } from "../data-sources/ohlcv";
 import { CONDITIONS, buildContext, type LabContext } from "./lab-conditions";
+import { MANAGE_HORIZON, registerLevels, walkManaged } from "./lab-manage";
 import { totalCostFraction, tradingCostFor } from "@/config/trading-costs";
 import type { CommodityMeta } from "@/types/signal";
 
 export { CONDITIONS, buildContext, FAMILIES } from "./lab-conditions";
 export type { Condition, LabContext } from "./lab-conditions";
+export { MANAGE_HORIZON, registerLevels, walkManaged } from "./lab-manage";
 
 /**
  * 實驗室 — which entry conditions actually earn their place.
@@ -32,34 +34,31 @@ export type { Condition, LabContext } from "./lab-conditions";
  *    failed — not quietly dropped, because "we tried 78 things and 3 survived
  *    out of sample" is the finding.
  * 2. **A floor on both halves.** A combination is only ever labelled 通過 if
- *    it clears the operator's hit-rate floor in-sample *and* out-of-sample,
- *    with a real sample in each.
+ *    it clears the expectancy floor *and* the followability floor in-sample
+ *    and out-of-sample, with a real sample in each.
  * 3. **The baseline is always shown.** Every result sits next to what the
- *    same geometry does with no condition at all. A 68% hit rate means
+ *    same management does with no condition at all. A 68% hit rate means
  *    nothing until you know the unconditional rate is 61%.
  *
- * ## Why a fixed geometry
+ * ## Why managed exits, not a fixed geometry
  *
- * Every condition is measured on the same stop and target — 1×ATR and
- * 1.5×ATR, the operator's own minimum payoff — so the comparison is between
- * *conditions* rather than between conditions and the geometries that happen
- * to suit them. What the lab discovers is when to enter; where to put the
- * stop is already decided by structure elsewhere.
+ * Every trade here is opened, protected and closed by the exact rules in
+ * lib/analysis/lab-manage.ts: stop behind the confirmed swing, target at the
+ * nearest overhead pressure, breakeven at 1R, stop trailed behind new swings,
+ * exit on an opposite structure break. The comparison between conditions is
+ * still fair — every condition trades under the *same* management — but what
+ * is being measured is now the trade this system actually takes, per the
+ * operator: 「不要用固定R，要看壓力及技術變化來移動止損止盈」. Fundamental
+ * and news view-changes cannot be replayed on history (there is no per-bar
+ * news archive), so the backtestable form of 看法改變 is the structural one;
+ * the live monitor handles the rest in real time, and this file does not
+ * pretend otherwise. Outcomes are in R — each trade's exit over its own
+ * initial risk, net of costs — because with structural stops every trade has
+ * its own payoff and a bare hit rate no longer means one thing.
  */
 
-/** Stop at 1×ATR, target at 1.5×ATR: the operator's MIN_RISK_REWARD, exactly. */
-const STOP_ATR = 1;
-const TARGET_ATR = 1.5;
-/**
- * The lab's fixed payoff as a ratio, exported so a test can hold it against
- * the live trade floor: requiredHitRate(DAY_PROFILE, LAB_GEOMETRY_RR) is what
- * a *trade* at this geometry must demonstrate, and the lab's adoption floor
- * must never sit below it — a condition adopted as a hard gate on live
- * entries has to show at least the edge those entries are themselves held to.
- */
-export const LAB_GEOMETRY_RR = TARGET_ATR / STOP_ATR;
 /** How far forward a trade is given to resolve, in bars. */
-const HORIZON = 20;
+const HORIZON = MANAGE_HORIZON;
 /**
  * 樣本數門檻 —— the operator's number, and a strict one on purpose.
  *
@@ -81,16 +80,23 @@ const MIN_SAMPLE = 100;
  */
 const MIN_OUT_OF_SAMPLE = Math.round((MIN_SAMPLE * (1 - 0.7)) / 0.7);
 /**
- * 勝率門檻 —— the operator's floor for a condition to be worth adopting.
+ * 勝率門檻 —— the followability floor, now that outcomes carry their own R.
  *
- * Deliberately above the live trade floor at the same geometry. The trade
- * floor is RR-aware (see requiredHitRate in trade-plan.ts) and at the lab's
- * fixed 1:1.5 it demands 70% — the minimum for a plan to be *taken*. A
- * condition promoted to a hard gate over every live entry should show more
- * edge than that minimum, not equal it: 80% at 1:1.5 is +1.0R per trade
- * against the tradeable bar's +0.75R.
+ * Under managed exits a hit rate alone cannot be the bar (a trailed winner
+ * and a full-target winner are different sizes of win), so verification is
+ * two-legged: this floor keeps a condition followable — below 55% the losses
+ * come too often to sit through, the same absolute floor the live plans
+ * carry — and LAB_MIN_EXPECTANCY_R is the edge itself.
  */
-export const VERIFY_FLOOR = 0.8;
+export const VERIFY_FLOOR = 0.55;
+/**
+ * 期望值門檻 —— the operator's old bar, restated in the unit that survives
+ * variable geometry. The previous floor was 80% at a fixed 1:1.5, which *is*
+ * +1.0R per trade; the number carries over exactly. Deliberately above the
+ * live trade floor's +0.75R: a condition promoted to a hard gate over every
+ * live entry has to show more edge than the minimum a single plan needs.
+ */
+export const LAB_MIN_EXPECTANCY_R = 1.0;
 /**
  * Indicators need to warm up before any bar is a legitimate entry.
  *
@@ -103,31 +109,34 @@ export const WARMUP = 60;
 const IN_SAMPLE_SHARE = 0.7;
 
 export interface ConditionResult {
-  /** Resolved trades — the denominator of `hitRate`. */
+  /** Resolved trades — the denominator of `hitRate` and `expectancyR`. */
   trades: number;
+  /** Trades whose net R was positive. */
   wins: number;
   hitRate: number | null;
+  /** Mean R per resolved trade, net of costs — the number that decides. */
   expectancyR: number | null;
   /**
-   * Every bar the condition accepted, whether or not the trade resolved.
+   * Every bar the condition accepted (with a usable ATR), whether or not a
+   * trade could be taken there.
    *
-   * The gap between this and `trades` is the part a hit rate hides. A trade
-   * that reaches neither the stop nor the target inside the 20-bar horizon is
-   * not a win and not a loss, and counting only the ones that resolved means
-   * the reported rate describes whichever subset happened to move. If a
-   * condition takes 400 entries and 90 of them resolve, "83% 勝率" is a claim
-   * about 22% of what it would actually have done — so the count is carried
-   * out of the walk instead of being thrown away inside it.
+   * The gap between this and `trades` is what the rates hide: bars where the
+   * condition fired but no sane structural stop existed (no confirmed swing,
+   * or the swing inside the noise / too far away — the same refusals the
+   * live plan makes). A condition that fires 400 times but is only tradeable
+   * 90 of them is a claim about those 90, so the count is carried out of the
+   * walk instead of being thrown away inside it.
    */
   entries: number;
-  /** entries − trades. Timed out at the horizon with the position still open. */
+  /** entries − trades: fired, but no structural stop to trade against. */
   unresolved: number;
 }
 
 /**
- * Walks a slice of history, entering wherever `accept` is true and resolving
- * on the fixed geometry. No look-ahead: the decision at bar `i` uses only
- * data up to `i`, and the outcome is read from bars after it.
+ * Walks a slice of history, entering wherever `accept` is true and managing
+ * each trade with the shared structural rules (lab-manage.ts). No look-ahead:
+ * the decision and the registered levels at bar `i` use only data confirmed
+ * by `i`, and the outcome is read from bars after it.
  */
 function run(
   ctx: LabContext,
@@ -138,8 +147,9 @@ function run(
   costFraction: number,
 ): ConditionResult {
   let wins = 0;
-  let losses = 0;
+  let trades = 0;
   let entries = 0;
+  let sumR = 0;
   for (let i = Math.max(from, WARMUP); i < to - HORIZON; i++) {
     const a = ctx.atr[i];
     const entry = ctx.close[i];
@@ -147,41 +157,36 @@ function run(
     if (!accept(i)) continue;
     entries++;
 
-    const stopDist = a * STOP_ATR;
-    const targetDist = a * TARGET_ATR;
-    const cost = entry * costFraction;
-    const stop = direction === "long" ? entry - stopDist : entry + stopDist;
-    // The target has to clear the round trip before it counts as a win —
-    // same rule as the plan backtest, for the same reason.
-    const target =
-      direction === "long" ? entry + targetDist + cost : entry - targetDist - cost;
+    // 結構化進出場：條件成立還不夠，還要有合理的結構停損可掛 —— live 的
+    // 計畫同樣會拒絕沒有結構保護的進場，實驗必須量同一種交易。
+    const levels = registerLevels(ctx, i, direction);
+    if (!levels) continue;
 
-    for (let j = i + 1; j <= i + HORIZON && j < ctx.candles.length; j++) {
-      const bar = ctx.candles[j];
-      const hitStop = direction === "long" ? bar.low <= stop : bar.high >= stop;
-      const hitTarget = direction === "long" ? bar.high >= target : bar.low <= target;
-      // Both in one bar: counted as a loss. Daily bars cannot order intrabar
-      // events, and the pessimistic read is the only honest one.
-      if (hitStop) {
-        losses++;
-        break;
-      }
-      if (hitTarget) {
-        wins++;
-        break;
-      }
-    }
+    const exit = walkManaged({
+      ctx,
+      direction,
+      firstBar: i + 1,
+      entry,
+      stop: levels.stop,
+      target: levels.target,
+      entryAtr: a,
+      horizon: HORIZON,
+      costFraction,
+    });
+    // The loop bound guarantees a full horizon of bars, so a null here is
+    // impossible in practice; guarded anyway so a short series cannot lie.
+    if (!exit) continue;
+    trades++;
+    sumR += exit.r;
+    if (exit.r > 0) wins++;
   }
 
-  const trades = wins + losses;
   const hitRate = trades > 0 ? wins / trades : null;
-  const winR = (TARGET_ATR * 1 - 0) / STOP_ATR;
   return {
     trades,
     wins,
     hitRate: hitRate === null ? null : Math.round(hitRate * 1000) / 1000,
-    expectancyR:
-      hitRate === null ? null : Math.round((hitRate * winR - (1 - hitRate)) * 100) / 100,
+    expectancyR: trades > 0 ? Math.round((sumR / trades) * 100) / 100 : null,
     entries,
     unresolved: entries - trades,
   };
@@ -193,7 +198,7 @@ export interface LabFinding {
   labels: string[];
   inSample: ConditionResult;
   outOfSample: ConditionResult;
-  /** Cleared the floor on BOTH halves with a real sample in each. */
+  /** Cleared both floors (expectancy and followability) on BOTH halves. */
   verified: boolean;
   /** Percentage points of hit rate over the unconditional baseline, in-sample. */
   lift: number | null;
@@ -225,6 +230,8 @@ export interface NearMiss extends LabFinding {
 
 /** A hit rate may miss the floor by at most this much to count as "near". */
 export const NEAR_HIT_RATE_MARGIN = 0.05;
+/** An expectancy may miss its floor by at most this much R to count as "near". */
+export const NEAR_EXPECTANCY_MARGIN = 0.2;
 /** A sample count must reach at least this share of its requirement. */
 export const NEAR_SAMPLE_SHARE = 0.7;
 
@@ -234,9 +241,10 @@ export const NEAR_SAMPLE_SHARE = 0.7;
  *
  * The reported lists already guarantee 100+ in-sample trades (the search
  * drops anything below the floor before it can be reported), so the criteria
- * that can be short here are the two hit rates and the out-of-sample count.
- * The count genuinely improves with the calendar — every new D1 bar lands in
- * the newest 30% — which is what makes "wait" a meaningful instruction.
+ * that can be short here are the two expectancies, the two hit rates and the
+ * out-of-sample count. The count genuinely improves with the calendar —
+ * every new D1 bar lands in the newest 30% — which is what makes "wait" a
+ * meaningful instruction.
  */
 export function shortfallsOf(f: LabFinding, floor: number): string[] | null {
   if (f.verified) return null;
@@ -244,12 +252,19 @@ export function shortfallsOf(f: LabFinding, floor: number): string[] | null {
 
   for (const [half, result] of [["樣本內", f.inSample], ["樣本外", f.outOfSample]] as const) {
     const rate = result.hitRate;
-    if (rate === null) return null;
+    const exp = result.expectancyR;
+    if (rate === null || exp === null) return null;
     if (rate < floor) {
       if (rate < floor - NEAR_HIT_RATE_MARGIN) return null;
       // The epsilon absorbs float dust: 0.8 − 0.77 is 0.030000…027 in IEEE754,
       // and a bare ceil would report a 3-point gap as 4.
       out.push(`${half}勝率 ${Math.round(rate * 100)}%，差 ${Math.ceil((floor - rate) * 100 - 1e-9)} 個百分點`);
+    }
+    if (exp < LAB_MIN_EXPECTANCY_R) {
+      if (exp < LAB_MIN_EXPECTANCY_R - NEAR_EXPECTANCY_MARGIN) return null;
+      out.push(
+        `${half}期望值 ${exp >= 0 ? "+" : ""}${exp}R，差 ${Math.round((LAB_MIN_EXPECTANCY_R - exp) * 100) / 100}R`,
+      );
     }
   }
 
@@ -279,7 +294,10 @@ export interface LabReport {
   tested: number;
   /** Roughly how many of them would look good by luck alone. */
   expectedFalsePositives: number;
+  /** The followability (hit-rate) floor both halves must clear. */
   floor: number;
+  /** The expectancy floor both halves must clear, in R. */
+  minExpectancyR: number;
   costPct: number;
   bars: number;
   notes: string[];
@@ -347,7 +365,9 @@ export function runLab(
       inSample.trades >= MIN_SAMPLE &&
       outOfSample.trades >= MIN_OUT_OF_SAMPLE &&
       (inSample.hitRate ?? 0) >= floor &&
-      (outOfSample.hitRate ?? 0) >= floor;
+      (outOfSample.hitRate ?? 0) >= floor &&
+      (inSample.expectancyR ?? -Infinity) >= LAB_MIN_EXPECTANCY_R &&
+      (outOfSample.expectancyR ?? -Infinity) >= LAB_MIN_EXPECTANCY_R;
     const lift =
       inSample.hitRate !== null && baseline.inSample.hitRate !== null
         ? Math.round((inSample.hitRate - baseline.inSample.hitRate) * 1000) / 10
@@ -355,9 +375,12 @@ export function runLab(
     return { ids, labels: ids.map(label), inSample, outOfSample, verified, lift };
   };
 
+  // Ranked on expectancy — under managed exits that is the number that
+  // decides, with the hit rate shown beside it rather than doing the sorting.
+  const byExpectancy = (r: ConditionResult) => r.expectancyR ?? -999;
   const solo = CONDITIONS.map((c) => finding([c.id]))
     .filter((f) => f.inSample.trades >= MIN_SAMPLE)
-    .sort((a, b) => (b.inSample.hitRate ?? 0) - (a.inSample.hitRate ?? 0));
+    .sort((a, b) => byExpectancy(b.inSample) - byExpectancy(a.inSample));
 
   /**
    * Every pairing, then every survivor extended — no pre-selection.
@@ -425,13 +448,13 @@ export function runLab(
     frontier = next;
   }
 
-  combos.sort((a, b) => (b.inSample.hitRate ?? 0) - (a.inSample.hitRate ?? 0));
+  combos.sort((a, b) => byExpectancy(b.inSample) - byExpectancy(a.inSample));
   const pairs = combos;
 
   const tested = solo.length + pairs.length;
   const verified = [...solo, ...pairs]
     .filter((f) => f.verified)
-    .sort((a, b) => (b.outOfSample.hitRate ?? 0) - (a.outOfSample.hitRate ?? 0));
+    .sort((a, b) => byExpectancy(b.outOfSample) - byExpectancy(a.outOfSample));
 
   // 接近通過 — capped, because with ~2,000 hypotheses the band just under the
   // floor is exactly where the luckiest non-discoveries pile up, and a long
@@ -442,7 +465,7 @@ export function runLab(
       return shortfalls ? { ...f, shortfalls } : null;
     })
     .filter((f): f is NearMiss => f !== null)
-    .sort((a, b) => (b.outOfSample.hitRate ?? 0) - (a.outOfSample.hitRate ?? 0))
+    .sort((a, b) => byExpectancy(b.outOfSample) - byExpectancy(a.outOfSample))
     .slice(0, 6);
 
   const notes: string[] = [];
@@ -469,24 +492,31 @@ export function runLab(
     );
   }
   notes.push(
+    `出場不再是固定 R：停損掛在已確認 swing 外 0.5×ATR、停利掛在最近的上方壓力（swing high 或 20 根區間高點），` +
+      `走出 1R 保本移停、新 swing 確認就把停損墊上去、出現反向 CHoCH（結構翻轉）以收盤離場，最多持有 ${HORIZON} 根後以市價結算。` +
+      `這和 live 交易計畫與監控用的是同一套規則。基本面與新聞的看法改變無法重播歷史（沒有逐 bar 的新聞檔案），` +
+      `所以「看法改變」在回測裡只有結構這種可驗證的形式 —— live 監控才處理其餘的。`,
+  );
+  notes.push(
     `通過門檻：樣本內至少 ${MIN_SAMPLE} 筆、樣本外至少 ${MIN_OUT_OF_SAMPLE} 筆（樣本外只有 30% 的資料，` +
-      `按同樣的發生率換算），且兩邊勝率都要達到 ${Math.round(floor * 100)}%。` +
+      `按同樣的發生率換算），兩邊期望值都要 ≥ +${LAB_MIN_EXPECTANCY_R}R（舊制 80% × 1:1.5 換算成 R 的同一條線），` +
+      `且兩邊勝率都要 ≥ ${Math.round(floor * 100)}%（可跟性下限 —— 期望值再高，輸太頻繁也拿不住）。` +
       `條件愈疊愈多，符合的 K 棒就愈少 —— 疊到樣本數不足的組合會在報告前就被剔除，` +
       `這正是防止「十一筆交易 100% 勝率」這種假發現的機制。`,
   );
-  // 結算率 — how much of the walk the hit rate is actually a statement about.
+  // 可交易率 — how many fires actually had structure to trade against.
   const entered = baseline.inSample.entries;
   const resolved = baseline.inSample.trades;
   notes.push(
-    `結算率：基準線在樣本內取了 ${entered} 次進場，其中 ${resolved} 筆在 ${HORIZON} 根 K 棒內` +
-      `觸及停損或停利（${entered > 0 ? Math.round((resolved / entered) * 100) : 0}%）。` +
-      `勝率只計算有結算的那些 —— 沒結算的既不是贏也不是輸，但它們也不是不存在。` +
-      `表格中的 n 是「結算筆數／進場次數」，兩個數字差距愈大，勝率描述的就愈只是「有走出去的那部分」。`,
+    `可交易率：基準線在樣本內有 ${entered} 根 K 棒可進場，其中 ${resolved} 筆找得到合理的結構停損並完整走完` +
+      `（${entered > 0 ? Math.round((resolved / entered) * 100) : 0}%）。` +
+      `找不到結構停損的那些沒有進場 —— live 的計畫同樣會拒絕它們，實驗量的是同一種交易。` +
+      `表格中的 n 是「成交筆數／符合條件次數」。`,
   );
   if (verified.length === 0) {
     notes.push(
       "本次沒有任何條件通過樣本外驗證。這是結論而不是失敗：代表在這段歷史上，" +
-        "這些條件沒有一個能穩定把勝率推過門檻，硬把樣本內最好的那個拿來用就是過度擬合。",
+        "這些條件沒有一個能穩定把期望值推過門檻，硬把樣本內最好的那個拿來用就是過度擬合。",
     );
   }
 
@@ -501,6 +531,7 @@ export function runLab(
     tested,
     expectedFalsePositives: Math.round(tested * 0.05),
     floor,
+    minExpectancyR: LAB_MIN_EXPECTANCY_R,
     costPct: Math.round(costFraction * 100 * 1000) / 1000,
     bars: candles.length,
     notes,

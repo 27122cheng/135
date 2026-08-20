@@ -57,21 +57,27 @@ function sameCombo(a: string[], b: string[]): boolean {
   return a.length === b.length && [...a].sort().join("+") === [...b].sort().join("+");
 }
 
+const fmtR = (r: number | null) => (r === null ? "—" : `${r >= 0 ? "+" : ""}${r}R`);
+
 function FindingRow({
   f,
   floor,
+  minExpectancyR,
   adopted,
   busy,
   onAdopt,
 }: {
   f: LabFinding;
   floor: number;
+  minExpectancyR: number;
   adopted: boolean;
   busy: boolean;
   onAdopt: (ids: string[]) => void;
 }) {
   const inRate = f.inSample.hitRate ?? 0;
   const outRate = f.outOfSample.hitRate ?? 0;
+  const inExp = f.inSample.expectancyR;
+  const outExp = f.outOfSample.expectancyR;
   return (
     <tr className="border-t border-neutral-800">
       <td className="py-2 pr-2">
@@ -103,28 +109,32 @@ function FindingRow({
       </td>
       <td
         className={`py-2 text-right font-mono text-[11px] ${
-          inRate >= floor ? "text-emerald-400" : "text-neutral-400"
+          inExp !== null && inExp >= minExpectancyR && inRate >= floor
+            ? "text-emerald-400"
+            : "text-neutral-400"
         }`}
       >
-        {pct(f.inSample.hitRate)}
+        {fmtR(inExp)}
         <span
           className="ml-1 text-[10px] text-neutral-600"
-          title={`${f.inSample.trades} 筆結算／${f.inSample.entries} 次進場（${f.inSample.unresolved} 筆在 20 根內未觸及停損停利）`}
+          title={`勝率 ${pct(f.inSample.hitRate)}．${f.inSample.trades} 筆成交／${f.inSample.entries} 次符合（${f.inSample.unresolved} 次沒有合理結構停損可掛）`}
         >
-          n={f.inSample.trades}/{f.inSample.entries}
+          {pct(f.inSample.hitRate)}·n={f.inSample.trades}/{f.inSample.entries}
         </span>
       </td>
       <td
         className={`py-2 text-right font-mono text-[11px] ${
-          outRate >= floor ? "text-emerald-400" : "text-red-400/70"
+          outExp !== null && outExp >= minExpectancyR && outRate >= floor
+            ? "text-emerald-400"
+            : "text-red-400/70"
         }`}
       >
-        {pct(f.outOfSample.hitRate)}
+        {fmtR(outExp)}
         <span
           className="ml-1 text-[10px] text-neutral-600"
-          title={`${f.outOfSample.trades} 筆結算／${f.outOfSample.entries} 次進場`}
+          title={`勝率 ${pct(f.outOfSample.hitRate)}．${f.outOfSample.trades} 筆成交／${f.outOfSample.entries} 次符合`}
         >
-          n={f.outOfSample.trades}/{f.outOfSample.entries}
+          {pct(f.outOfSample.hitRate)}·n={f.outOfSample.trades}/{f.outOfSample.entries}
         </span>
       </td>
       <td
@@ -141,12 +151,14 @@ function FindingRow({
 function Table({
   rows,
   floor,
+  minExpectancyR,
   adoptedIds,
   busy,
   onAdopt,
 }: {
   rows: LabFinding[];
   floor: number;
+  minExpectancyR: number;
   adoptedIds: string[] | null;
   busy: boolean;
   onAdopt: (ids: string[]) => void;
@@ -160,8 +172,8 @@ function Table({
         <thead>
           <tr className="text-left text-[10px] text-neutral-600">
             <th className="py-1 font-normal">條件</th>
-            <th className="py-1 text-right font-normal">樣本內勝率</th>
-            <th className="py-1 text-right font-normal">樣本外勝率</th>
+            <th className="py-1 text-right font-normal">樣本內期望值</th>
+            <th className="py-1 text-right font-normal">樣本外期望值</th>
             <th className="py-1 text-right font-normal">相對基準</th>
           </tr>
         </thead>
@@ -171,6 +183,7 @@ function Table({
               key={f.ids.join("+")}
               f={f}
               floor={floor}
+              minExpectancyR={minExpectancyR}
               adopted={adoptedIds !== null && sameCombo(adoptedIds, f.ids)}
               busy={busy}
               onAdopt={onAdopt}
@@ -315,7 +328,9 @@ export default function LabPage() {
         <span className="text-neutral-300">前進實驗</span>讓每個條件從今天起各自下單、各自結算，事前登記、事後不能改；
         <span className="text-neutral-300">回測</span>則把同一套條件放到十年日線上重跑一次，先單獨測，
         表現勝過基準的再層層疊加（兩個、三個、四個都試），全部扣掉交易成本。
-        採用標準：<span className="text-neutral-300">樣本數 ≥100 筆、勝率 ≥80%</span>，
+        每一筆實驗交易都用和 live 相同的結構管理：停損掛在已確認 swing 外、停利掛在最近壓力、
+        走出 1R 保本移停、新 swing 確認就墊高停損、結構翻轉（反向 CHoCH）就出場 —— 不是固定 R。
+        採用標準：<span className="text-neutral-300">樣本數 ≥100 筆、期望值 ≥ +1R、勝率 ≥55%</span>，
         而且只用最舊的 70% 歷史搜尋 —— 最新的 30% 完全不參與搜尋，只用來驗證，兩邊都要達標。
       </p>
 
@@ -460,9 +475,10 @@ export default function LabPage() {
           </button>
         </div>
         <p className="mb-2 text-[10px] leading-relaxed text-neutral-500">
-          每個條件<span className="text-neutral-300">各自獨立</span>下單：條件成立就以當根收盤價進場，
-          停損 1×ATR、停利 1.5×ATR、最多持有 20 根，同一個條件同時只留一筆未結倉。
-          進出場條件在開倉當下就寫進資料庫，之後只能結算、不能修改 ——
+          每個條件<span className="text-neutral-300">各自獨立</span>下單：條件成立且掛得出合理的結構停損，
+          就以當根收盤價進場 —— 停損在已確認 swing 外 0.5×ATR、停利在最近壓力（沒有壓力就不設，靠移動停損出場）、
+          走出 1R 保本移停、新 swing 墊高停損、反向 CHoCH 出場，最多持有 20 根後以市價結算。
+          進場價與初始停損停利在開倉當下就寫進資料庫，之後只能結算、不能修改 ——
           這是<span className="text-neutral-300">事前登記</span>，和回測「事後翻歷史」是兩件事。
           每 4 小時的自動掃描會推進一次。
         </p>
@@ -473,7 +489,7 @@ export default function LabPage() {
               <thead>
                 <tr className="text-left text-[10px] text-neutral-600">
                   <th className="py-1 font-normal">條件</th>
-                  <th className="py-1 text-right font-normal">前進勝率</th>
+                  <th className="py-1 text-right font-normal">前進期望值</th>
                   <th className="py-1 text-right font-normal">勝／敗</th>
                   <th className="py-1 text-right font-normal">逾時</th>
                   <th className="py-1 text-right font-normal">進行中</th>
@@ -485,15 +501,17 @@ export default function LabPage() {
                     <td className="py-1.5 pr-2 text-[11px] text-neutral-300">{s.label}</td>
                     <td
                       className={`py-1.5 text-right font-mono text-[11px] ${
-                        s.hitRate === null
+                        s.expectancyR === null
                           ? "text-neutral-600"
-                          : s.hitRate >= 0.8
+                          : s.expectancyR > 0
                             ? "text-emerald-400"
                             : "text-neutral-400"
                       }`}
                     >
-                      {pct(s.hitRate)}
-                      <span className="ml-1 text-[10px] text-neutral-600">n={s.resolved}</span>
+                      {s.expectancyR === null ? "—" : `${s.expectancyR >= 0 ? "+" : ""}${s.expectancyR}R`}
+                      <span className="ml-1 text-[10px] text-neutral-600">
+                        {pct(s.hitRate)}·n={s.resolved}
+                      </span>
                     </td>
                     <td className="py-1.5 text-right font-mono text-[11px] text-neutral-500">
                       {s.wins}／{s.losses}
@@ -526,7 +544,8 @@ export default function LabPage() {
               {forward.recent.map((t) => (
                 <li key={t.id} className="font-mono text-[10px] text-neutral-500">
                   {t.entryBarTime.slice(0, 10)} {t.conditionId} {t.direction === "long" ? "多" : "空"}{" "}
-                  進 {t.entry.toFixed(2)} 損 {t.stop.toFixed(2)} 利 {t.target.toFixed(2)}{" "}
+                  進 {t.entry.toFixed(2)} 損 {t.stop.toFixed(2)} 利{" "}
+                  {t.target === null ? "無壓力・移動停損" : t.target.toFixed(2)}{" "}
                   <span
                     className={
                       t.status === "win"
@@ -539,10 +558,10 @@ export default function LabPage() {
                     {t.status === "open"
                       ? "進行中"
                       : t.status === "win"
-                        ? `停利（持有 ${t.barsHeld} 根）`
+                        ? `獲利出場 ${t.exitPrice?.toFixed(2)}（持有 ${t.barsHeld} 根）`
                         : t.status === "loss"
-                          ? `停損（持有 ${t.barsHeld} 根）`
-                          : `逾時出場 ${t.exitPrice?.toFixed(2)}`}
+                          ? `虧損出場 ${t.exitPrice?.toFixed(2)}（持有 ${t.barsHeld} 根）`
+                          : `逾時出場 ${t.exitPrice?.toFixed(2)}（舊制）`}
                   </span>
                 </li>
               ))}
@@ -584,12 +603,13 @@ export default function LabPage() {
                 </span>
               </span>
               <span className="text-neutral-600">
-                門檻 {pct(r.floor)}．已扣成本 {r.costPct}%．{r.bars} 根 K 棒
+                門檻 期望值 ≥ +{r.minExpectancyR}R、勝率 ≥{pct(r.floor)}．已扣成本 {r.costPct}%．{r.bars} 根 K 棒
               </span>
             </div>
             <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-600">
-              固定幾何：停損 1×ATR、停利 1.5×ATR、最多持有 20 根。
-              所有條件都用同一組幾何測，比較的才是「條件」而不是「條件配上剛好適合它的價位」。
+              結構管理式出場（和 live 相同）：停損掛已確認 swing 外 0.5×ATR、停利掛最近壓力、
+              1R 保本移停、新 swing 墊高停損、反向 CHoCH 出場，最多持有 20 根後以市價結算。
+              所有條件都用同一套管理規則測，比較的才是「條件」而不是「條件配上剛好適合它的出場」。
             </p>
           </section>
 
@@ -599,13 +619,14 @@ export default function LabPage() {
                 通過樣本外驗證（{r.verified.length}）
               </h2>
               <p className="mb-2 text-[10px] leading-relaxed text-neutral-400">
-                樣本內 ≥100 筆、樣本外 ≥43 筆，且兩邊勝率都達到 {pct(r.floor)}。
+                樣本內 ≥100 筆、樣本外 ≥43 筆，兩邊期望值都 ≥ +{r.minExpectancyR}R、勝率都 ≥{pct(r.floor)}。
                 這些是目前唯一有資格被納入交易條件的組合。按<span className="text-emerald-300">採用</span>
               就會生效 —— 伺服器會當場重跑一次驗證，通過才寫入。
               </p>
               <Table
                 rows={r.verified}
                 floor={r.floor}
+                minExpectancyR={r.minExpectancyR}
                 adoptedIds={adoptedIds}
                 busy={busy}
                 onAdopt={onAdopt}
@@ -615,7 +636,7 @@ export default function LabPage() {
             <section className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
               <h2 className="mb-1.5 text-xs font-medium text-amber-300">沒有條件通過驗證</h2>
               <p className="text-[11px] leading-relaxed text-amber-400/80">
-                這是結論，不是失敗。代表在這段歷史上，沒有任何條件或組合能穩定把勝率推過門檻 ——
+                這是結論，不是失敗。代表在這段歷史上，沒有任何條件或組合能穩定把期望值推過門檻 ——
                 硬把樣本內表現最好的那個拿來用，就是過度擬合，也正是多數策略上線後失效的原因。
               </p>
             </section>
@@ -638,7 +659,8 @@ export default function LabPage() {
                     <div className="flex flex-wrap items-baseline gap-x-2">
                       <span className="text-[11px] text-neutral-200">{f.labels.join(" ＋ ")}</span>
                       <span className="ml-auto font-mono text-[10px] text-neutral-500">
-                        內 {pct(f.inSample.hitRate)}／外 {pct(f.outOfSample.hitRate)}
+                        內 {fmtR(f.inSample.expectancyR)}·{pct(f.inSample.hitRate)}／外{" "}
+                        {fmtR(f.outOfSample.expectancyR)}·{pct(f.outOfSample.hitRate)}
                       </span>
                     </div>
                     <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
@@ -659,6 +681,7 @@ export default function LabPage() {
             <Table
               rows={r.solo}
               floor={r.floor}
+              minExpectancyR={r.minExpectancyR}
               adoptedIds={adoptedIds}
               busy={busy}
               onAdopt={onAdopt}
@@ -679,6 +702,7 @@ export default function LabPage() {
             <Table
               rows={r.pairs}
               floor={r.floor}
+              minExpectancyR={r.minExpectancyR}
               adoptedIds={adoptedIds}
               busy={busy}
               onAdopt={onAdopt}
@@ -694,8 +718,9 @@ export default function LabPage() {
                 </li>
               ))}
               <li className="text-[10px] leading-relaxed text-neutral-500">
-                · 測試的是「什麼時候進場」，不是「停損停利放哪裡」——
-                後者由結構決定，在別的地方處理。
+                · 停損停利由結構決定、和 live 同一套管理規則 —— 但「看法改變就出場」
+                在回測裡只有結構（反向 CHoCH）這種可驗證的形式；基本面與新聞的看法
+                改變沒有逐 bar 的歷史檔案可以重播，只有 live 監控在做。
               </li>
               <li className="text-[10px] leading-relaxed text-neutral-500">
                 · 一個商品的結果不能套用到另一個。外匯與原油的行為不同，

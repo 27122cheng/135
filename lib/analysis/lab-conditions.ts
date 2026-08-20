@@ -65,6 +65,17 @@ export interface LabContext {
   /** Price of the newest swing high confirmed at or before this bar; NaN before one exists. */
   swingHigh: number[];
   swingLow: number[];
+  /**
+   * The same confirmed pivots, but never "consumed" by a break.
+   *
+   * swingHigh/swingLow are BOS bookkeeping: once a close breaks the standing
+   * level it is set to NaN so the next break needs a new pivot. Right for
+   * detecting structure *events*, useless as a stop or target anchor — in a
+   * trend the broken side is NaN for most of the move. These carry the newest
+   * confirmed pivot unconditionally, for the managed exits.
+   */
+  anchorHigh: number[];
+  anchorLow: number[];
   /** True on the bar whose close broke the standing swing high / low. */
   bosUp: boolean[];
   bosDown: boolean[];
@@ -178,12 +189,16 @@ export function buildContext(candles: Candle[], only?: number[]): LabContext {
   // look-ahead — the single most common way a backtest of these ideas lies.
   const swingHigh = NaNs(n);
   const swingLow = NaNs(n);
+  const anchorHigh = NaNs(n);
+  const anchorLow = NaNs(n);
   const bosUp = falses(n);
   const bosDown = falses(n);
   const chochUp = falses(n);
   const chochDown = falses(n);
   let curHigh = NaN;
   let curLow = NaN;
+  let lastHigh = NaN;
+  let lastLow = NaN;
   let structDir = 0;
   for (let i = 0; i < n; i++) {
     const p = i - PIVOT;
@@ -194,11 +209,19 @@ export function buildContext(candles: Candle[], only?: number[]): LabContext {
         if (high[p] < high[p - k] || high[p] < high[p + k]) isHigh = false;
         if (low[p] > low[p - k] || low[p] > low[p + k]) isLow = false;
       }
-      if (isHigh) curHigh = high[p];
-      if (isLow) curLow = low[p];
+      if (isHigh) {
+        curHigh = high[p];
+        lastHigh = high[p];
+      }
+      if (isLow) {
+        curLow = low[p];
+        lastLow = low[p];
+      }
     }
     swingHigh[i] = curHigh;
     swingLow[i] = curLow;
+    anchorHigh[i] = lastHigh;
+    anchorLow[i] = lastLow;
 
     if (Number.isFinite(curHigh) && close[i] > curHigh) {
       bosUp[i] = true;
@@ -395,6 +418,8 @@ export function buildContext(candles: Candle[], only?: number[]): LabContext {
     er,
     swingHigh,
     swingLow,
+    anchorHigh,
+    anchorLow,
     bosUp,
     bosDown,
     chochUp,
