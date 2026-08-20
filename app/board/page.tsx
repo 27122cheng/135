@@ -157,12 +157,12 @@ function ReferenceLevels({ row }: { row: BoardRow }) {
     return (
       <p className="mt-2.5 text-[11px] leading-relaxed text-neutral-600">
         {/* Two floors, in order: the trade recommendation needs a combination
-            clearing its RR-scaled backtest floor (expectancy ≥ +0.75R — 70%
-            at 1:1.5, easing to the 55% absolute floor as the payoff improves);
-            參考價位 is the consolation tier at a flat ≥55%. A row with neither
-            failed BOTH — saying only "the 55% floor" made the two messages on
-            one row look like they disagreed about the rule. */}
-        無交易：交易建議的門檻（回測勝率與風報比連動，1:1.5 需 ≥70%、賠率越高要求越低，下限 55%）沒有組合通過，連較低的參考價位門檻（固定 ≥55%）也沒有 ——
+            whose *managed* backtest (breakeven, trailing, CHoCH exit — the
+            rules the monitor actually runs) shows expectancy ≥ +0.75R and a
+            hit rate ≥55%; 參考價位 is the consolation tier at a flat ≥55%. A
+            row with neither failed BOTH — saying only "the 55% floor" made
+            the two messages on one row look like they disagreed. */}
+        無交易：交易建議的門檻（實測期望值 ≥ +0.75R 且勝率 ≥55%，回測含實際的交易管理）沒有組合通過，連較低的參考價位門檻（勝率 ≥55%）也沒有 ——
         {row.referenceNote ? `${row.referenceNote}。` : "因此不提供任何價位。"}
       </p>
     );

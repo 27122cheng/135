@@ -4,7 +4,8 @@ import {
   SWING_PROFILE,
   REFERENCE_PROFILE,
   effectiveDayProfile,
-  requiredHitRate,
+  meetsProfileFloor,
+  profileHitFloor,
   buildTradePlan,
   selectSwingVariant,
 } from "@/lib/analysis/trade-plan";
@@ -23,10 +24,11 @@ import type { Candle } from "@/lib/data-sources/ohlcv";
  * plan, not a second monitored trade.
  */
 
-// A steady trend with real range: near and far targets both demonstrate the
-// operator's 70% floor, so both horizons genuinely qualify.
+// A steady trend with real range, steep enough that the managed walk (with
+// its breakeven scratches) still banks the moves: both horizons demonstrate
+// the expectancy floor, so both genuinely qualify.
 const candles: Candle[] = Array.from({ length: 400 }, (_, i) => {
-  const p = 53000 + i * 40 + Math.sin(i / 7) * 150;
+  const p = 53000 + i * 80 + Math.sin(i / 7) * 150;
   return {
     time: new Date(Date.UTC(2025, 0, 1 + i)).toISOString(),
     open: p,
@@ -50,7 +52,7 @@ const base = {
   total_score: 13,
   gradeForcesWait: false,
   candles,
-  atr: 500,
+  atr: 700,
 };
 
 async function main() {
@@ -70,35 +72,37 @@ async function main() {
       { DAY_PROFILE, SWING_PROFILE });
   }
 
-  // ── the floor scales with the payoff ────────────────────────────
+  // ── the floor measures the managed trade directly ───────────────
   //
   // The flat 70% was the reason Telegram went silent: it refused a
   // demonstrated 58% at 1:2.51 (+1.04R per trade) while passing 70% at 1:1.5
-  // (+0.75R). The RR-aware floor keeps the operator's exact bar at the
-  // minimum payoff and lets better payoffs qualify with fewer wins.
+  // (+0.75R). The floor now reads the expectancy straight off the managed
+  // backtest — the walk applies the same breakeven/trailing/flip rules the
+  // monitor runs live — with a 55% followability leg beside it.
   {
-    check("at the 1:1.5 minimum payoff the bar is still exactly 70%",
-      requiredHitRate(DAY_PROFILE, 1.5) === 0.7, requiredHitRate(DAY_PROFILE, 1.5));
-    check("at 1:2 it eases to ~58%",
-      Math.abs(requiredHitRate(DAY_PROFILE, 2) - 7 / 12) < 1e-3,
-      requiredHitRate(DAY_PROFILE, 2));
-    check("the 58% @ 1:2.51 that Telegram never saw now clears",
-      0.58 >= requiredHitRate(DAY_PROFILE, 2.51), requiredHitRate(DAY_PROFILE, 2.51));
-    check("the absolute 55% floor never relaxes, whatever the payoff",
-      requiredHitRate(DAY_PROFILE, 10) === 0.55, requiredHitRate(DAY_PROFILE, 10));
-    check("the reference tier stays a flat 55%",
-      requiredHitRate(REFERENCE_PROFILE, 1.5) === 0.55 &&
-      requiredHitRate(REFERENCE_PROFILE, 5) === 0.55,
+    check("the 58%/+1.04R that Telegram never saw now clears",
+      meetsProfileFloor(DAY_PROFILE, { hitRate: 0.58, expectancyR: 1.04 }));
+    check("the old 70%-at-1:1.5 bar still clears (it is +0.75R)",
+      meetsProfileFloor(DAY_PROFILE, { hitRate: 0.7, expectancyR: 0.75 }));
+    check("expectancy below +0.75R is refused whatever the hit rate",
+      !meetsProfileFloor(DAY_PROFILE, { hitRate: 0.9, expectancyR: 0.5 }));
+    check("a hit rate below 55% is refused whatever it pays",
+      !meetsProfileFloor(DAY_PROFILE, { hitRate: 0.4, expectancyR: 2 }));
+    check("an unmeasured combo is refused, not excused",
+      !meetsProfileFloor(DAY_PROFILE, { hitRate: null, expectancyR: null }));
+    check("the reference tier is a flat 55% with no expectancy leg",
+      meetsProfileFloor(REFERENCE_PROFILE, { hitRate: 0.55, expectancyR: -0.2 }) &&
+      !meetsProfileFloor(REFERENCE_PROFILE, { hitRate: 0.54, expectancyR: 2 }),
       REFERENCE_PROFILE);
-    // 實績校準 raises the whole curve, not just the absolute floor.
+    // 實績校準 raises the followability leg; the cap keeps it below certainty.
     const bumped = effectiveDayProfile(0.1);
-    check("the calibration bump raises every threshold together",
-      requiredHitRate(bumped, 1.5) === 0.8 &&
-      Math.abs(requiredHitRate(bumped, 2.51) - 0.65) < 1e-9,
-      { at15: requiredHitRate(bumped, 1.5), at251: requiredHitRate(bumped, 2.51) });
+    check("the calibration bump raises the hit-rate leg",
+      profileHitFloor(bumped) === 0.65 &&
+      !meetsProfileFloor(bumped, { hitRate: 0.6, expectancyR: 1.5 }),
+      profileHitFloor(bumped));
     check("and caps below certainty",
-      requiredHitRate(effectiveDayProfile(0.2), 1.5) === 0.9,
-      requiredHitRate(effectiveDayProfile(0.2), 1.5));
+      profileHitFloor({ ...DAY_PROFILE, hitRateBump: 0.5 }) === 0.9,
+      profileHitFloor({ ...DAY_PROFILE, hitRateBump: 0.5 }));
   }
 
   // ── the swing may reach what the day plan excludes ──────────────
@@ -106,23 +110,23 @@ async function main() {
     const menu = {
       ...base,
       entryCandidates: [{ price: LAST, label: "現價" }],
-      slCandidates: [{ price: LAST - 400, label: "結構外" }],
+      slCandidates: [{ price: LAST - 800, label: "結構外" }],
       tpCandidates: [
-        { price: LAST + 600, label: "近的前高" }, // 1.2×ATR — day territory
-        { price: LAST + 1200, label: "遠的前高" }, // 2.4×ATR — swing only
+        { price: LAST + 1200, label: "近的前高" }, // ~1.7×ATR — day territory
+        { price: LAST + 2400, label: "遠的前高" }, // ~3.4×ATR — swing only
       ],
     };
     const day = await buildTradePlan(menu, []);
     check("the day plan stays inside its horizon",
-      day.stance === "enter" && Math.abs((day.take_profit ?? 0) - (LAST + 600)) < 0.01,
+      day.stance === "enter" && Math.abs((day.take_profit ?? 0) - (LAST + 1200)) < 0.01,
       [day.stance, day.take_profit]);
 
     const swing = selectSwingVariant(menu);
     check("a swing variant exists", swing !== null, swing);
     check("it reaches the target the day plan excluded",
-      Math.abs((swing?.take_profit ?? 0) - (LAST + 1200)) < 0.01, swing?.take_profit);
+      Math.abs((swing?.take_profit ?? 0) - (LAST + 2400)) < 0.01, swing?.take_profit);
     check("it carries its own hit rate", swing?.hit_rate != null, swing);
-    check("and names the 70% floor", swing?.summary.includes("70%") === true, swing?.summary);
+    check("and names the expectancy floor", swing?.summary.includes("0.75R") === true, swing?.summary);
   }
 
   // ── the alert carries both, and says which one is tracked ───────

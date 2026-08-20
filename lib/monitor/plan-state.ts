@@ -19,6 +19,7 @@ export type PlanState =
   | "added"        // at least one add-on level reached
   | "stop_hit"
   | "target_hit"
+  | "structure_exit" // closed at market on an opposite structure break
   | "invalidated"; // the plan is no longer the current recommendation
 
 export interface MonitorMemory {
@@ -42,10 +43,23 @@ export interface MonitorInput {
   /** How stale the price is, in minutes — reported, never hidden. */
   priceAgeMinutes: number;
   memory: MonitorMemory;
+  /**
+   * 結構式管理 — what the daily structure currently says, computed by the
+   * caller from D1 candles (the same anchors the lab's exit engine uses).
+   * Optional: without it the plan is managed exactly as before (levels +
+   * breakeven), so a candle outage degrades the management, never the
+   * level-watching.
+   */
+  structure?: {
+    /** Suggested trailing stop (structure ± buffer), or null when none. */
+    trailStop: number | null;
+    /** An opposite CHoCH confirmed on the newest completed D1 bar. */
+    flipped: boolean;
+  } | null;
 }
 
 export interface MonitorEvent {
-  kind: "entered" | "add_on" | "stop_moved" | "stop_hit" | "target_hit";
+  kind: "entered" | "add_on" | "stop_moved" | "stop_hit" | "target_hit" | "structure_exit";
   headline: string;
   detail: string;
   /** The stop that should now be in force, when this event changes it. */
@@ -101,7 +115,11 @@ export function advancePlan(input: MonitorInput): MonitorResult {
   const events: MonitorEvent[] = [];
 
   // Terminal states stay terminal until a new plan replaces the row.
-  if (memory.state === "stop_hit" || memory.state === "target_hit") {
+  if (
+    memory.state === "stop_hit" ||
+    memory.state === "target_hit" ||
+    memory.state === "structure_exit"
+  ) {
     return { memory, events };
   }
   if (plan.stance !== "enter" || plan.entry === null || plan.stop_loss === null) {
@@ -156,6 +174,30 @@ export function advancePlan(input: MonitorInput): MonitorResult {
     };
   }
 
+  // 看法改變就出場 — an opposite CHoCH on the daily structure closes the
+  // position at the market. Same rule the lab's exit engine applies, so the
+  // live trade and the measured trade are the same trade. Checked after the
+  // hard levels: a bar that actually ran through the stop reports the stop.
+  // Only while a position is open — a waiting plan has nothing to close, and
+  // the terminal check above makes this fire exactly once.
+  if ((state === "entered" || state === "added") && input.structure?.flipped) {
+    return {
+      memory: { state: "structure_exit", addOnsFilled, activeStop },
+      events: [
+        ...events,
+        {
+          kind: "structure_exit",
+          headline: "結構翻轉，出場",
+          detail:
+            `日線出現反向 CHoCH（結構翻轉），進場理由已不成立。` +
+            `以現價 ${fmt(price)} 出場，不等停損 ${fmt(activeStop)} —— ` +
+            `技術面看法改變時出場是管理規則的一部分，和回測量的是同一種交易。`,
+          newStop: null,
+        },
+      ],
+    };
+  }
+
   // 保本移停 — at 1R in favour, the stop moves to the entry.
   //
   // The single biggest driver of the stop-out rate is trades that travel well
@@ -188,6 +230,29 @@ export function advancePlan(input: MonitorInput): MonitorResult {
           `這筆交易從此最差是打平。代價是回檔到進場價會被洗出場，那是保本規則接受的成本。`,
         newStop: plan.entry,
       });
+    }
+  }
+
+  // 結構移停 — a newly confirmed swing on the daily chart steps the stop up
+  // behind it, the same trailing rule the lab's exit engine runs. Toward
+  // safety only, and never through the current price: a suggested stop on the
+  // wrong side of the market would manufacture an exit out of thin air.
+  if (state === "entered" || state === "added") {
+    const trail = input.structure?.trailStop;
+    if (trail != null && Number.isFinite(trail)) {
+      const improves =
+        direction === "long" ? trail > activeStop && trail < price : trail < activeStop && trail > price;
+      if (improves) {
+        activeStop = trail;
+        events.push({
+          kind: "stop_moved",
+          headline: "結構移停",
+          detail:
+            `日線確認了新的 swing 結構，停損上移到結構外 ${fmt(trail)} —— ` +
+            `跟著結構走的移動停損，和回測用的是同一條規則。`,
+          newStop: trail,
+        });
+      }
     }
   }
 

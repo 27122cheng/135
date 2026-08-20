@@ -20,16 +20,16 @@ async function main() {
   const gaps: string[] = [];
   delete process.env.ANTHROPIC_API_KEY;
 
-  // 1. Healthy grade, good payoff — but no candles, so the 70% floor cannot
-  // be demonstrated. 未達門檻一律觀望 applies to "unverifiable" too: a 70%
-  // that cannot be measured is not 70%.
+  // 1. Healthy grade, good payoff — but no candles, so the floor cannot be
+  // demonstrated. 未達門檻一律觀望 applies to "unverifiable" too: an
+  // expectancy that cannot be measured is not an expectancy.
   const p1 = await buildTradePlan(
     { ...base, grade: "A", bias_score: 6, entry_structure_score: 5, total_score: 11, gradeForcesWait: false },
     gaps,
   );
   console.log("1 stance:", p1.stance, "|", p1.summary.slice(0, 60));
   check("1 an unverifiable floor waits", p1.stance === "wait" && p1.entry === null, p1.summary);
-  check("1 and names the 70% rule", p1.summary.includes("70%"), p1.summary);
+  check("1 and names the expectancy floor", p1.summary.includes("0.75R"), p1.summary);
 
   // 2. no-trade grade -> must be wait, with a wait_for.
   const p2 = await buildTradePlan(
@@ -127,9 +127,11 @@ async function main() {
 
   // ── the floor is passable, not decorative ────────────────────────
   //
-  // A steady trend where the near target genuinely resolves first almost
-  // every time: the same rules that refuse everything above must let this
-  // one through, or 70% is not a floor but a shutdown.
+  // A steady trend with a stop outside the daily noise: the same rules that
+  // refuse everything above must let this one through, or the floor is not a
+  // floor but a shutdown. (A sub-ATR stop here would fail honestly — the
+  // managed walk scratches it at breakeven over and over, exactly as the
+  // monitor would live.)
   {
     const trend = Array.from({ length: 400 }, (_, i) => {
       const p = 53000 + i * 40 + Math.sin(i / 7) * 150;
@@ -146,14 +148,14 @@ async function main() {
         bias_score: 6, entry_structure_score: 5, total_score: 11,
         gradeForcesWait: false,
         entryCandidates: [{ price: last, label: "現價" }],
-        slCandidates: [{ price: last - 400, label: "結構外" }],
-        tpCandidates: [{ price: last + 600, label: "前高" }],
+        slCandidates: [{ price: last - 800, label: "結構外" }],
+        tpCandidates: [{ price: last + 1200, label: "前高" }],
         candles: trend,
-        atr: 500,
+        atr: 700,
       },
       gaps,
     );
-    check("a demonstrated 70%+ geometry still enters", p.stance === "enter", p.summary);
+    check("a demonstrated managed edge still enters", p.stance === "enter", p.summary);
     check("at the operator's minimum payoff or better", (p.risk_reward ?? 0) >= 1.5,
       p.risk_reward);
   }

@@ -2,16 +2,25 @@ import type { Candle } from "../data-sources/ohlcv";
 import { COMMODITIES } from "@/types/signal";
 import { totalCostFraction, tradingCostFor } from "@/config/trading-costs";
 import { ema, macd, rsi } from "./indicators";
+import { buildContext, type LabContext } from "./lab-conditions";
+import { walkManaged } from "./lab-manage";
 
 /**
  * Empirical check on a plan's stop/target geometry, computed locally from the
  * instrument's own historical candles — no AI, no extra API call.
  *
- * What it answers: "with a stop this far away and a target this far away, how
- * often has price historically reached the target before the stop?" It walks
- * every past bar, assumes an entry at that close in the signal's direction,
- * places the stop and target at the *same relative distances* as the current
- * plan, and steps forward until one is touched.
+ * What it answers: "with a stop this far away and a target this far away,
+ * managed the way this system actually manages a position, what has this
+ * trade historically returned?" It walks every past bar, assumes an entry at
+ * that close in the signal's direction, places the stop and target at the
+ * *same relative distances* as the current plan, and then runs the shared
+ * exit engine (lib/analysis/lab-manage.ts): breakeven at 1R, the stop
+ * trailed behind newly confirmed swings, exit on an opposite CHoCH, closed
+ * at the market at the horizon. The monitor applies those same rules to the
+ * live position, so the measured number describes the trade that will
+ * actually be taken — a static walk was measuring a trade nobody runs, and
+ * failing plans the management would have scratched at breakeven instead of
+ * losing.
  *
  * ## Conditioned on the regime
  *
@@ -54,18 +63,19 @@ import { ema, macd, rsi } from "./indicators";
  */
 
 export interface PlanBacktest {
-  /** Bars where the trade resolved (target or stop touched). */
+  /** Sampled trades that ran to an exit (managed trades always do). */
   resolved: number;
+  /** Trades whose net R was positive. */
   wins: number;
   losses: number;
-  /** Neither level touched inside the horizon. */
+  /** Always 0 under managed exits (the horizon closes at the market). */
   timeouts: number;
   /** wins / resolved, 0..1. Null when nothing resolved. */
   hitRate: number | null;
   /**
-   * Expected value per unit of risk, net of trading cost:
-   * hitRate × (target−cost)/risk − (1 − hitRate) × (risk+cost)/risk.
-   * Positive means the geometry has been historically worth taking.
+   * Mean R per trade, net of trading cost, measured on the managed walk —
+   * the number the floors compare. Positive means the geometry, managed the
+   * way the monitor manages it, has been historically worth taking.
    */
   expectancyR: number | null;
   horizonBars: number;
@@ -106,6 +116,22 @@ interface RegimeSeries {
 }
 
 const regimeCache = new WeakMap<Candle[], RegimeSeries>();
+
+/**
+ * The managed walk needs the full structure context (swings, CHoCH, ATR).
+ * Cached per candles array because the geometry search backtests dozens of
+ * combinations against the same history and the context is identical for all
+ * of them.
+ */
+const labCtxCache = new WeakMap<Candle[], LabContext>();
+
+function labCtxOf(candles: Candle[]): LabContext {
+  const cached = labCtxCache.get(candles);
+  if (cached) return cached;
+  const built = buildContext(candles);
+  labCtxCache.set(candles, built);
+  return built;
+}
 
 function regimeOf(candles: Candle[]): RegimeSeries {
   const cached = regimeCache.get(candles);
@@ -228,9 +254,10 @@ function walk(
   // recommended.
   if (tpPct <= costFraction) return null;
 
+  const ctx = labCtxOf(candles);
   let wins = 0;
   let losses = 0;
-  let timeouts = 0;
+  let sumR = 0;
   let hadAmbiguousBars = false;
   let sampled = 0;
 
@@ -245,73 +272,67 @@ function walk(
       if (i < 50) continue;
       if (!tier.accept(i, e)) continue;
     }
+    // The trailing buffer is measured in the entry bar's ATR; a bar without
+    // one cannot be managed the way the live trade will be, so it is skipped
+    // rather than simulated under different rules.
+    const a = ctx.atr[i];
+    if (a === null || !(a > 0)) continue;
     sampled++;
-    // The stop triggers where it was placed — cost does not move a market
-    // order's trigger — but the target must be cleared by the round trip's
-    // worth before the trade is actually worth its stated reward. Charging
-    // the cost on the target side is what turns a gross touch into a net win.
+
     const slLevel = direction === "long" ? e * (1 - slPct) : e * (1 + slPct);
-    const tpLevel =
-      direction === "long"
-        ? e * (1 + tpPct + costFraction)
-        : e * (1 - tpPct - costFraction);
-
-    let settled = false;
-    for (let j = i + 1; j <= i + horizonBars; j++) {
-      const bar = candles[j];
-      const hitSl = direction === "long" ? bar.low <= slLevel : bar.high >= slLevel;
-      const hitTp = direction === "long" ? bar.high >= tpLevel : bar.low <= tpLevel;
-
-      if (hitSl && hitTp) {
-        // Daily bars don't record intrabar order, so we can't know which came
-        // first. Count it as a loss — the pessimistic read — rather than
-        // inflating the hit rate with a coin flip.
-        hadAmbiguousBars = true;
-        losses++;
-        settled = true;
-        break;
-      }
-      if (hitSl) {
-        losses++;
-        settled = true;
-        break;
-      }
-      if (hitTp) {
-        wins++;
-        settled = true;
-        break;
-      }
+    const tpLevel = direction === "long" ? e * (1 + tpPct) : e * (1 - tpPct);
+    // The shared exit engine: breakeven at 1R, structure trailing, opposite
+    // CHoCH exit, market close at the horizon, stop-first pessimism inside
+    // each bar, cost charged against every exit. Identical to what the
+    // monitor runs on the live position and what the lab measures.
+    const exit = walkManaged({
+      ctx,
+      direction,
+      firstBar: i + 1,
+      entry: e,
+      stop: slLevel,
+      target: tpLevel,
+      entryAtr: a,
+      horizon: horizonBars,
+      costFraction,
+    });
+    if (!exit) continue;
+    // Both levels inside one bar still resolves pessimistically (the walk
+    // checks the stop first); flag it so the caveat can be shown.
+    const firstBarOfTrade = candles[exit.exitIndex];
+    if (
+      exit.kind === "stop" &&
+      (direction === "long"
+        ? firstBarOfTrade.high >= tpLevel
+        : firstBarOfTrade.low <= tpLevel)
+    ) {
+      hadAmbiguousBars = true;
     }
-    if (!settled) timeouts++;
+    sumR += exit.r;
+    if (exit.r > 0) wins++;
+    else losses++;
   }
 
   const resolved = wins + losses;
   const hitRate = resolved > 0 ? wins / resolved : null;
-  // Expectancy in R, where R stays the *gross* risk so it is comparable with
-  // every other R in the system. A winner banks the target minus the round
-  // trip; a loser pays the stop plus it — costs hit both sides, and only
-  // charging the winners would flatter the same trade twice over.
-  const winR = (tpPct - costFraction) / slPct;
-  const lossR = (slPct + costFraction) / slPct;
-  const expectancyR =
-    hitRate === null
-      ? null
-      : Math.round((hitRate * winR - (1 - hitRate) * lossR) * 100) / 100;
 
   return {
     resolved,
     wins,
     losses,
-    timeouts,
+    // Managed trades always exit — at a level, on a flip, or at the market
+    // when the horizon runs out — so nothing can time out any more.
+    timeouts: 0,
     hitRate: hitRate === null ? null : Math.round(hitRate * 1000) / 1000,
-    expectancyR,
+    expectancyR: resolved > 0 ? Math.round((sumR / resolved) * 100) / 100 : null,
     horizonBars,
     lookbackBars: sampled,
     hadAmbiguousBars,
     conditioned: tier.conditioned,
     costPct: Math.round(costFraction * 100 * 1000) / 1000,
     basis:
-      `只取「${tier.label}」的 ${sampled} 根 K 棒為進場點，` +
-      `且已扣除來回交易成本 ${(costFraction * 100).toFixed(3)}%`,
+      `只取「${tier.label}」的 ${sampled} 根 K 棒為進場點，依實際執行的管理規則模擬` +
+      `（1R 保本、結構移停、反向 CHoCH 出場、逾時以市價結束），` +
+      `已扣除來回交易成本 ${(costFraction * 100).toFixed(3)}%`,
   };
 }

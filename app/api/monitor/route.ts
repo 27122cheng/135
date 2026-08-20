@@ -17,7 +17,48 @@ import {
 } from "@/lib/monitor/plan-state";
 import { recordResolvedPlan } from "@/lib/journal/auto-log";
 import { maybeSendWeeklyDigest } from "@/lib/notify/weekly-digest";
+import { fetchOHLCV } from "@/lib/data-sources/ohlcv";
+import { WARMUP, buildContext } from "@/lib/analysis/lab";
+import { STOP_BUFFER_ATR } from "@/lib/analysis/lab-manage";
 import type { SignalRow, TradePlan } from "@/types/signal";
+import type { CommodityMeta } from "@/types/signal";
+
+/**
+ * 結構式管理 — what the daily structure currently says about a held position.
+ *
+ * Computed from the same anchors the lab's exit engine and the plan backtest
+ * use, so the live position is managed by the very rules its numbers were
+ * measured under. Only fetched while a position is actually open: a waiting
+ * plan has nothing to trail and nothing to close, and the candles are served
+ * from the shared cache anyway.
+ */
+async function structureFor(
+  meta: CommodityMeta,
+  direction: "long" | "short",
+  gaps: string[],
+): Promise<{ trailStop: number | null; flipped: boolean } | null> {
+  try {
+    const d1 = await fetchOHLCV(meta, "D1", gaps);
+    const candles = d1?.candles;
+    if (!candles || candles.length <= WARMUP) return null;
+    const i = candles.length - 1;
+    const ctx = buildContext(candles, [i]);
+    const a = ctx.atr[i];
+    const anchor = direction === "long" ? ctx.anchorLow[i] : ctx.anchorHigh[i];
+    const trailStop =
+      a !== null && a > 0 && Number.isFinite(anchor)
+        ? direction === "long"
+          ? anchor - a * STOP_BUFFER_ATR
+          : anchor + a * STOP_BUFFER_ATR
+        : null;
+    const flipped = direction === "long" ? ctx.chochDown[i] : ctx.chochUp[i];
+    return { trailStop, flipped };
+  } catch {
+    // No structure read means no trailing this round — the levels and the
+    // breakeven rule still run, so an outage degrades, never blinds.
+    return null;
+  }
+}
 
 /**
  * The 參考價位 of a 觀望 signal, expressed as a plan the monitor can follow.
@@ -188,12 +229,21 @@ export async function GET(request: Request) {
         };
       }
 
+      // 結構式管理 only applies to an open position; a waiting plan is watched
+      // on its levels alone. Structure computed from D1 — the same anchors
+      // the backtest measured this plan under.
+      const structure =
+        memory.state === "entered" || memory.state === "added"
+          ? await structureFor(meta, tracked.direction, gaps)
+          : null;
+
       const { memory: next, events } = advancePlan({
         direction: tracked.direction,
         plan,
         price: quote.price,
         priceAgeMinutes: quote.ageMinutes,
         memory,
+        structure,
       });
 
       // No memory, no mouth. If this state cannot be persisted, the next
@@ -259,7 +309,9 @@ export async function GET(request: Request) {
       // classified, and the classification tightens how the next signal for
       // this symbol is built.
       let review: string | null = null;
-      const resolved = events.find((e) => e.kind === "stop_hit" || e.kind === "target_hit");
+      const resolved = events.find(
+        (e) => e.kind === "stop_hit" || e.kind === "target_hit" || e.kind === "structure_exit",
+      );
       if (resolved && plan.entry !== null && plan.stop_loss !== null && plan.take_profit !== null) {
         const logged = await recordResolvedPlan({
           store,
@@ -271,7 +323,12 @@ export async function GET(request: Request) {
           stopLoss: plan.stop_loss,
           takeProfit: plan.take_profit,
           exitPrice: quote.price,
-          outcome: resolved.kind === "target_hit" ? "target_hit" : "stop_hit",
+          outcome:
+            resolved.kind === "target_hit"
+              ? "target_hit"
+              : resolved.kind === "structure_exit"
+                ? "structure_exit"
+                : "stop_hit",
           paper,
           // Filled in below from this run's own release check — the releases
           // are ingested in the same pass, so "landed while we held" is

@@ -20,11 +20,12 @@ const r2 = backtestPlanGeometry("short", 100, 101, 98, up)!;
 console.log("uptrend short:", r2.wins, "W /", r2.losses, "L, hit", r2.hitRate);
 check("uptrend short should nearly always lose", r2.hitRate !== null && r2.hitRate < 0.05);
 
-// 3. Flat series with tiny range: nothing is touched -> all timeouts.
+// 3. Flat series with zero range: no ATR, so the managed walk cannot simulate
+// the trade the monitor would run — nothing is sampled, nothing is invented.
 const flat = bars(Array.from({ length: 200 }, () => 100));
 const r3 = backtestPlanGeometry("long", 100, 95, 105, flat)!;
-console.log("flat:", r3.wins, "W /", r3.losses, "L /", r3.timeouts, "T, hitRate", r3.hitRate);
-check("flat should time out", r3.resolved === 0 && r3.timeouts > 0);
+console.log("flat:", r3.wins, "W /", r3.losses, "L, hitRate", r3.hitRate);
+check("a rangeless series resolves nothing", r3.resolved === 0);
 check("no resolved -> null stats", r3.hitRate === null && r3.expectancyR === null);
 
 // 4. Bars wide enough to straddle both levels -> conservative loss + flag.

@@ -78,8 +78,8 @@ async function main() {
       [screened.stop_loss, screened.risk_reward]);
     check("and a target beyond the horizon too", screened.take_profit !== 54744,
       screened.take_profit);
-    check("the refusal names the 70% floor",
-      screened.stance === "wait" && screened.summary.includes("70%"), screened.summary);
+    check("the refusal names the expectancy floor",
+      screened.stance === "wait" && screened.summary.includes("0.75R"), screened.summary);
     check("the summary says what was excluded",
       screened.summary.includes("已排除"), screened.summary);
     check("naming the ATR screens",
@@ -118,9 +118,10 @@ async function main() {
       {
         ...menu,
         candles: trend,
+        atr: 700,
         entryCandidates: [{ price: last, label: "現價" }],
-        slCandidates: [{ price: last - 400, label: "結構外" }],
-        tpCandidates: [{ price: last + 600, label: "前高" }],
+        slCandidates: [{ price: last - 800, label: "結構外" }],
+        tpCandidates: [{ price: last + 1200, label: "前高" }],
       },
       gaps,
     );

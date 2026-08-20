@@ -44,7 +44,7 @@ export interface ResolveInput {
   stopLoss: number;
   takeProfit: number;
   exitPrice: number;
-  outcome: "stop_hit" | "target_hit";
+  outcome: "stop_hit" | "target_hit" | "structure_exit";
   /** True when these levels were 參考價位 rather than a recommended trade. */
   paper: boolean;
   /** A high-impact release landed while the position was open. */
@@ -90,9 +90,48 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
   const risk = Math.abs(entry - stopLoss);
   const move = signal.direction === "long" ? exitPrice - entry : entry - exitPrice;
   const pnlPct = entry > 0 ? Math.round((move / entry) * 10000) / 100 : 0;
-  const result: TradeResult = outcome === "target_hit" ? "win" : "loss";
+  // A structure exit closed at the market, not at a level: the result is
+  // whatever the price said, not what the exit kind implies.
+  const result: TradeResult =
+    outcome === "target_hit" ? "win" : outcome === "structure_exit" ? (move > 0 ? "win" : "loss") : "loss";
 
   const markers = paper ? `${AUTO_MARKER}${PAPER_MARKER}` : AUTO_MARKER;
+
+  if (outcome === "structure_exit") {
+    // Not a stop-out: the S1–S8 stop taxonomy classifies trades the market
+    // took out at a level, and forcing a market exit into it would teach the
+    // intervention engine the wrong lesson. Logged with the exit reason
+    // instead — the win/loss still counts toward the realized-rate audit.
+    try {
+      const written = await store.insertJournalEntry(
+        {
+          signal_id: signal.id,
+          symbol: signal.symbol,
+          direction: signal.direction,
+          grade: signal.grade,
+          entry_price: entry,
+          exit_price: exitPrice,
+          result,
+          pnl_pct: pnlPct,
+          closed_at: new Date().toISOString(),
+          stop_reason_tag: null,
+          review_note:
+            `${markers} 結構翻轉出場 ${exitPrice}（${result === "win" ? "獲利" : "虧損"} ${pnlPct}%），` +
+            `未觸及停損停利：日線出現反向 CHoCH，進場理由失效，依管理規則以市價出場。` +
+            (paper ? "此為參考價位的紙上追蹤，假設在價位上成交、無滑價與點差。" : ""),
+        },
+        null,
+      );
+      return { entry: written, tag: null, decidedBy: null, note: "結構翻轉出場，已記錄" };
+    } catch (err) {
+      return {
+        entry: null,
+        tag: null,
+        decidedBy: null,
+        note: `寫入交易日誌失敗：${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
 
   if (result === "win") {
     // Wins are logged without a review: `stop_reason_tag` is only meaningful on

@@ -47,10 +47,9 @@ export interface TradePlanInput {
    * intervention engine's comparison of realized outcomes against what the
    * floor promised. A backtest that promises 70% while the journal says 45%
    * is an optimistic backtest, and the honest response is to demand more
-   * margin from it, not to keep trusting the number. Applied on top of every
-   * RR-dependent threshold (see requiredHitRate) — an optimistic backtest is
-   * optimistic at every payoff. Only ever ≥ 0 — the floors the operator set
-   * are minimums, never relaxed from here.
+   * margin from it, not to keep trusting the number. Applied on top of the
+   * hit-rate floor (see profileHitFloor). Only ever ≥ 0 — the floors the
+   * operator set are minimums, never relaxed from here.
    */
   dayHitRateFloorBump?: number;
   /**
@@ -66,10 +65,8 @@ export interface TradePlanInput {
 export function effectiveDayProfile(bump: number | undefined): HorizonProfile {
   const extra = Math.max(0, Math.min(0.2, bump ?? 0));
   if (extra === 0) return DAY_PROFILE;
-  // Carried as its own field rather than added into minHitRate: the bump must
-  // raise the whole RR-dependent curve, not just the absolute floor — with the
-  // old shape a high-payoff combo whose requirement came from the expectancy
-  // term would have sailed under an audit that said the backtests lie.
+  // Carried as its own field rather than added into minHitRate, so the base
+  // floor and the audit's demand stay separately visible in every message.
   return { ...DAY_PROFILE, hitRateBump: extra };
 }
 
@@ -244,12 +241,11 @@ export interface HorizonProfile {
   /** Absolute hit-rate floor. No combination below this trades, whatever it pays. */
   minHitRate: number;
   /**
-   * When set, the floor is RR-aware: a combination must also demonstrate at
-   * least this expectancy per unit risk, which for a ratio `rr` means a hit
-   * rate ≥ (1 + minExpectancyR) / (1 + rr). See {@link requiredHitRate}.
+   * When set, a combination must also demonstrate at least this expectancy
+   * per unit risk on the managed backtest. See {@link meetsProfileFloor}.
    */
   minExpectancyR?: number;
-  /** 實績校準 — extra hit rate demanded on top of every threshold. Only ≥ 0. */
+  /** 實績校準 — extra hit rate demanded on top of the hit floor. Only ≥ 0. */
   hitRateBump?: number;
 }
 
@@ -257,18 +253,19 @@ export interface HorizonProfile {
  * The floors were the operator's flat numbers: 當沖/波段 70%, 參考價位 55%,
  * payoff ≥ 1.5R everywhere. The flat 70% turned out to be the reason the
  * scanner almost never traded and Telegram stayed silent — and it rejected the
- * wrong plans while doing it. 70% at the minimum payoff 1:1.5 is +0.75R per
- * trade; the floor refused a demonstrated 58% at 1:2.51, which is +1.04R —
- * *more* edge, blocked for having fewer (but larger) wins.
+ * wrong plans while doing it: 70% at the minimum payoff 1:1.5 is +0.75R per
+ * trade, and the floor refused a demonstrated 58% at 1:2.51 (+1.04R) — more
+ * edge, fewer wins.
  *
- * So the floor now demands what the 70% rule actually meant: the expectancy.
- * TRADE_MIN_EXPECTANCY_R keeps the bar exactly where the operator set it at
- * the minimum payoff — 1:1.5 still requires 70%, unchanged — and lets better
- * payoffs qualify with fewer wins (1:2 → 58%, 1:2.5+ → the 55% absolute
- * floor, which never relaxes: below 55% a plan whipsaws too often to follow,
- * whatever it pays). A floor that cannot be *demonstrated* — too little
- * history to backtest — still reads as unmet: an unverifiable rate is not a
- * rate.
+ * So the floor demands what the 70% rule actually meant — the expectancy,
+ * +0.75R per unit of risk. And since the backtest simulates the *managed*
+ * trade (breakeven at 1R, structure trailing, opposite-CHoCH exit — the same
+ * rules the monitor runs on the live position), the expectancy is measured
+ * directly instead of being derived from the payoff ratio. The hit-rate leg
+ * stays as an absolute followability floor: below 55% the losses come too
+ * often to sit through, whatever the arithmetic pays. A floor that cannot be
+ * *demonstrated* — too little history to backtest — still reads as unmet: an
+ * unverifiable rate is not a rate.
  */
 export const TRADE_MIN_EXPECTANCY_R = 0.75;
 export const DAY_PROFILE: HorizonProfile = {
@@ -278,8 +275,8 @@ export const DAY_PROFILE: HorizonProfile = {
   minExpectancyR: TRADE_MIN_EXPECTANCY_R,
 };
 // Same floor at the larger horizon — 「當沖及大時間框架的交易勝率都要70」 was
-// set when the floor was flat; the RR-aware form keeps that exact bar at the
-// minimum payoff for both horizons.
+// set when the floor was flat; the expectancy form keeps that bar's meaning
+// (+0.75R) for both horizons.
 export const SWING_PROFILE: HorizonProfile = {
   label: "波段",
   maxTargetAtr: 5,
@@ -296,32 +293,44 @@ export const REFERENCE_PROFILE: HorizonProfile = {
 };
 
 /**
- * The hit rate a combination must demonstrate, given its own risk/reward.
- *
- * `hitRate × rr − (1 − hitRate) ≥ E` solved for the hit rate is
- * `(1 + E) / (1 + rr)` — the expectancy floor expressed in the same unit the
- * backtest reports. The absolute floor wins when it is higher, the calibration
- * bump rides on top of whichever bound, and the whole thing caps at 90%:
- * demanding near-certainty is indistinguishable from a shutdown.
+ * The hit-rate leg of a profile's floor, with the calibration bump applied.
+ * Capped at 90%: demanding near-certainty is indistinguishable from a
+ * shutdown. Rounded so 0.55 + 0.1 prints as 65%, not 0.6499999….
  */
-export function requiredHitRate(profile: HorizonProfile, rr: number): number {
-  let floor = profile.minHitRate;
-  if (profile.minExpectancyR != null && rr > 0) {
-    floor = Math.max(floor, (1 + profile.minExpectancyR) / (1 + rr));
+export function profileHitFloor(profile: HorizonProfile): number {
+  return (
+    Math.round(Math.min(0.9, profile.minHitRate + Math.max(0, profile.hitRateBump ?? 0)) * 10000) /
+    10000
+  );
+}
+
+/**
+ * Whether a measured backtest clears a profile's floor.
+ *
+ * Both legs are read straight off the managed backtest — the walk already
+ * applies breakeven, structure trailing and the CHoCH exit, so the expectancy
+ * is the trade's real expectancy and needs no derivation from the ratio. The
+ * earlier RR-derived hit-rate requirement existed only because the old static
+ * walk reported binary ±rr outcomes; managed outcomes carry their own R.
+ */
+export function meetsProfileFloor(
+  profile: HorizonProfile,
+  bt: { hitRate: number | null; expectancyR: number | null },
+): boolean {
+  if ((bt.hitRate ?? 0) < profileHitFloor(profile)) return false;
+  if (profile.minExpectancyR != null && (bt.expectancyR ?? -Infinity) < profile.minExpectancyR) {
+    return false;
   }
-  // Rounded to 4 places so 0.7 + 0.1 is 0.8, not 0.7999999999999999 — this
-  // number is compared against reported hit rates and printed in refusals.
-  return Math.round(Math.min(0.9, floor + Math.max(0, profile.hitRateBump ?? 0)) * 10000) / 10000;
+  return true;
 }
 
 /** One sentence describing a profile's floor, shared by every refusal text. */
 export function floorText(profile: HorizonProfile): string {
-  const abs = Math.round(requiredHitRate(profile, Number.POSITIVE_INFINITY) * 100);
-  if (profile.minExpectancyR == null) return `回測勝率 ≥${abs}%`;
+  const hit = Math.round(profileHitFloor(profile) * 100);
+  if (profile.minExpectancyR == null) return `回測勝率 ≥${hit}%`;
   return (
-    `每單位風險期望 ≥ +${profile.minExpectancyR}R —— 風報比 1:1.5 需勝率 ≥${Math.round(
-      requiredHitRate(profile, 1.5) * 100,
-    )}%、1:2 需 ≥${Math.round(requiredHitRate(profile, 2) * 100)}%，賠率越高要求越低，絕對下限 ${abs}%`
+    `每單位風險期望 ≥ +${profile.minExpectancyR}R 且勝率 ≥${hit}%` +
+    `（回測含保本移停、結構移停與反向 CHoCH 出場，量的是實際執行的交易）`
   );
 }
 
@@ -506,15 +515,12 @@ function chooseGeometry(
 
   // Followability first, then expectancy. Ranking on expectancy alone is how a
   // 1:11 at a 15% hit rate wins: the arithmetic is positive and the plan is
-  // one nobody sits through. The floor each combination must clear scales with
-  // its own payoff (see requiredHitRate) — a flat rate here is how a 58% at
-  // 1:2.51 (+1.04R) got refused while a 70% at 1:1.5 (+0.75R) passed.
-  // Combinations that clear their floor are ranked among themselves; only if
-  // none does are the rest considered, and then the summary says the hit rate
-  // is low rather than quietly shipping it.
-  const followable = rankable.filter(
-    (c) => (c.backtest!.hitRate ?? 0) >= requiredHitRate(profile, c.rr),
-  );
+  // one nobody sits through. Both legs are measured on the managed walk —
+  // the same breakeven/trailing/flip rules the monitor runs live — so what
+  // the floor judges is the trade that will actually be taken. Combinations
+  // that clear it are ranked among themselves; only if none does are the rest
+  // considered, and then the summary says so rather than quietly shipping it.
+  const followable = rankable.filter((c) => meetsProfileFloor(profile, c.backtest!));
   const pool = followable.length > 0 ? followable : rankable;
   const lowHitRate = followable.length === 0;
 
@@ -528,21 +534,19 @@ function chooseGeometry(
 
   const bt = chosen.backtest!;
   const hitPct = Math.round((bt.hitRate ?? 0) * 100);
-  const reqPct = Math.round(requiredHitRate(profile, chosen.rr) * 100);
   const note =
     chosen === byRatio
       ? ""
       : `（賠率最高的一組是 1:${byRatio.rr}，但${lowHitRate ? "勝率或" : ""}本地回測期望值較低，未採用）`;
   const warn = lowHitRate
-    ? `⚠ 沒有任何組合的回測勝率達到自身門檻（${floorText(profile)}），本組已是可選中最高，` +
+    ? `⚠ 沒有任何組合通過門檻（${floorText(profile)}），本組已是可選中最高，` +
       `會經常停損，部位要放小。` +
       `（以 ${hitPct}% 勝率計，只要風報比高於 1:${breakevenRr(bt.hitRate ?? 0)} 就是正期望值）`
     : "";
   return {
     combo: chosen,
     basis:
-      `在 ${combos.length} 組真實結構組合中，先要求回測勝率 ≥ 門檻（${floorText(profile)}；` +
-      `本組風報比 1:${chosen.rr}，門檻 ${reqPct}%），` +
+      `在 ${combos.length} 組真實結構組合中，先要求實測通過門檻（${floorText(profile)}），` +
       `再取期望值最高者：${bt.resolved} 次中 ${bt.wins} 勝（勝率 ${hitPct}%），` +
       `每單位風險期望 ${bt.expectancyR}R，風報比 1:${chosen.rr}${note}${screen}${warn}`,
     meetsFloor: !lowHitRate,
@@ -660,15 +664,18 @@ function fallbackPlan(input: TradePlanInput, why: string | null): TradePlan {
   // when the calibration bump is active.
   if (!picked.meetsFloor) {
     const hit = picked.combo.backtest?.hitRate;
-    const req = Math.round(requiredHitRate(dayProfile, picked.combo.rr) * 100);
+    const exp = picked.combo.backtest?.expectancyR;
     const bumped =
       (dayProfile.hitRateBump ?? 0) > 0
-        ? `（含實績校準 +${Math.round((dayProfile.hitRateBump ?? 0) * 100)} 個百分點）`
+        ? `（含實績校準：勝率下限 +${Math.round((dayProfile.hitRateBump ?? 0) * 100)} 個百分點）`
         : "";
     return waitPlan(
-      `最佳組合${hit != null ? `回測勝率僅 ${Math.round(hit * 100)}%` : "的勝率無法以足夠樣本驗證"}，` +
-        `未達${dayProfile.label}門檻 —— 本組風報比 1:${picked.combo.rr} 需勝率 ≥${req}%${bumped}` +
-        `（門檻與風報比連動：${floorText(dayProfile)}）。規則：未達勝率門檻一律觀望。${picked.basis}`,
+      `最佳組合${
+        hit != null
+          ? `實測勝率 ${Math.round(hit * 100)}%、期望值 ${exp != null ? `${exp >= 0 ? "+" : ""}${exp}R` : "未知"}`
+          : "的表現無法以足夠樣本驗證"
+      }，未達${dayProfile.label}門檻${bumped}（${floorText(dayProfile)}）` +
+        ` —— 規則：未達門檻一律觀望。${picked.basis}`,
       `等待通過門檻的組合出現：${floorText(dayProfile)}，且風報比 ≥1:${MIN_RISK_REWARD}。`,
       "fallback",
       why,
@@ -852,17 +859,19 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
       : null;
   const aiHit = aiBacktest?.hitRate ?? null;
   const aiDayProfile = effectiveDayProfile(input.dayHitRateFloorBump);
-  const aiRequired = requiredHitRate(aiDayProfile, rr);
   if (
     aiBacktest === null ||
     aiBacktest.resolved < MIN_RESOLVED_FOR_RANKING ||
-    (aiHit ?? 0) < aiRequired
+    !meetsProfileFloor(aiDayProfile, aiBacktest)
   ) {
     gaps.push(
-      `AI 選出的組合回測勝率${aiHit != null ? `僅 ${Math.round(aiHit * 100)}%` : "無法驗證"}，` +
-        `未達其風報比 1:${rr} 對應的 ${Math.round(aiRequired * 100)}% 門檻，已改用預設規則`,
+      `AI 選出的組合實測${
+        aiHit != null
+          ? `勝率 ${Math.round(aiHit * 100)}%、期望值 ${aiBacktest?.expectancyR ?? "?"}R`
+          : "無法驗證"
+      }，未達門檻（${floorText(aiDayProfile)}），已改用預設規則`,
     );
-    return fallbackPlan(input, "AI 選出的組合未達勝率門檻，已改用預設規則");
+    return fallbackPlan(input, "AI 選出的組合未達門檻，已改用預設規則");
   }
 
   // Not taken from the model. `lib/analysis/confidence.ts` computes the number

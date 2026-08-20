@@ -123,6 +123,65 @@ import type { TradePlan } from "@/types/signal";
     waiting.events.every((e) => e.kind !== "stop_moved"), waiting.events);
 }
 
+// ── 結構式管理：移停與翻轉出場 ────────────────────────────────────
+{
+  const plan: TradePlan = {
+    stance: "enter",
+    entry: 100,
+    stop_loss: 96,
+    take_profit: 110,
+    entry_reason: "", stop_loss_reason: "", take_profit_reason: "",
+    risk_reward: 2.5, confidence: "medium", summary: "",
+    add_ons: [], wait_for: null, decided_by: "fallback",
+  };
+  const entered: MonitorMemory = { state: "entered", addOnsFilled: 0, activeStop: 96 };
+  const run = (
+    price: number,
+    memory: MonitorMemory,
+    structure: { trailStop: number | null; flipped: boolean } | null,
+  ) => advancePlan({ direction: "long", plan, price, priceAgeMinutes: 1, memory, structure });
+
+  // A newly confirmed swing steps the stop up behind it.
+  const trailed = run(103, entered, { trailStop: 98.5, flipped: false });
+  check("a confirmed swing trails the stop up", trailed.memory.activeStop === 98.5, trailed.memory);
+  check("announced as 結構移停",
+    trailed.events.some((e) => e.kind === "stop_moved" && e.detail.includes("結構")), trailed.events);
+
+  // Toward safety only — and never through the current price.
+  const backward = run(103, trailed.memory, { trailStop: 97, flipped: false });
+  check("a lower suggestion cannot drag the stop back",
+    backward.memory.activeStop === 98.5 && backward.events.length === 0, backward.memory);
+  const throughPrice = run(103, trailed.memory, { trailStop: 103.5, flipped: false });
+  check("a stop through the price is refused",
+    throughPrice.memory.activeStop === 98.5, throughPrice.memory);
+
+  // 看法改變就出場：反向 CHoCH 以現價收掉部位，一次就終結。
+  const flipped = run(103, entered, { trailStop: null, flipped: true });
+  check("an opposite CHoCH closes the position at the market",
+    flipped.memory.state === "structure_exit" &&
+    flipped.events.some((e) => e.kind === "structure_exit"),
+    flipped);
+  const again = run(102, flipped.memory, { trailStop: null, flipped: true });
+  check("and cannot fire twice", again.events.length === 0, again.events);
+
+  // A stop that was actually run through beats the flip — pessimistic order.
+  const stopFirst = run(95, entered, { trailStop: null, flipped: true });
+  check("a breached stop reports the stop, not the flip",
+    stopFirst.memory.state === "stop_hit", stopFirst.memory);
+
+  // A waiting plan has nothing to close: no flip exit, no trailing.
+  const waitingFlip = run(104, INITIAL_MEMORY, { trailStop: 99, flipped: true });
+  check("a plan that never filled ignores the structure",
+    waitingFlip.memory.state !== "structure_exit" &&
+    waitingFlip.events.every((e) => e.kind !== "structure_exit"),
+    waitingFlip);
+
+  // No structure read at all: exactly the old behaviour.
+  const noCtx = run(103, entered, null);
+  check("without a structure read the plan is managed as before",
+    noCtx.memory.activeStop === 96 && noCtx.events.length === 0, noCtx);
+}
+
 // ── 數據前警告 ────────────────────────────────────────────────────
 {
   // The first Friday of June 2026 is the 5th; NFP at 12:30 UTC.

@@ -37,7 +37,10 @@ function mixedMarket(): Candle[] {
 {
   const candles = mixedMarket();
   const last = candles[candles.length - 1].close;
-  const bt = backtestPlanGeometry("long", last, last - 400, last + 600, candles)!;
+  // A stop outside the daily noise (~1.5×ATR): with the managed walk a
+  // sub-ATR stop is a breakeven scratch machine, which is a lesson about
+  // stops, not about conditioning.
+  const bt = backtestPlanGeometry("long", last, last - 800, last + 1200, candles)!;
 
   check("the strongest tier answers when its sample suffices",
     bt.conditioned === true && bt.basis?.includes("MACD 同向") === true, bt.basis);
@@ -61,7 +64,7 @@ function mixedMarket(): Candle[] {
   // A short in the same market: its matching regime is the *first* half.
   const candles = mixedMarket();
   const last = candles[candles.length - 1].close;
-  const bt = backtestPlanGeometry("short", last, last + 400, last - 600, candles)!;
+  const bt = backtestPlanGeometry("short", last, last + 800, last - 1200, candles)!;
   check("the mirror direction conditions on its own regime",
     bt.basis?.includes("空頭") === true, bt.basis);
 }
@@ -73,7 +76,7 @@ function mixedMarket(): Candle[] {
   // here must say the stronger tiers were skipped for lack of samples.
   const candles = mixedMarket().slice(0, 300);
   const last = candles[candles.length - 1].close;
-  const bt = backtestPlanGeometry("long", last, last - 400, last + 600, candles);
+  const bt = backtestPlanGeometry("long", last, last - 800, last + 1200, candles);
   check("thin history still returns an answer rather than nothing", bt !== null, bt);
   if (bt && bt.resolved >= 30) {
     check("and says when stricter tiers lacked samples",

@@ -207,6 +207,16 @@ function DataGaps({ gaps }: { gaps: string[] }) {
         {other.length > 0 && (
           <div>
             <p className="mb-1.5 text-xs font-medium text-amber-300">本次取得失敗</p>
+            {/* The list below is auxiliary sources — witnesses, yields, the
+                calendar, AI narration. The tradable price has its own chain;
+                when THAT fails the whole card says 休市/停更 instead of a
+                bullet here. Without this line the section reads as "the price
+                itself was not fetched", which is the one thing it never means. */}
+            <p className="mb-1.5 text-[11px] leading-relaxed text-amber-300/50">
+              這裡列的是輔助資料來源（對照報價、殖利率、財經日曆、AI 敘述等）。
+              交易用的即時價格另有主鏈：若主鏈拿不到價，整張卡會標示休市或報價停更，
+              而不是出現在這份清單裡 —— 看到這份清單時，價格本身是有拿到的。
+            </p>
             <ul className="list-inside list-disc space-y-1 text-xs leading-relaxed text-amber-300/70">
               {other.map((g, i) => (
                 <li key={i}>{g}</li>
@@ -1230,9 +1240,9 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
                   used to quote 70% and 55% without saying they belong to
                   different tiers, which read as the site contradicting itself. */}
               這個方向上有兩層門檻，都沒有組合通過：
-              <span className="text-neutral-400">交易建議</span>要求歷史回測勝率達到與風報比連動的門檻
-              （每單位風險期望 ≥ +0.75R：1:1.5 需 ≥70%、1:2 需 ≥58%，賠率越高要求越低，絕對下限 55%）、
-              <span className="text-neutral-400">參考價位</span>（僅供觀察、非建議）門檻固定 ≥55%，
+              <span className="text-neutral-400">交易建議</span>要求實測期望值 ≥ +0.75R 且勝率 ≥55%
+              （回測含保本移停、結構移停與反向 CHoCH 出場，量的是實際會執行的交易）、
+              <span className="text-neutral-400">參考價位</span>（僅供觀察、非建議）門檻為勝率 ≥55%，
               風報比兩層都要 ≥1:1.5。
               {(signal.data_gaps ?? []).find((g) => g.startsWith("本次不提供參考價位")) ??
                 "因此不提供任何價位。"}
