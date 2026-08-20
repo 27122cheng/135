@@ -44,6 +44,7 @@ const adoption = (over: Partial<LabAdoption> = {}): LabAdoption => ({
   direction: "long",
   ids: ["ema50-side"],
   labels: ["站在 EMA50 正確側"],
+  timeframe: "D1",
   inSample: { trades: 120, hitRate: 0.83 },
   outOfSample: { trades: 51, hitRate: 0.81 },
   floor: 0.8,
@@ -75,6 +76,20 @@ const adoption = (over: Partial<LabAdoption> = {}): LabAdoption => ({
   check("a verified one can", ok.ids.join("+") === "ema50-side");
   check("and the stored numbers are the measured ones",
     ok.inSample.trades === 120 && ok.outOfSample.hitRate === 0.81, ok);
+  check("with D1 as the default timeframe", ok.timeframe === "D1", ok.timeframe);
+
+  const h4 = adoptionFromFinding(
+    "XAUUSD", "long", { ...base, verified: true }, 0.8, 400, new Date(), "H4",
+  );
+  check("an H4 adoption records its timeframe", h4.timeframe === "H4", h4.timeframe);
+  // Legacy records predate timeframes; they were measured on D1 and must
+  // read as D1, not be dropped.
+  const legacy = JSON.stringify([{ ...adoption(), timeframe: undefined }]);
+  const parsed = parseAdoptions(legacy);
+  check("a record without a timeframe reads as D1",
+    parsed.length === 1 && parsed[0].timeframe === "D1", parsed);
+  const h4Kept = parseAdoptions(serializeAdoptions([adoption({ timeframe: "H4" })]));
+  check("an H4 record round-trips", h4Kept[0]?.timeframe === "H4", h4Kept);
 
   // A finding whose hit rates are null (no resolved trades) must not slip past
   // on `verified` alone — the adoption record would carry nothing to show.

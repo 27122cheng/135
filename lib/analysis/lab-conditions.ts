@@ -514,6 +514,70 @@ export const CONDITIONS: Condition[] = [
     },
   },
   {
+    id: "rsi-divergence",
+    label: "RSI 背離（價格新極值、RSI 不跟）",
+    rationale:
+      "做多：價格創 20 根新低但 RSI 高於前低點的 RSI —— 動能衰竭的經典反轉線索。兩個低點至少隔 5 根，避免把同一支腳算成背離",
+    family: "動能",
+    test: (c, i, d) => {
+      const r = c.rsi14[i];
+      if (r === null || i < 25) return false;
+      let extIdx = -1;
+      if (d === "long") {
+        let ext = Infinity;
+        for (let k = i - 20; k <= i - 5; k++) {
+          if (c.low[k] < ext) {
+            ext = c.low[k];
+            extIdx = k;
+          }
+        }
+        const rPrev = extIdx >= 0 ? c.rsi14[extIdx] : null;
+        return rPrev !== null && c.low[i] < ext && r > rPrev;
+      }
+      let ext = -Infinity;
+      for (let k = i - 20; k <= i - 5; k++) {
+        if (c.high[k] > ext) {
+          ext = c.high[k];
+          extIdx = k;
+        }
+      }
+      const rPrev = extIdx >= 0 ? c.rsi14[extIdx] : null;
+      return rPrev !== null && c.high[i] > ext && r < rPrev;
+    },
+  },
+  {
+    id: "hist-divergence",
+    label: "MACD 柱背離",
+    rationale:
+      "價格創 20 根新極值但 MACD 柱的力道比前一個極值弱 —— 和 RSI 背離同一個想法，用另一支溫度計量",
+    family: "動能",
+    test: (c, i, d) => {
+      const h = c.hist[i];
+      if (h === null || i < 25) return false;
+      let extIdx = -1;
+      if (d === "long") {
+        let ext = Infinity;
+        for (let k = i - 20; k <= i - 5; k++) {
+          if (c.low[k] < ext) {
+            ext = c.low[k];
+            extIdx = k;
+          }
+        }
+        const hPrev = extIdx >= 0 ? c.hist[extIdx] : null;
+        return hPrev !== null && c.low[i] < ext && h > hPrev;
+      }
+      let ext = -Infinity;
+      for (let k = i - 20; k <= i - 5; k++) {
+        if (c.high[k] > ext) {
+          ext = c.high[k];
+          extIdx = k;
+        }
+      }
+      const hPrev = extIdx >= 0 ? c.hist[extIdx] : null;
+      return hPrev !== null && c.high[i] > ext && h < hPrev;
+    },
+  },
+  {
     id: "rsi-side",
     label: "RSI 在方向側（>50／<50）",
     rationale: "相對強度與方向一致，回測最強分層的組成之一",

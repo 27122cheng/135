@@ -1,5 +1,5 @@
 import { COMMODITIES } from "@/types/signal";
-import { fetchDeepD1 } from "@/lib/data-sources/deep-history";
+import { fetchDeepD1, fetchDeepH4 } from "@/lib/data-sources/deep-history";
 import { VERIFY_FLOOR, runLab } from "@/lib/analysis/lab";
 import {
   ADOPTED_KEY,
@@ -118,7 +118,7 @@ async function persist(list: LabAdoption[]): Promise<void> {
   throw new Error("採用紀錄寫入後讀不回，資料庫收下了寫入卻沒有留住");
 }
 
-/** POST /api/lab/adopt — body { symbol, direction, ids }. */
+/** POST /api/lab/adopt — body { symbol, direction, ids, timeframe? }. */
 export async function POST(request: Request) {
   let body: Record<string, unknown>;
   try {
@@ -129,6 +129,7 @@ export async function POST(request: Request) {
 
   const symbol = typeof body.symbol === "string" ? body.symbol.toUpperCase() : "";
   const direction = body.direction === "short" ? "short" : "long";
+  const timeframe = body.timeframe === "H4" ? "H4" : "D1";
   const meta = COMMODITIES.find((c) => c.symbol === symbol);
   if (!meta) return json({ error: `未知的商品 ${symbol}` }, { status: 400 });
   if (!Array.isArray(body.ids) || body.ids.length === 0) {
@@ -141,13 +142,14 @@ export async function POST(request: Request) {
 
   const gaps: string[] = [];
   try {
-    // Re-measure. The report the page is showing may be stale, and this is the
-    // moment the combination starts governing real entries.
-    const deep = await fetchDeepD1(meta, gaps);
+    // Re-measure — on the same bar size the page's report used. The report
+    // may be stale, and this is the moment the combination starts governing
+    // real entries.
+    const deep = timeframe === "H4" ? await fetchDeepH4(meta, gaps) : await fetchDeepD1(meta, gaps);
     if (!deep?.candles?.length) {
       return json({ error: "取不到 K 棒，無法在採用前重新驗證", gaps }, { status: 502 });
     }
-    const report = runLab(meta, deep.candles, direction, VERIFY_FLOOR);
+    const report = runLab(meta, deep.candles, direction, VERIFY_FLOOR, timeframe);
     if (!report) {
       return json({ error: "K 棒不足，無法重新驗證", gaps }, { status: 422 });
     }
@@ -171,6 +173,8 @@ export async function POST(request: Request) {
       finding,
       report.floor,
       report.bars,
+      new Date(),
+      timeframe,
     );
     const next = upsertAdoption(await loadAdoptions(), adoption);
     await persist(next);

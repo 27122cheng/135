@@ -198,6 +198,7 @@ function Table({
 export default function LabPage() {
   const [symbol, setSymbol] = useState("XAUUSD");
   const [direction, setDirection] = useState<"long" | "short">("long");
+  const [timeframe, setTimeframe] = useState<"D1" | "H4">("D1");
   const [data, setData] = useState<LabResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [adopt, setAdopt] = useState<AdoptResponse | null>(null);
@@ -208,16 +209,17 @@ export default function LabPage() {
     setLoading(true);
     setData(null);
     try {
-      const res = await fetch(`/api/lab?symbol=${symbol}&direction=${direction}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(
+        `/api/lab?symbol=${symbol}&direction=${direction}&timeframe=${timeframe}`,
+        { cache: "no-store" },
+      );
       setData(await res.json());
     } catch (err) {
       setData({ error: err instanceof Error ? err.message : String(err) });
     } finally {
       setLoading(false);
     }
-  }, [symbol, direction]);
+  }, [symbol, direction, timeframe]);
 
   const [forward, setForward] = useState<ForwardResponse | null>(null);
   const [advancing, setAdvancing] = useState(false);
@@ -272,7 +274,7 @@ export default function LabPage() {
         const res = await fetch("/api/lab/adopt", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ symbol, direction, ids }),
+          body: JSON.stringify({ symbol, direction, ids, timeframe }),
         });
         const body = (await res.json()) as AdoptResponse & { error?: string };
         if (!res.ok) {
@@ -288,7 +290,7 @@ export default function LabPage() {
         setBusy(false);
       }
     },
-    [symbol, direction, loadAdoptions],
+    [symbol, direction, timeframe, loadAdoptions],
   );
 
   const onRevoke = useCallback(
@@ -360,6 +362,22 @@ export default function LabPage() {
             {d === "long" ? "做多條件" : "做空條件"}
           </button>
         ))}
+        {/* H4 的樣本累積速度是日線的六倍 —— 同一套條件、同一套門檻，證據
+            來得快得多；採用時 live 閘門也會用同一個時間框架檢查。 */}
+        {(["D1", "H4"] as const).map((tf) => (
+          <button
+            key={tf}
+            type="button"
+            onClick={() => setTimeframe(tf)}
+            className={`rounded-full px-3 py-1 text-xs ${
+              timeframe === tf
+                ? "bg-sky-200 text-sky-950"
+                : "bg-neutral-800 text-neutral-400 hover:text-neutral-200"
+            }`}
+          >
+            {tf === "D1" ? "日線" : "H4"}
+          </button>
+        ))}
         <button
           type="button"
           onClick={() => void run()}
@@ -403,6 +421,9 @@ export default function LabPage() {
                     <span className="text-[11px] font-medium text-neutral-100">{a.symbol}</span>
                     <span className="text-[10px] text-neutral-400">
                       {a.direction === "long" ? "做多" : "做空"}
+                    </span>
+                    <span className="rounded bg-sky-500/15 px-1 py-0.5 text-[10px] text-sky-400">
+                      {a.timeframe === "H4" ? "H4" : "日線"}
                     </span>
                     <span className="text-[11px] text-neutral-300">{a.labels.join(" ＋ ")}</span>
                     <button
@@ -480,7 +501,7 @@ export default function LabPage() {
           走出 1R 保本移停、新 swing 墊高停損、反向 CHoCH 出場，最多持有 20 根後以市價結算。
           進場價與初始停損停利在開倉當下就寫進資料庫，之後只能結算、不能修改 ——
           這是<span className="text-neutral-300">事前登記</span>，和回測「事後翻歷史」是兩件事。
-          每 4 小時的自動掃描會推進一次。
+          每 4 小時的自動掃描會推進一次。前進帳本目前只跑日線 —— H4 的樣本速度優勢由上方回測提供。
         </p>
         {forward?.error && <p className="text-[11px] text-amber-400">{forward.error}</p>}
         {forward?.stats && forward.stats.length > 0 ? (

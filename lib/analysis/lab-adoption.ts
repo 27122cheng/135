@@ -1,6 +1,6 @@
 import type { Candle } from "../data-sources/ohlcv";
 import type { LabGate } from "@/types/signal";
-import { CONDITIONS, WARMUP, buildContext, type LabFinding } from "./lab";
+import { CONDITIONS, WARMUP, buildContext, type LabFinding, type LabTimeframe } from "./lab";
 import { readInternalSetting } from "../settings";
 
 /**
@@ -56,6 +56,12 @@ export interface LabAdoption {
   direction: "long" | "short";
   ids: string[];
   labels: string[];
+  /**
+   * The bar size the evidence was measured on. The live gate checks the
+   * condition on the same bars — D1 evidence gates on D1, H4 on H4. Records
+   * written before timeframes existed read as D1, which is what they were.
+   */
+  timeframe: LabTimeframe;
   /** Measured by the server at adoption time. Never taken from the client. */
   inSample: { trades: number; hitRate: number };
   outOfSample: { trades: number; hitRate: number };
@@ -119,6 +125,7 @@ export function parseAdoptions(raw: string | null): LabAdoption[] {
       direction: o.direction,
       ids,
       labels: ids.map((id) => CONDITIONS.find((c) => c.id === id)!.label),
+      timeframe: o.timeframe === "H4" ? "H4" : "D1",
       inSample,
       outOfSample,
       floor: typeof o.floor === "number" && Number.isFinite(o.floor) ? o.floor : 0,
@@ -173,6 +180,7 @@ export function adoptionFromFinding(
   floor: number,
   bars: number,
   now: Date = new Date(),
+  timeframe: LabTimeframe = "D1",
 ): LabAdoption {
   if (!finding.verified) {
     throw new Error("這組條件沒有通過樣本外驗證，不能採用");
@@ -185,6 +193,7 @@ export function adoptionFromFinding(
     direction,
     ids: [...finding.ids],
     labels: [...finding.labels],
+    timeframe,
     inSample: { trades: finding.inSample.trades, hitRate: finding.inSample.hitRate },
     outOfSample: { trades: finding.outOfSample.trades, hitRate: finding.outOfSample.hitRate },
     floor,
@@ -204,6 +213,7 @@ export function evaluateAdoption(adoption: LabAdoption, candles: Candle[] | unde
   const base: LabGate = {
     ids: [...adoption.ids],
     labels: [...adoption.labels],
+    timeframe: adoption.timeframe,
     met: false,
     checks: [],
     unevaluable: null,
@@ -219,7 +229,7 @@ export function evaluateAdoption(adoption: LabAdoption, candles: Candle[] | unde
     return {
       ...base,
       unevaluable:
-        `D1 K 棒只有 ${candles?.length ?? 0} 根，不足 ${WARMUP + 1} 根，` +
+        `${adoption.timeframe} K 棒只有 ${candles?.length ?? 0} 根，不足 ${WARMUP + 1} 根，` +
         "無法在與實驗室相同的條件下檢查（指標尚未暖機），本次不放行",
     };
   }

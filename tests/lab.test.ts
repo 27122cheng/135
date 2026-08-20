@@ -200,6 +200,51 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
   check("a short series returns null", runLab(meta, bars((i) => 100 + i, 50), "long") === null);
 }
 
+// ── 背離條件真的在量背離 ──────────────────────────────────────────
+{
+  // A steep fall to a low, a bounce, then a *shallow* drift to a marginal new
+  // low: the second low undercuts the first on price while RSI, measuring the
+  // gentler slope, holds higher — the textbook bullish divergence.
+  const divergent = bars((i) => {
+    if (i < 40) return 200 - i * 2; // steep decline into low #1 at 120
+    if (i < 55) return 120 + (i - 40) * 1.2; // bounce to 138
+    return 138 - (i - 55) * 0.4; // shallow drift below 120 near i≈100
+  }, 120);
+  const ctx = buildContext(divergent);
+  const rsiDiv = CONDITIONS.find((c) => c.id === "rsi-divergence")!;
+  let fired = false;
+  for (let i = 25; i < divergent.length; i++) {
+    if (rsiDiv.test(ctx, i, "long")) fired = true;
+  }
+  check("a shallow retest below the low fires the RSI divergence", fired);
+
+  // A straight-line collapse makes new lows with momentum confirming — no
+  // divergence anywhere, or the condition is just "price made a new low".
+  const confirming = bars((i) => 200 - i * 1.5, 120);
+  const ctx2 = buildContext(confirming);
+  let falsePositive = false;
+  for (let i = 25; i < confirming.length; i++) {
+    if (rsiDiv.test(ctx2, i, "long")) falsePositive = true;
+  }
+  check("a momentum-confirmed new low is not a divergence", !falsePositive);
+}
+
+// ── H4 is a first-class timeframe, with its own cost arithmetic ───
+{
+  const series = bars((i) => 100 + i * 0.4 + Math.sin(i / 5) * 3, 400);
+  const d1 = runLab(meta, series, "long")!;
+  const h4 = runLab(meta, series, "long", undefined, "H4")!;
+  check("the report names its timeframe", d1.timeframe === "D1" && h4.timeframe === "H4",
+    { d1: d1.timeframe, h4: h4.timeframe });
+  // The holding drag is per *day*: an H4 bar is a sixth of one, and charging
+  // a full day's carry per bar would tax every H4 trade six times over.
+  check("H4 charges less carry for the same horizon in bars", h4.costPct < d1.costPct,
+    { d1: d1.costPct, h4: h4.costPct });
+  check("and says which bars it measured on",
+    h4.notes.some((n) => n.includes("H4")) && d1.notes.some((n) => n.includes("D1")),
+    h4.notes.at(-1));
+}
+
 // ── 接近通過 says exactly what is missing, and only when "near" is honest ──
 {
   const result = (trades: number, hitRate: number, expectancyR = 1.2) => ({

@@ -135,3 +135,43 @@ export async function fetchDeepD1(
   gaps.push(`${meta.symbol} 取不到深度日線歷史（行情代理與 Stooq 皆失敗）`);
   return null;
 }
+
+/**
+ * 深度 H4 — two years of 4-hour bars, again for the lab alone.
+ *
+ * The analysis fetches three months of H4; the lab needs the depth. Yahoo's
+ * 60m interval reaches back 730 days, which resamples to roughly 2,500–2,800
+ * four-hour bars — the same order of sample the ten-year daily series gives,
+ * arriving six times faster per calendar day. That speed is the whole point:
+ * a condition needs 100 in-sample trades before it may be believed, and on
+ * H4 that evidence accumulates in weeks rather than quarters.
+ *
+ * Proxy only: Stooq's keyless CSV serves daily and weekly, so there is no
+ * second source to fall back to. A short series is reported honestly rather
+ * than padded.
+ */
+export async function fetchDeepH4(
+  meta: CommodityMeta,
+  gaps: string[],
+): Promise<DeepHistory | null> {
+  const proxyGaps: string[] = [];
+  const proxied = await fetchViaProxy(meta.yfinanceSymbol, "H4", proxyGaps, "730d");
+  const candles = proxied?.candles ?? null;
+  if (!candles || candles.length === 0) {
+    gaps.push(`${meta.symbol} 取不到深度 H4 歷史（Yahoo 60 分鐘資料上限兩年，且無備援來源）`);
+    return null;
+  }
+  for (const g of proxyGaps) if (g.includes("stale")) gaps.push(g);
+  if (candles.length < SHORT_SERIES) {
+    gaps.push(
+      `${meta.symbol} 深度 H4 只取得 ${candles.length} 根（免費來源的小時線只回溯兩年），` +
+        `樣本數可能不足以通過驗證門檻`,
+    );
+  }
+  return {
+    candles,
+    source: "yfinance-proxy",
+    years: span(candles),
+    stale: proxied!.stale,
+  };
+}

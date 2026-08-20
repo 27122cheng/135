@@ -864,7 +864,7 @@ async function buildSignalForSymbol(
     };
   }
 
-  applyLabGate(signal, adoptions, d1?.candles);
+  applyLabGate(signal, adoptions, { D1: d1?.candles, H4: h4?.candles });
 
   // 信心度過低就連參考價位都不給。
   //
@@ -910,14 +910,17 @@ async function buildSignalForSymbol(
 function applyLabGate(
   signal: TradeSignal,
   adoptions: LabAdoption[],
-  candles: Candle[] | undefined,
+  candles: { D1: Candle[] | undefined; H4: Candle[] | undefined },
 ): void {
   // An adoption is scoped to a direction: a long combination says nothing about
   // whether a short is a good idea, so it must not gate one.
   const adoption = findAdoption(adoptions, signal.symbol, signal.direction);
   if (!adoption) return;
 
-  const gate = evaluateAdoption(adoption, candles);
+  // The gate checks on the bars its evidence came from: a condition verified
+  // on H4 is a claim about 4-hour bars, and checking it on a daily bar would
+  // be answering a different question with the same words.
+  const gate = evaluateAdoption(adoption, candles[adoption.timeframe]);
   signal.lab_gate = gate;
   if (gate.met || signal.trade_plan.stance !== "enter") return;
 

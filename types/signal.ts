@@ -425,6 +425,8 @@ export interface TradeSignal {
 export interface LabGate {
   ids: string[];
   labels: string[];
+  /** Bar size the adoption's evidence came from — the gate checks on the same. */
+  timeframe?: "D1" | "H4";
   /** Every adopted condition holds on the latest bar. */
   met: boolean;
   checks: { id: string; label: string; met: boolean }[];

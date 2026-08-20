@@ -279,9 +279,21 @@ export function shortfallsOf(f: LabFinding, floor: number): string[] | null {
   return out.length > 0 ? out : null;
 }
 
+/**
+ * Which bar size the lab measured on. Every number in a report belongs to one
+ * timeframe: a condition verified on D1 says nothing about H4 and vice versa,
+ * so the adoption record carries this and the live gate checks on the same
+ * bars the evidence came from.
+ */
+export type LabTimeframe = "D1" | "H4";
+
+/** Bars per trading day, for converting the per-day holding drag to per-bar. */
+export const BARS_PER_DAY: Record<LabTimeframe, number> = { D1: 1, H4: 6 };
+
 export interface LabReport {
   symbol: string;
   direction: "long" | "short";
+  timeframe: LabTimeframe;
   /** The same geometry with no condition — everything is judged against this. */
   baseline: { inSample: ConditionResult; outOfSample: ConditionResult };
   solo: LabFinding[];
@@ -308,12 +320,16 @@ export function runLab(
   candles: Candle[],
   direction: "long" | "short",
   floor = VERIFY_FLOOR,
+  timeframe: LabTimeframe = "D1",
 ): LabReport | null {
   if (!candles || candles.length < WARMUP + HORIZON + 100) return null;
 
   const ctx = buildContext(candles);
   const cost = tradingCostFor(meta.category);
-  const costFraction = totalCostFraction(cost, HORIZON / 2);
+  // The holding drag is a per-day figure; on H4 the horizon's bars span far
+  // fewer days, and charging a day's carry per 4-hour bar would tax every H4
+  // trade six times over.
+  const costFraction = totalCostFraction(cost, HORIZON / 2 / BARS_PER_DAY[timeframe]);
   const split = Math.floor(candles.length * IN_SAMPLE_SHARE);
 
   /**
@@ -520,9 +536,17 @@ export function runLab(
     );
   }
 
+  notes.push(
+    timeframe === "H4"
+      ? `本報告以 H4（4 小時）K 棒測量：樣本累積速度是日線的六倍，門檻相同；` +
+        `在 H4 驗證通過的條件，live 閘門也會用 H4 K 棒檢查，不會拿日線的證據管 4 小時的進場。`
+      : `本報告以 D1（日線）K 棒測量；在日線驗證通過的條件，live 閘門也用日線檢查。`,
+  );
+
   return {
     symbol: meta.symbol,
     direction,
+    timeframe,
     baseline,
     solo,
     pairs,
