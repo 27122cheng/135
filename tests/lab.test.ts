@@ -1,12 +1,14 @@
 import { check, report } from "./_harness";
 import {
   CONDITIONS,
+  LAB_GEOMETRY_RR,
   VERIFY_FLOOR,
   buildContext,
   runLab,
   shortfallsOf,
   type LabFinding,
 } from "@/lib/analysis/lab";
+import { DAY_PROFILE, requiredHitRate } from "@/lib/analysis/trade-plan";
 import type { Candle } from "@/lib/data-sources/ohlcv";
 
 /**
@@ -35,6 +37,19 @@ function bars(fn: (i: number) => number, n: number): Candle[] {
 }
 
 const meta = { symbol: "XAUUSD", category: "metal" as const };
+
+// ── the lab's floor is coupled to the live trade floor ────────────
+//
+// Adopted lab conditions become a hard gate over live entries, so the lab's
+// adoption bar must never fall below what a live trade at the lab's own
+// geometry has to demonstrate. The trade floor is RR-aware now; if either
+// side is tuned again, this is the invariant that must survive.
+{
+  check("the lab measures at the operator's minimum payoff", LAB_GEOMETRY_RR === 1.5);
+  check("its adoption floor sits at or above the trade floor at that payoff",
+    VERIFY_FLOOR >= requiredHitRate(DAY_PROFILE, LAB_GEOMETRY_RR),
+    { VERIFY_FLOOR, tradeFloor: requiredHitRate(DAY_PROFILE, LAB_GEOMETRY_RR) });
+}
 
 // ── the conditions are well-formed ────────────────────────────────
 {

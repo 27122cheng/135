@@ -50,6 +50,14 @@ export type { Condition, LabContext } from "./lab-conditions";
 /** Stop at 1×ATR, target at 1.5×ATR: the operator's MIN_RISK_REWARD, exactly. */
 const STOP_ATR = 1;
 const TARGET_ATR = 1.5;
+/**
+ * The lab's fixed payoff as a ratio, exported so a test can hold it against
+ * the live trade floor: requiredHitRate(DAY_PROFILE, LAB_GEOMETRY_RR) is what
+ * a *trade* at this geometry must demonstrate, and the lab's adoption floor
+ * must never sit below it — a condition adopted as a hard gate on live
+ * entries has to show at least the edge those entries are themselves held to.
+ */
+export const LAB_GEOMETRY_RR = TARGET_ATR / STOP_ATR;
 /** How far forward a trade is given to resolve, in bars. */
 const HORIZON = 20;
 /**
@@ -72,7 +80,16 @@ const MIN_SAMPLE = 100;
  * rather than on evidence. Scaled to the same *rate* of occurrence instead.
  */
 const MIN_OUT_OF_SAMPLE = Math.round((MIN_SAMPLE * (1 - 0.7)) / 0.7);
-/** 勝率門檻 —— the operator's floor for a condition to be worth adopting. */
+/**
+ * 勝率門檻 —— the operator's floor for a condition to be worth adopting.
+ *
+ * Deliberately above the live trade floor at the same geometry. The trade
+ * floor is RR-aware (see requiredHitRate in trade-plan.ts) and at the lab's
+ * fixed 1:1.5 it demands 70% — the minimum for a plan to be *taken*. A
+ * condition promoted to a hard gate over every live entry should show more
+ * edge than that minimum, not equal it: 80% at 1:1.5 is +1.0R per trade
+ * against the tradeable bar's +0.75R.
+ */
 export const VERIFY_FLOOR = 0.8;
 /**
  * Indicators need to warm up before any bar is a legitimate entry.
