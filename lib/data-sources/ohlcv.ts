@@ -1,5 +1,6 @@
 import { getKey } from "../api-keys";
 import type { CommodityMeta, Timeframe } from "@/types/signal";
+import { CANDLE_STALE_MS } from "./cache";
 import { fetchFree } from "./free-source";
 import { fetchJson } from "./http";
 import { fetchStooqText } from "./stooq-fetch";
@@ -44,6 +45,7 @@ async function fetchFinnhubOHLCV(
     label: `Finnhub OHLCV (${ticker} ${timeframe})`,
     key: `finnhub:candle:${ticker}:${resolution}`,
     ttlMs: OHLCV_TTL_MS,
+    staleMs: CANDLE_STALE_MS,
     // Documented free tier: 60 req/min.
     limit: { perMinute: 60 },
     gaps,
@@ -107,6 +109,7 @@ async function fetchStooqOHLCV(
     label: `Stooq (${meta.stooqSymbol} ${timeframe})`,
     key: `stooq:${meta.stooqSymbol}:${timeframe}`,
     ttlMs: OHLCV_TTL_MS,
+    staleMs: CANDLE_STALE_MS,
     // Self-imposed: Stooq publishes no limit for the CSV download.
     limit: { perMinute: 30, perDay: 1000 },
     gaps,

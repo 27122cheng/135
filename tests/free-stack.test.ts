@@ -1,7 +1,7 @@
 /* Quota tracking, exponential backoff, the stale tier, and H4 resampling. */
 import { tryConsume, recordFailure, recordSuccess, __resetQuotaForTests, quotaSnapshot } from "@/lib/data-sources/quota";
 import { fetchFree } from "@/lib/data-sources/free-source";
-import { __resetCacheForTests } from "@/lib/data-sources/cache";
+import { CANDLE_STALE_MS, DEFAULT_STALE_MS, __resetCacheForTests } from "@/lib/data-sources/cache";
 import { jsonSchema, textSchema } from "@/lib/ai/provider";
 import { resampleTo4h } from "@/lib/data-sources/yfinance";
 
@@ -119,6 +119,43 @@ async function freeSourceTests() {
     gaps: gaps6, fn: async () => { calls2++; return null; },
   });
   check("backoff prevents immediate retry", calls2 === 1, calls2);
+
+  // 7. the stale window is a parameter, and candles get a longer one.
+  //
+  // XAUUSD's proxy and Stooq both failed for over a day; the moment the last
+  // good series crossed the default 24h window, every timeframe reported
+  // 「無可用快取」at once and ATR/technicals/structure all went blind. A
+  // candle series days old still carries what those are computed from, so
+  // candle fetches pass CANDLE_STALE_MS and survive a multi-day outage.
+  __resetQuotaForTests();
+  __resetCacheForTests();
+  const shortWin: Parameters<typeof fetchFree<string>>[0] = {
+    source: "s7", label: "S7", key: "k7", ttlMs: 10, staleMs: 30,
+    limit: { perMinute: 10 }, gaps: [], fn: async () => "series",
+  };
+  await fetchFree<string>(shortWin);
+  await new Promise((r) => setTimeout(r, 60)); // past ttl AND past the window
+  const gone = await fetchFree<string>({ ...shortWin, gaps: [], fn: async () => null });
+  check("past its stale window the copy is unservable", gone === null, gone);
+
+  __resetQuotaForTests();
+  __resetCacheForTests();
+  const longWin: Parameters<typeof fetchFree<string>>[0] = {
+    source: "s8", label: "S8", key: "k8", ttlMs: 10, staleMs: 60_000,
+    limit: { perMinute: 10 }, gaps: [], fn: async () => "series",
+  };
+  await fetchFree<string>(longWin);
+  await new Promise((r) => setTimeout(r, 60));
+  const keptGaps: string[] = [];
+  const kept = await fetchFree<string>({ ...longWin, gaps: keptGaps, fn: async () => null });
+  check("a longer window still serves the old copy, labelled",
+    kept?.value === "series" && kept.stale === true && keptGaps.some((g) => g.includes("stale")),
+    { kept, keptGaps });
+
+  check("candle series get a week; the default stays a day",
+    CANDLE_STALE_MS === 7 * 24 * 60 * 60 * 1000 &&
+    DEFAULT_STALE_MS === 24 * 60 * 60 * 1000,
+    { CANDLE_STALE_MS, DEFAULT_STALE_MS });
 }
 
 // ---------- response schemas ----------

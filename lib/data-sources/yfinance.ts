@@ -1,5 +1,6 @@
 import type { Timeframe } from "@/types/signal";
 import { fetchBackupPrice } from "./backup-price";
+import { CANDLE_STALE_MS } from "./cache";
 import { fetchFree } from "./free-source";
 import { fetchJson } from "./http";
 import { fetchStooqText } from "./stooq-fetch";
@@ -405,6 +406,9 @@ export async function fetchViaProxy(
     label: `行情代理 (${ticker} ${timeframe})`,
     key: `yahoo:${ticker}:${cfg.interval}:${cfg.range}`,
     ttlMs: OHLCV_TTL_MS,
+    // Candles stay servable for a week when every live source is down —
+    // see CANDLE_STALE_MS for why candles get a longer leash than quotes.
+    staleMs: CANDLE_STALE_MS,
     limit: YAHOO_LIMIT,
     gaps,
     fn: async () => {

@@ -1,4 +1,5 @@
 import type { CommodityMeta } from "@/types/signal";
+import { CANDLE_STALE_MS } from "./cache";
 import { fetchFree } from "./free-source";
 import { fetchStooqText } from "./stooq-fetch";
 import { fetchViaProxy, type Candle } from "./yfinance";
@@ -64,6 +65,10 @@ async function fetchStooqFull(meta: CommodityMeta, gaps: string[]): Promise<Cand
     label: `Stooq 完整日線 (${meta.stooqSymbol})`,
     key: `stooq:deep:${meta.stooqSymbol}`,
     ttlMs: TTL_MS,
+    // A deep history that is a few days behind is still a deep history —
+    // the lab reads thousands of bars, and the newest handful barely move
+    // any measurement. Same week-long leash all candle series get.
+    staleMs: CANDLE_STALE_MS,
     limit: { perMinute: 30, perDay: 1000 },
     gaps,
     fn: async () => {

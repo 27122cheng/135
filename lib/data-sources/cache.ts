@@ -24,6 +24,23 @@ const store = new Map<string, CacheEntry<unknown>>();
 /** How long past its TTL a value stays servable as stale. */
 export const DEFAULT_STALE_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * The stale window for *candle series*, deliberately much longer.
+ *
+ * The default 24 hours is right for most sources — yesterday's news query or
+ * yield print is a different answer — and it is what turned one upstream
+ * outage into a blind system. XAUUSD's proxy and Stooq both failed for over a
+ * day; the moment the last good candle series crossed the 24-hour line, every
+ * timeframe reported 「無可用快取」at once and ATR, the technical read and the
+ * structure zones all went down with it. A daily series missing its newest
+ * bar still carries ~99% of what ATR(14), EMA200 and the swing structure are
+ * computed from. A week is where that stops being true — beyond it the
+ * structure zones themselves have plausibly moved — so a week is the window,
+ * and the card labels the age whenever the stale tier answers. Quotes are the
+ * opposite case and keep their tight windows: an old price is not a price.
+ */
+export const CANDLE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+
 export function getCached<T>(key: string): T | undefined {
   const entry = store.get(key);
   if (!entry) return undefined;
