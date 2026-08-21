@@ -1,8 +1,9 @@
 import { getKey } from "../api-keys";
-import type { CommodityMeta, SupportedSymbol } from "@/types/signal";
+import type { CommodityMeta, SupportedSymbol, Timeframe } from "@/types/signal";
+import { CANDLE_STALE_MS } from "./cache";
 import { fetchFree } from "./free-source";
 import { fetchJson } from "./http";
-import type { LatestPrice } from "./yfinance";
+import type { Candle, LatestPrice } from "./yfinance";
 
 /**
  * Twelve Data — a fourth quote source, and the only *live* one that is neither
@@ -152,4 +153,112 @@ export async function fetchTwelveDataQuote(
     ageMinutes: Math.max(0, (Date.now() - new Date(result.value.at).getTime()) / 60000),
     source: "twelvedata",
   };
+}
+
+/**
+ * Twelve Data's interval per timeframe. H4 is native here — no resampling —
+ * which makes this the only fallback that can serve 4-hour bars when the
+ * proxy is down (Finnhub's free tier refuses non-equity candles and Stooq's
+ * CSV is daily/weekly only).
+ */
+const TD_INTERVAL: Record<Timeframe, string> = { H4: "4h", D1: "1day", W1: "1week" };
+
+interface SeriesValue {
+  datetime?: string;
+  open?: string | number;
+  high?: string | number;
+  low?: string | number;
+  close?: string | number;
+  volume?: string | number;
+}
+
+interface SeriesResponse {
+  values?: SeriesValue[];
+  status?: string;
+  code?: number;
+  message?: string;
+}
+
+/**
+ * OHLCV series from Twelve Data — the candle chain's fourth leg, and the
+ * deep-history fallback (`outputsize` up to 5000: ~19 years of daily bars or
+ * ~3 years of native 4h).
+ *
+ * Same contract as the quote fetcher: no key → null without a call or a gap;
+ * an HTTP-200 error body is a failure with the vendor's message quoted; and
+ * one credit per call against the shared 800/day bucket. `ttlMs` comes from
+ * the caller because the right lifetime differs — the live chain caches for
+ * its usual half hour, the lab's deep pull for half a day.
+ */
+export async function fetchTwelveDataOHLCV(
+  meta: Pick<CommodityMeta, "symbol">,
+  timeframe: Timeframe,
+  gaps: string[],
+  opts: { outputsize: number; ttlMs: number },
+): Promise<Candle[] | null> {
+  const apiKey = getKey("TWELVEDATA_API_KEY");
+  if (!apiKey) return null;
+  const ticker = twelveDataSymbol(meta.symbol);
+  if (!ticker) return null;
+  const interval = TD_INTERVAL[timeframe];
+
+  const result = await fetchFree<Candle[]>({
+    source: "twelvedata",
+    label: `Twelve Data K 棒 (${ticker} ${timeframe})`,
+    key: `twelvedata:series:${ticker}:${interval}:${opts.outputsize}`,
+    ttlMs: opts.ttlMs,
+    staleMs: CANDLE_STALE_MS,
+    limit: { perMinute: 8, perDay: 800 },
+    gaps,
+    fn: async () => {
+      const data = await fetchJson<SeriesResponse>(
+        `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(ticker)}` +
+          `&interval=${interval}&outputsize=${opts.outputsize}&timezone=UTC` +
+          `&apikey=${encodeURIComponent(apiKey)}`,
+        undefined,
+        // Fallback position, hard 60s function ceiling — same as the quote.
+        7000,
+      );
+      if (!data) return null;
+      if (data.status === "error" || data.code !== undefined || !Array.isArray(data.values)) {
+        gaps.push(
+          `Twelve Data (${ticker} ${timeframe}) 未回傳 K 棒：${data.message ?? `代碼 ${data.code ?? "未知"}`}` +
+            (String(data.message ?? "").match(/plan|upgrade|not available/i)
+              ? "（免費方案不含此商品類別，其他來源仍照常運作）"
+              : ""),
+        );
+        return null;
+      }
+
+      // Newest-first from the vendor; every consumer here walks oldest-first.
+      const candles: Candle[] = [];
+      for (let i = data.values.length - 1; i >= 0; i--) {
+        const v = data.values[i];
+        if (!v.datetime) continue;
+        // Daily/weekly rows are bare dates; intraday rows carry a UTC time
+        // (we asked for timezone=UTC above, so the suffix is honest).
+        const iso = v.datetime.includes(" ")
+          ? new Date(`${v.datetime.replace(" ", "T")}Z`).toISOString()
+          : new Date(`${v.datetime}T00:00:00Z`).toISOString();
+        const open = numeric(v.open);
+        const high = numeric(v.high);
+        const low = numeric(v.low);
+        const close = numeric(v.close);
+        if (open === null || high === null || low === null || close === null) continue;
+        const vol = typeof v.volume === "string" ? Number(v.volume) : v.volume;
+        candles.push({
+          time: iso,
+          open,
+          high,
+          low,
+          close,
+          // FX series report 0 — that is "not measured", never "no trading".
+          volume: typeof vol === "number" && Number.isFinite(vol) && vol > 0 ? vol : null,
+        });
+      }
+      return candles.length > 0 ? candles : null;
+    },
+  });
+
+  return result?.value ?? null;
 }

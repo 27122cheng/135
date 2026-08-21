@@ -2,6 +2,7 @@ import type { CommodityMeta } from "@/types/signal";
 import { CANDLE_STALE_MS } from "./cache";
 import { fetchFree } from "./free-source";
 import { fetchStooqText } from "./stooq-fetch";
+import { fetchTwelveDataOHLCV } from "./twelvedata";
 import { fetchViaProxy, type Candle } from "./yfinance";
 
 /**
@@ -45,7 +46,7 @@ const TTL_MS = 12 * 60 * 60 * 1000;
 
 export interface DeepHistory {
   candles: Candle[];
-  source: "yfinance-proxy" | "stooq";
+  source: "yfinance-proxy" | "stooq" | "twelvedata";
   /** Span of the series in years, one decimal. */
   years: number;
   stale: boolean;
@@ -122,22 +123,36 @@ export async function fetchDeepD1(
   const stooq = await fetchStooqFull(meta, gaps);
   // Whichever actually goes back further wins; a fallback that returns less
   // than the primary is not a fallback worth taking.
-  if (stooq && (!fromProxy || stooq.length > fromProxy.length)) {
+  if (stooq && stooq.length >= SHORT_SERIES && (!fromProxy || stooq.length > fromProxy.length)) {
     return { candles: stooq, source: "stooq", years: span(stooq), stale: false };
   }
-  if (fromProxy) {
-    gaps.push(
-      `${meta.symbol} 深度歷史只取得 ${fromProxy.length} 根日線（Stooq 未能提供更長的序列），` +
-        `樣本數可能不足以通過驗證門檻`,
-    );
+
+  // Third leg: Twelve Data's time_series reaches back up to 5,000 daily bars
+  // (~19 years) on one credit. Keyed and rate-limited, so it comes after both
+  // keyless sources — but before settling for a short series.
+  const td = await fetchTwelveDataOHLCV(meta, "D1", gaps, {
+    outputsize: 5000,
+    ttlMs: TTL_MS,
+  });
+  const best = [fromProxy, stooq, td]
+    .filter((c): c is Candle[] => c !== null && c.length > 0)
+    .reduce<Candle[] | null>((a, c) => (a === null || c.length > a.length ? c : a), null);
+  if (best) {
+    if (best.length < SHORT_SERIES) {
+      gaps.push(
+        `${meta.symbol} 深度歷史只取得 ${best.length} 根日線（所有來源都提供不了更長的序列），` +
+          `樣本數可能不足以通過驗證門檻`,
+      );
+    }
+    const source = best === td ? "twelvedata" : best === stooq ? "stooq" : "yfinance-proxy";
     return {
-      candles: fromProxy,
-      source: "yfinance-proxy",
-      years: span(fromProxy),
-      stale: proxied!.stale,
+      candles: best,
+      source,
+      years: span(best),
+      stale: source === "yfinance-proxy" ? proxied!.stale : false,
     };
   }
-  gaps.push(`${meta.symbol} 取不到深度日線歷史（行情代理與 Stooq 皆失敗）`);
+  gaps.push(`${meta.symbol} 取不到深度日線歷史（行情代理、Stooq 與 Twelve Data 皆失敗）`);
   return null;
 }
 
@@ -161,22 +176,42 @@ export async function fetchDeepH4(
 ): Promise<DeepHistory | null> {
   const proxyGaps: string[] = [];
   const proxied = await fetchViaProxy(meta.yfinanceSymbol, "H4", proxyGaps, "730d");
-  const candles = proxied?.candles ?? null;
-  if (!candles || candles.length === 0) {
-    gaps.push(`${meta.symbol} 取不到深度 H4 歷史（Yahoo 60 分鐘資料上限兩年，且無備援來源）`);
+  const fromProxy = proxied?.candles ?? null;
+  if (fromProxy && fromProxy.length >= SHORT_SERIES) {
+    for (const g of proxyGaps) if (g.includes("stale")) gaps.push(g);
+    return {
+      candles: fromProxy,
+      source: "yfinance-proxy",
+      years: span(fromProxy),
+      stale: proxied!.stale,
+    };
+  }
+
+  // Twelve Data serves native 4h bars up to 5,000 deep (~3 years) — actually
+  // *further* back than Yahoo's two-year hourly cap. Keyed, so it is the
+  // fallback rather than the default.
+  const td = await fetchTwelveDataOHLCV(meta, "H4", gaps, { outputsize: 5000, ttlMs: TTL_MS });
+  const best =
+    td && (!fromProxy || td.length > fromProxy.length) ? td : fromProxy;
+  if (!best || best.length === 0) {
+    gaps.push(
+      `${meta.symbol} 取不到深度 H4 歷史（Yahoo 60 分鐘資料與 Twelve Data 4h 皆失敗）`,
+    );
     return null;
   }
-  for (const g of proxyGaps) if (g.includes("stale")) gaps.push(g);
-  if (candles.length < SHORT_SERIES) {
+  if (best.length < SHORT_SERIES) {
     gaps.push(
-      `${meta.symbol} 深度 H4 只取得 ${candles.length} 根（免費來源的小時線只回溯兩年），` +
-        `樣本數可能不足以通過驗證門檻`,
+      `${meta.symbol} 深度 H4 只取得 ${best.length} 根，樣本數可能不足以通過驗證門檻`,
     );
   }
+  const source = best === td ? "twelvedata" : "yfinance-proxy";
+  if (source === "yfinance-proxy") {
+    for (const g of proxyGaps) if (g.includes("stale")) gaps.push(g);
+  }
   return {
-    candles,
-    source: "yfinance-proxy",
-    years: span(candles),
-    stale: proxied!.stale,
+    candles: best,
+    source,
+    years: span(best),
+    stale: source === "yfinance-proxy" ? proxied!.stale : false,
   };
 }

@@ -1,7 +1,11 @@
 import { check, report, stubFetch } from "./_harness";
 import { __resetCacheForTests } from "@/lib/data-sources/cache";
 import { __resetQuotaForTests } from "@/lib/data-sources/quota";
-import { fetchTwelveDataQuote, twelveDataSymbol } from "@/lib/data-sources/twelvedata";
+import {
+  fetchTwelveDataOHLCV,
+  fetchTwelveDataQuote,
+  twelveDataSymbol,
+} from "@/lib/data-sources/twelvedata";
 import { COMMODITIES } from "@/types/signal";
 
 /**
@@ -109,6 +113,57 @@ async function main() {
     check("an unmapped symbol returns null",
       (await fetchTwelveDataQuote({ symbol: "NOPE" }, [])) === null);
     check("without spending a request", seen.length === 0, seen);
+  }
+
+  // ── the OHLCV series — the candle chain's fourth leg ────────────
+  {
+    reset();
+    process.env.TWELVEDATA_API_KEY = "k";
+    // The vendor answers newest-first; consumers walk oldest-first.
+    const seen = stubFetch(() => ({
+      status: 200,
+      json: {
+        status: "ok",
+        values: [
+          { datetime: "2026-08-21 08:00:00", open: "101", high: "102", low: "100", close: "101.5", volume: "0" },
+          { datetime: "2026-08-21 04:00:00", open: "100", high: "101", low: "99", close: "100.5", volume: "0" },
+        ],
+      },
+    }));
+    const gaps: string[] = [];
+    const candles = await fetchTwelveDataOHLCV({ symbol: "EURUSD" }, "H4", gaps, {
+      outputsize: 500,
+      ttlMs: 60_000,
+    });
+    check("a series comes back oldest-first",
+      candles?.length === 2 && candles[0].close === 100.5 && candles[1].close === 101.5,
+      candles);
+    check("intraday rows are stamped as UTC",
+      candles?.[0].time === "2026-08-21T04:00:00.000Z", candles?.[0].time);
+    check("H4 asks for the native 4h interval — no resampling",
+      seen.some((u) => u.includes("interval=4h")), seen);
+    check("a zero FX volume reads as not-measured, never as no-trading",
+      candles?.every((c) => c.volume === null) === true, candles);
+
+    reset();
+    process.env.TWELVEDATA_API_KEY = "k";
+    stubFetch(() => ({
+      status: 200,
+      json: { status: "error", code: 429, message: "You have run out of API credits" },
+    }));
+    const gaps2: string[] = [];
+    check("an HTTP-200 error body is a failure, not a series",
+      (await fetchTwelveDataOHLCV({ symbol: "EURUSD" }, "D1", gaps2, { outputsize: 400, ttlMs: 60_000 })) ===
+        null);
+    check("with the vendor's own message quoted",
+      gaps2.some((g) => g.includes("credits")), gaps2);
+
+    reset();
+    const seen3 = stubFetch(() => ({ status: 200, json: { status: "ok", values: [] } }));
+    check("no key, no call, no gap",
+      (await fetchTwelveDataOHLCV({ symbol: "EURUSD" }, "D1", [], { outputsize: 400, ttlMs: 60_000 })) ===
+        null && seen3.length === 0,
+      seen3);
   }
 
   report("Twelve Data 報價");

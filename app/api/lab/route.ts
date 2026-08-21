@@ -43,13 +43,20 @@ export async function GET(request: Request) {
         { status: 422 },
       );
     }
+    const sourceName =
+      deep.source === "stooq"
+        ? "Stooq 完整日線"
+        : deep.source === "twelvedata"
+          ? `Twelve Data ${timeframe === "H4" ? "原生 4h K 線" : "日線"}（最多 5000 根）`
+          : timeframe === "H4"
+            ? "行情代理 1 小時線重組為 4 小時（免費上限兩年）"
+            : "行情代理 10 年日線";
     report.notes.unshift(
-      timeframe === "H4"
-        ? `歷史來源：行情代理 1 小時線重組為 4 小時（免費上限兩年），` +
-          `共 ${deep.candles.length} 根、約 ${deep.years} 年（${deep.candles[0].time.slice(0, 10)} 起）。`
-        : `歷史來源：${deep.source === "stooq" ? "Stooq 完整日線" : "行情代理 10 年日線"}，` +
-          `共 ${deep.candles.length} 根、約 ${deep.years} 年（${deep.candles[0].time.slice(0, 10)} 起）。` +
-          `分析頁只取 1 年日線，實驗室刻意另外取深度歷史 —— 一年的資料連 100 筆樣本的門檻都放不下。`,
+      `歷史來源：${sourceName}，` +
+        `共 ${deep.candles.length} 根、約 ${deep.years} 年（${deep.candles[0].time.slice(0, 10)} 起）。` +
+        (timeframe === "D1"
+          ? `分析頁只取 1 年日線，實驗室刻意另外取深度歷史 —— 一年的資料連 100 筆樣本的門檻都放不下。`
+          : ""),
     );
     return json({ report, gaps });
   } catch (err) {

@@ -1,9 +1,11 @@
 import { getKey } from "../api-keys";
 import type { CommodityMeta, Timeframe } from "@/types/signal";
 import { CANDLE_STALE_MS } from "./cache";
+import { fetchFmpOHLCV } from "./fmp";
 import { fetchFree } from "./free-source";
 import { fetchJson } from "./http";
 import { fetchStooqText } from "./stooq-fetch";
+import { fetchTwelveDataOHLCV } from "./twelvedata";
 import { fetchViaProxy, OHLCV_TTL_MS, type Candle } from "./yfinance";
 
 export type { Candle } from "./yfinance";
@@ -12,7 +14,7 @@ export interface OHLCVResult {
   symbol: string;
   timeframe: Timeframe;
   candles: Candle[];
-  source: "yfinance-proxy" | "finnhub" | "stooq";
+  source: "yfinance-proxy" | "finnhub" | "stooq" | "twelvedata" | "fmp";
   /** True when the candles came from cache past its TTL. Never hidden from the user. */
   stale: boolean;
 }
@@ -231,6 +233,29 @@ export async function fetchOHLCV(
     ...stooqGaps,
     STOOQ_INTERVAL[timeframe] ? "Stooq 無回應" : `Stooq 不支援 ${timeframe}`,
   );
+
+  // Two keyed vendors close the chain — the same pair that already witnesses
+  // quotes. Twelve Data first (larger allowance, and the only fallback with
+  // native 4h bars); FMP last, W1 excluded on its free plan. Both skip
+  // silently without a key, so an unconfigured deployment behaves as before.
+  const tdGaps: string[] = [];
+  const td = await fetchTwelveDataOHLCV(meta, timeframe, tdGaps, {
+    outputsize: timeframe === "H4" ? 500 : 400,
+    ttlMs: OHLCV_TTL_MS,
+  });
+  if (td) {
+    promoteStale(tdGaps);
+    return { symbol: meta.symbol, timeframe, candles: td, source: "twelvedata", stale: false };
+  }
+  attempts.push(...tdGaps);
+
+  const fmpGaps: string[] = [];
+  const fmp = await fetchFmpOHLCV(meta, timeframe, fmpGaps, { ttlMs: OHLCV_TTL_MS });
+  if (fmp) {
+    promoteStale(fmpGaps);
+    return { symbol: meta.symbol, timeframe, candles: fmp, source: "fmp", stale: false };
+  }
+  attempts.push(...fmpGaps);
 
   // The frozen proxy answer is still the last resort: rejecting it existed to
   // let a *better* source answer, and none did. An 11-day-old series labelled

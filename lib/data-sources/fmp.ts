@@ -1,8 +1,9 @@
 import { getKey } from "../api-keys";
-import type { CommodityMeta, SupportedSymbol } from "@/types/signal";
+import type { CommodityMeta, SupportedSymbol, Timeframe } from "@/types/signal";
+import { CANDLE_STALE_MS } from "./cache";
 import { fetchFree } from "./free-source";
 import { fetchJson } from "./http";
-import type { LatestPrice } from "./yfinance";
+import type { Candle, LatestPrice } from "./yfinance";
 
 /**
  * Financial Modeling Prep — the fourth quote witness.
@@ -112,4 +113,104 @@ export async function fetchFmpQuote(
     ageMinutes: Math.max(0, (Date.now() - new Date(result.value.at).getTime()) / 60000),
     source: "fmp",
   };
+}
+
+interface FmpDailyRow {
+  date?: string;
+  open?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  volume?: number;
+}
+
+/**
+ * OHLCV from FMP — the candle chain's fifth and last leg.
+ *
+ * Daily comes from `historical-price-full` (an object wrapping a newest-first
+ * `historical` array), 4-hour from `historical-chart/4hour` (a bare
+ * newest-first array reaching back a few weeks — enough for the live H4 read,
+ * not for the lab). There is no weekly endpoint on the free plan, so W1
+ * returns null without spending a request — the caller's chain simply moves
+ * on. Sits behind Twelve Data for the same reason the quote does: the
+ * smaller daily allowance belongs on the rarest path.
+ */
+export async function fetchFmpOHLCV(
+  meta: Pick<CommodityMeta, "symbol">,
+  timeframe: Timeframe,
+  gaps: string[],
+  opts: { ttlMs: number },
+): Promise<Candle[] | null> {
+  if (timeframe === "W1") return null;
+  const apiKey = getKey("FMP_API_KEY");
+  if (!apiKey) return null;
+  const ticker = fmpSymbol(meta.symbol);
+  if (!ticker) return null;
+
+  const result = await fetchFree<Candle[]>({
+    source: "fmp",
+    label: `FMP K 棒 (${ticker} ${timeframe})`,
+    key: `fmp:series:${ticker}:${timeframe}`,
+    ttlMs: opts.ttlMs,
+    staleMs: CANDLE_STALE_MS,
+    limit: { perMinute: 10, perDay: 250 },
+    gaps,
+    fn: async () => {
+      const url =
+        timeframe === "D1"
+          ? `https://financialmodelingprep.com/api/v3/historical-price-full/${encodeURIComponent(ticker)}?timeseries=400&apikey=${encodeURIComponent(apiKey)}`
+          : `https://financialmodelingprep.com/api/v3/historical-chart/4hour/${encodeURIComponent(ticker)}?apikey=${encodeURIComponent(apiKey)}`;
+      const data = await fetchJson<
+        FmpDailyRow[] | { historical?: FmpDailyRow[] } | FmpError
+      >(url, undefined, 7000);
+      if (!data) return null;
+
+      // Success is an array (4hour) or an object with a `historical` array
+      // (daily). Anything else is the vendor's HTTP-200 error body.
+      const rows = Array.isArray(data)
+        ? data
+        : Array.isArray((data as { historical?: FmpDailyRow[] }).historical)
+          ? (data as { historical: FmpDailyRow[] }).historical
+          : null;
+      if (!rows) {
+        const err = data as FmpError;
+        const message = err["Error Message"] ?? err.message ?? "未知錯誤";
+        gaps.push(
+          `FMP (${ticker} ${timeframe}) 未回傳 K 棒：${message}` +
+            (/plan|subscription|exclusive|upgrade/i.test(message)
+              ? "（免費方案不含此商品，其他來源仍照常運作）"
+              : ""),
+        );
+        return null;
+      }
+
+      // Newest-first from the vendor; consumers walk oldest-first.
+      const candles: Candle[] = [];
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const r = rows[i];
+        if (!r.date) continue;
+        const iso = r.date.includes(" ")
+          ? new Date(`${r.date.replace(" ", "T")}Z`).toISOString()
+          : new Date(`${r.date}T00:00:00Z`).toISOString();
+        if (Number.isNaN(new Date(iso).getTime())) continue;
+        if (![r.open, r.high, r.low, r.close].every((n) => typeof n === "number" && Number.isFinite(n))) {
+          continue;
+        }
+        candles.push({
+          time: iso,
+          open: r.open!,
+          high: r.high!,
+          low: r.low!,
+          close: r.close!,
+          volume:
+            typeof r.volume === "number" && Number.isFinite(r.volume) && r.volume > 0
+              ? r.volume
+              : null,
+        });
+      }
+      return candles.length > 0 ? candles : null;
+    },
+  });
+
+  return result?.value ?? null;
 }

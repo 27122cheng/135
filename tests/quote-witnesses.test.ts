@@ -1,7 +1,7 @@
 import { check, report, stubFetch } from "./_harness";
 import { __resetCacheForTests } from "@/lib/data-sources/cache";
 import { __resetQuotaForTests } from "@/lib/data-sources/quota";
-import { fetchFmpQuote, fmpSymbol } from "@/lib/data-sources/fmp";
+import { fetchFmpOHLCV, fetchFmpQuote, fmpSymbol } from "@/lib/data-sources/fmp";
 import {
   driftWarning,
   fetchWitness,
@@ -104,6 +104,46 @@ async function main() {
       w?.price === 2005 && Math.abs(new Date(w!.at).getTime() - now) < 1000, w);
     check("and it carries the tolerance for that instrument's basis",
       w!.tolerancePct === 2, w?.tolerancePct);
+  }
+
+  // ── FMP K 棒 — the candle chain's fifth leg ─────────────────────
+  {
+    reset();
+    process.env.FMP_API_KEY = "k";
+    // Daily wraps a newest-first `historical` array in an object.
+    stubFetch(() => ({
+      status: 200,
+      json: {
+        symbol: "EURUSD",
+        historical: [
+          { date: "2026-08-21", open: 1.09, high: 1.1, low: 1.08, close: 1.095, volume: 0 },
+          { date: "2026-08-20", open: 1.08, high: 1.09, low: 1.07, close: 1.085, volume: 0 },
+        ],
+      },
+    }));
+    const daily = await fetchFmpOHLCV({ symbol: "EURUSD" }, "D1", [], { ttlMs: 60_000 });
+    check("FMP daily comes back oldest-first",
+      daily?.length === 2 && daily[0].close === 1.085 && daily[1].close === 1.095, daily);
+
+    reset();
+    process.env.FMP_API_KEY = "k";
+    stubFetch(() => ({
+      status: 200,
+      json: { "Error Message": "Exclusive Endpoint: upgrade your subscription" },
+    }));
+    const gapsE: string[] = [];
+    check("an HTTP-200 error body is a failure with the vendor quoted",
+      (await fetchFmpOHLCV({ symbol: "EURUSD" }, "D1", gapsE, { ttlMs: 60_000 })) === null &&
+        gapsE.some((g) => g.includes("Exclusive")),
+      gapsE);
+
+    reset();
+    process.env.FMP_API_KEY = "k";
+    const seenW1 = stubFetch(() => ({ status: 200, json: {} }));
+    check("W1 is not on the free plan, so it is never requested",
+      (await fetchFmpOHLCV({ symbol: "EURUSD" }, "W1", [], { ttlMs: 60_000 })) === null &&
+        seenW1.length === 0,
+      seenW1);
   }
 
   // ── 休市中 vs 我們的來源掛了 ──────────────────────────────────────
