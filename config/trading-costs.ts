@@ -37,7 +37,9 @@ export interface TradingCost {
   perBarPct: number;
 }
 
-const BY_CATEGORY: Record<CommodityMeta["category"], TradingCost> = {
+export type CostCategory = CommodityMeta["category"];
+
+const BY_CATEGORY: Record<CostCategory, TradingCost> = {
   // ~1.5 pips round trip on a 1.10 major.
   forex: { roundTripPct: 0.014, perBarPct: 0.0015 },
   // ~$0.60 round trip on gold near $4,000.
@@ -49,8 +51,95 @@ const BY_CATEGORY: Record<CommodityMeta["category"], TradingCost> = {
   energy: { roundTripPct: 0.08, perBarPct: 0.004 },
 };
 
+export type TradingCostOverrides = Partial<Record<CostCategory, Partial<TradingCost>>>;
+
+/**
+ * 成本參數覆寫 — the operator's own broker figures, when they have set them.
+ *
+ * The defaults above are retail-typical guesses, stated as such; a floor
+ * measured in expectancy is only as honest as the cost it charges, and the
+ * operator's actual spread is a number only they know. Overrides are stored
+ * in app_settings (key TRADING_COSTS_OVERRIDE, allowlisted) and applied at
+ * the start of every code path that measures anything.
+ *
+ * Module state on purpose: tradingCostFor is called synchronously deep inside
+ * the lab's exhaustive search and the plan backtest, and threading an async
+ * settings read through those would put a database round-trip inside a hot
+ * loop. One read per invocation at the entry point, then pure lookups.
+ */
+let activeOverrides: TradingCostOverrides = {};
+
+const CATEGORIES: readonly CostCategory[] = ["forex", "metal", "index", "energy"];
+
+/**
+ * Validates the stored JSON, field by field, dropping anything unsound.
+ *
+ * The bounds are load-bearing:
+ *  - `roundTripPct` must be **strictly positive** — an override of zero would
+ *    resurrect the free-spread backtest this file exists to prevent — and at
+ *    most 1 (a 1% round trip is already several times the widest default;
+ *    beyond it the operator has almost certainly typed pips into a percent
+ *    field, and silently honouring the slip would fail every floor at once).
+ *  - `perBarPct` may be zero (swap genuinely rounds to nothing on some
+ *    accounts) but never negative, and at most 0.05%/bar for the same
+ *    unit-slip reason.
+ * Invalid fields are dropped individually so one typo does not discard the
+ * other seven numbers.
+ */
+export function parseTradingCostOverrides(raw: string | null): TradingCostOverrides {
+  if (!raw || !raw.trim()) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  const out: TradingCostOverrides = {};
+  for (const category of CATEGORIES) {
+    const v = (parsed as Record<string, unknown>)[category];
+    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+    const o = v as Record<string, unknown>;
+    const entry: Partial<TradingCost> = {};
+    if (
+      typeof o.roundTripPct === "number" &&
+      Number.isFinite(o.roundTripPct) &&
+      o.roundTripPct > 0 &&
+      o.roundTripPct <= 1
+    ) {
+      entry.roundTripPct = o.roundTripPct;
+    }
+    if (
+      typeof o.perBarPct === "number" &&
+      Number.isFinite(o.perBarPct) &&
+      o.perBarPct >= 0 &&
+      o.perBarPct <= 0.05
+    ) {
+      entry.perBarPct = o.perBarPct;
+    }
+    if (Object.keys(entry).length > 0) out[category] = entry;
+  }
+  return out;
+}
+
+export function setTradingCostOverrides(next: TradingCostOverrides): void {
+  activeOverrides = next;
+}
+
+/** What is currently in force, for the settings page to display. */
+export function activeTradingCostOverrides(): TradingCostOverrides {
+  return activeOverrides;
+}
+
 export function tradingCostFor(category: CommodityMeta["category"]): TradingCost {
-  return BY_CATEGORY[category] ?? BY_CATEGORY.index;
+  const base = BY_CATEGORY[category] ?? BY_CATEGORY.index;
+  const override = activeOverrides[category as CostCategory];
+  return override ? { ...base, ...override } : base;
+}
+
+/** The untouched defaults, so the settings page can show what an override replaces. */
+export function defaultTradingCostFor(category: CostCategory): TradingCost {
+  return BY_CATEGORY[category];
 }
 
 /**

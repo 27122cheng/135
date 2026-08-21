@@ -1,5 +1,6 @@
 import { getSignalStore } from "./db";
 import { USER_SETTABLE_KEYS, type UserSettableKey } from "./api-key-names";
+import { parseTradingCostOverrides, setTradingCostOverrides } from "@/config/trading-costs";
 
 /**
  * Settings a browser writes and a scheduler reads.
@@ -29,6 +30,14 @@ const ALERT_KEYS = [
 ] as const;
 
 /**
+ * Non-credential configuration. TRADING_COSTS_OVERRIDE carries the operator's
+ * own spread/holding-cost figures as JSON — validated field-by-field in
+ * config/trading-costs.ts before anything believes it, so a typo degrades to
+ * the defaults rather than to a free-spread backtest.
+ */
+const CONFIG_KEYS = ["TRADING_COSTS_OVERRIDE"] as const;
+
+/**
  * The AI keys are settable here *as well as* per-request, and the two serve
  * different callers.
  *
@@ -39,7 +48,7 @@ const ALERT_KEYS = [
  * by hand. Storing them makes the scheduler work; the header still wins when
  * there is one, so a browser's own keys are never overridden by the stored set.
  */
-export const SETTABLE_KEYS = [...ALERT_KEYS, ...USER_SETTABLE_KEYS] as const;
+export const SETTABLE_KEYS = [...ALERT_KEYS, ...CONFIG_KEYS, ...USER_SETTABLE_KEYS] as const;
 
 export type SettingKey = (typeof SETTABLE_KEYS)[number];
 
@@ -83,6 +92,22 @@ let lastError: string | null = null;
 export function clearSettingsCache(): void {
   cache = null;
   lastError = null;
+}
+
+/**
+ * Loads the operator's cost overrides into config/trading-costs' module state.
+ *
+ * Called at the entry of every path that measures anything (the scan, the
+ * lab, the forward ledger) because tradingCostFor is synchronous by design —
+ * it sits inside the lab's exhaustive search. A failed read applies the
+ * defaults: the pessimistic built-in costs are the safe direction to fail in.
+ */
+export async function applyStoredTradingCosts(): Promise<void> {
+  try {
+    setTradingCostOverrides(parseTradingCostOverrides(await getSetting("TRADING_COSTS_OVERRIDE")));
+  } catch {
+    setTradingCostOverrides({});
+  }
 }
 
 async function loadAll(): Promise<Map<string, string>> {

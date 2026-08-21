@@ -5,6 +5,12 @@ import { loadUserKeys, saveUserKeys, userKeyHeaders, type UserKeys } from "@/lib
 import type { UserSettableKey } from "@/lib/api-key-names";
 import { SiteNav } from "@/components/site-nav";
 import { loadSizingConfig, saveSizingConfig, DEFAULT_SIZING } from "@/lib/sizing-client";
+import {
+  defaultTradingCostFor,
+  parseTradingCostOverrides,
+  type CostCategory,
+  type TradingCostOverrides,
+} from "@/config/trading-costs";
 
 interface KeyInfo {
   name: UserSettableKey;
@@ -214,6 +220,150 @@ function SizingSection() {
   );
 }
 
+const COST_CATEGORIES: { id: CostCategory; label: string; covers: string }[] = [
+  { id: "forex", label: "外匯", covers: "EURUSD、USDJPY、GBPUSD" },
+  { id: "metal", label: "貴金屬", covers: "XAUUSD" },
+  { id: "index", label: "指數", covers: "NAS100、GER40、US30、SPX500" },
+  { id: "energy", label: "能源", covers: "WTI" },
+];
+
+/**
+ * 成本參數 — the operator's own broker costs, replacing the built-in guesses.
+ *
+ * Every floor in this system is an expectancy *net of costs*: the plan
+ * backtest, the lab, the forward ledger all charge these numbers on every
+ * simulated trade. The defaults are retail-typical and deliberately
+ * pessimistic; if the actual account's spread differs much, the floors are
+ * measuring a different broker than the one being traded. Stored server-side
+ * (unlike the sizing section) because the 4-hourly scan has no browser and
+ * must charge the same costs the operator sees.
+ */
+function CostSection() {
+  const [values, setValues] = useState<TradingCostOverrides>({});
+  const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/notify/config", { cache: "no-store" });
+        const body = (await res.json()) as {
+          settings?: { key: string; value: string | null }[];
+        };
+        const raw = body.settings?.find((s) => s.key === "TRADING_COSTS_OVERRIDE")?.value ?? null;
+        setValues(parseTradingCostOverrides(raw));
+      } catch {
+        // No stored value readable — the fields simply show the defaults.
+      }
+    })();
+  }, []);
+
+  const save = async (next: TradingCostOverrides) => {
+    setBusy(true);
+    setStatus(null);
+    try {
+      const payload = Object.keys(next).length > 0 ? JSON.stringify(next) : "";
+      const res = await fetch("/api/notify/config", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ TRADING_COSTS_OVERRIDE: payload }),
+      });
+      const body = (await res.json()) as { error?: string };
+      setStatus(res.ok ? "已儲存，下一次掃描與實驗起生效" : (body.error ?? "儲存失敗"));
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setField = (cat: CostCategory, field: "roundTripPct" | "perBarPct", text: string) => {
+    const next: TradingCostOverrides = { ...values, [cat]: { ...values[cat] } };
+    const v = Number(text);
+    if (text.trim() === "" || !Number.isFinite(v)) {
+      delete next[cat]![field];
+      if (Object.keys(next[cat]!).length === 0) delete next[cat];
+    } else {
+      next[cat]![field] = v;
+    }
+    setValues(next);
+  };
+
+  return (
+    <div className="mb-5 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
+      <div className="mb-1 flex items-baseline gap-2">
+        <h2 className="text-sm font-medium text-neutral-200">交易成本參數</h2>
+        {status && <span className="text-[10px] text-emerald-400">{status}</span>}
+      </div>
+      <p className="mb-3 text-[11px] leading-relaxed text-neutral-500">
+        回測、實驗室與前進帳本的每一筆模擬交易都會扣這裡的成本，所有勝率與期望值門檻都是
+        <span className="text-neutral-300">扣完成本後</span>的數字。預設值是零售常見的偏保守估計；
+        如果你的券商點差差很多，填入實際值（單位：<span className="text-neutral-300">佔進場價的百分比</span>，
+        例如 EURUSD 1.5 pips 來回 ≈ 0.014）。留空的欄位用預設。
+        亂填有保險：來回成本必須大於 0 且不超過 1%，超出範圍的值會被丟棄回預設。
+      </p>
+      <div className="flex flex-col gap-2">
+        {COST_CATEGORIES.map((c) => {
+          const d = defaultTradingCostFor(c.id);
+          return (
+            <div key={c.id} className="flex flex-wrap items-end gap-3">
+              <span className="w-16 text-[11px] text-neutral-300">
+                {c.label}
+                <span className="block text-[9px] text-neutral-600">{c.covers}</span>
+              </span>
+              <label className="flex flex-col gap-1 text-[10px] text-neutral-500">
+                來回點差+手續費 %（預設 {d.roundTripPct}）
+                <input
+                  type="number"
+                  step="0.001"
+                  min={0}
+                  value={values[c.id]?.roundTripPct ?? ""}
+                  placeholder={String(d.roundTripPct)}
+                  onChange={(e) => setField(c.id, "roundTripPct", e.target.value)}
+                  className="w-32 rounded-lg border border-neutral-700 bg-neutral-950 px-2.5 py-1.5 font-mono text-xs text-neutral-100"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-[10px] text-neutral-500">
+                每日持有成本 %（預設 {d.perBarPct}）
+                <input
+                  type="number"
+                  step="0.0005"
+                  min={0}
+                  value={values[c.id]?.perBarPct ?? ""}
+                  placeholder={String(d.perBarPct)}
+                  onChange={(e) => setField(c.id, "perBarPct", e.target.value)}
+                  className="w-32 rounded-lg border border-neutral-700 bg-neutral-950 px-2.5 py-1.5 font-mono text-xs text-neutral-100"
+                />
+              </label>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void save(values)}
+          className="rounded-lg bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-900 disabled:opacity-50"
+        >
+          儲存成本參數
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            setValues({});
+            void save({});
+          }}
+          className="rounded-lg border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 disabled:opacity-50"
+        >
+          恢復預設
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [keys, setKeys] = useState<UserKeys>({});
   const [saved, setSaved] = useState(false);
@@ -366,6 +516,7 @@ export default function SettingsPage() {
       <SiteNav title="API 金鑰設定" />
 
       <SizingSection />
+      <CostSection />
 
       <div className="mb-5 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
         <p className="text-xs leading-relaxed text-neutral-400">

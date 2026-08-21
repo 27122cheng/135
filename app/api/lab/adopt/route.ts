@@ -13,7 +13,7 @@ import {
   type LabAdoption,
 } from "@/lib/analysis/lab-adoption";
 import { getSignalStore } from "@/lib/db";
-import { clearSettingsCache } from "@/lib/settings";
+import { applyStoredTradingCosts, clearSettingsCache } from "@/lib/settings";
 import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
@@ -142,6 +142,8 @@ export async function POST(request: Request) {
 
   const gaps: string[] = [];
   try {
+    // Same costs the lab page's report was measured under.
+    await applyStoredTradingCosts();
     // Re-measure — on the same bar size the page's report used. The report
     // may be stale, and this is the moment the combination starts governing
     // real entries.

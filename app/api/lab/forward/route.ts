@@ -2,6 +2,7 @@ import { COMMODITIES } from "@/types/signal";
 import { summariseForward } from "@/lib/analysis/lab-forward";
 import { advanceLedger, LEDGER_LIMIT } from "@/lib/lab-forward-runner";
 import { getSignalStore } from "@/lib/db";
+import { applyStoredTradingCosts } from "@/lib/settings";
 import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +34,8 @@ export async function GET(request: Request) {
   const symbol = params.get("symbol")?.toUpperCase() ?? null;
   const direction = params.get("direction") === "short" ? "short" : params.get("direction") === "long" ? "long" : null;
   try {
+    // The stats column charges costs; use the operator's figures when set.
+    await applyStoredTradingCosts();
     const trades = await store.listLabTrades({ symbol, direction, limit: LEDGER_LIMIT });
     return json({
       stats: summariseForward(trades),
@@ -65,6 +68,7 @@ export async function POST(request: Request) {
   if (targets.length === 0) return json({ error: `Unknown symbol ${requested}` }, { status: 404 });
 
   const gaps: string[] = [];
+  await applyStoredTradingCosts();
   const results = await Promise.allSettled(targets.map((meta) => advanceLedger(meta, gaps)));
   const report = results.map((r, i) =>
     r.status === "fulfilled"

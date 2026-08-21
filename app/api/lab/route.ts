@@ -1,6 +1,7 @@
 import { COMMODITIES } from "@/types/signal";
 import { fetchDeepD1, fetchDeepH4 } from "@/lib/data-sources/deep-history";
 import { runLab, VERIFY_FLOOR } from "@/lib/analysis/lab";
+import { applyStoredTradingCosts } from "@/lib/settings";
 import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +25,8 @@ export async function GET(request: Request) {
 
   const gaps: string[] = [];
   try {
+    // The operator's own costs, before anything is measured against them.
+    await applyStoredTradingCosts();
     // Deep history, and as much of it as the free sources hold. The analysis
     // fetches one year of D1 / three months of H4, which cannot carry this
     // measurement — see lib/data-sources/deep-history.ts. H4's two-year cap

@@ -10,6 +10,7 @@ import { detectAllPatterns, patternContributions } from "./analysis/patterns";
 import { dedupeBiasItems } from "./analysis/evidence";
 import { describeProximity, isNearEntry } from "./analysis/proximity";
 import { marketStatus } from "./market-hours";
+import { applyStoredTradingCosts } from "./settings";
 import { driftWarning, fetchWitness, refineClosedReason } from "./data-sources/binance-witness";
 import { basisNote } from "./data-sources/instrument-basis";
 import { analyzeFundamental } from "./analysis/fundamental";
@@ -269,6 +270,9 @@ async function buildSignalForSymbol(
     interventionsPromise,
     adoptionsPromise,
     witnessPromise,
+    // Costs before any backtest runs: every floor downstream is an expectancy
+    // net of these numbers, and the operator's own figures beat the defaults.
+    applyStoredTradingCosts(),
   ]);
   const { positioning, fundamentalItems, news, fundFlowItems } = nonTechnical;
   const interventions: AppliedIntervention[] = [...effects.applied];
