@@ -97,7 +97,15 @@ export async function GET(request: Request) {
       if (decision.alert) {
         // A failing alert must not fail the refresh that produced it — the
         // signal is already stored and visible on the site either way.
-        const results = await notifyAll(formatAlert(signal, decision.reason, appUrl));
+        // The open-trade context rides along so a withdrawal over a filled
+        // position reads as "the thesis weakened", never "your trade was
+        // cancelled" — the monitor is still managing it.
+        const results = await notifyAll(
+          formatAlert(signal, decision.reason, appUrl, {
+            openTrade,
+            activeStop: monitorState?.activeStop ?? null,
+          }),
+        );
         notified = results.filter((r) => r.ok).map((r) => r.channel);
       }
       // The gap *lines*, not just a count. "gaps: 7" in a workflow log is

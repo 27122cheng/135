@@ -115,6 +115,18 @@ export function shouldAlert(
       breadthOf(previous.direction, previous.bias_items ?? []).agreeing.length >=
         MIN_CONSENSUS_DIMENSIONS
     ) {
+      // Two different messages hide behind one transition. A *pending* entry
+      // that the new scan no longer supports is a cancelled order — 已失效 is
+      // exactly right. But once the monitor has filled it, the same words read
+      // as "your trade was cancelled", which is false: a trade in flight
+      // outlives the signal that opened it, and only the exit rules (stop,
+      // target, breakeven, structure) close it. The live sequence that forced
+      // this: 已觸及進場價 at 20:16, followed minutes later by 先前的進場訊號
+      // 已失效 — the reader asked, reasonably, why their filled trade was
+      // "cancelled". It wasn't; the message just couldn't say so.
+      if (options.openTrade) {
+        return { alert: true, reason: "持倉中的進場論點已轉弱（僅通知，持倉不取消）" };
+      }
       return { alert: true, reason: "先前的進場訊號已失效" };
     }
     return { alert: false, reason: "觀望，不發送" };
@@ -230,7 +242,17 @@ export function formatReleaseAlert(
   return lines.filter((l) => l !== null).join("\n");
 }
 
-export function formatAlert(signal: TradeSignal, reason: string, appUrl?: string): string {
+export function formatAlert(
+  signal: TradeSignal,
+  reason: string,
+  appUrl?: string,
+  options: {
+    /** The monitor holds a filled, unresolved position on this symbol. */
+    openTrade?: boolean;
+    /** That position's stop currently in force, for the held-position notice. */
+    activeStop?: number | null;
+  } = {},
+): string {
   const plan = signal.trade_plan;
   const dir = signal.direction === "long" ? "做多 ▲" : "做空 ▼";
 
@@ -238,13 +260,33 @@ export function formatAlert(signal: TradeSignal, reason: string, appUrl?: string
   // you the thing you were told about is off — and printing 進場 — 停損 — over
   // it would read as a plan with missing numbers.
   if (plan.stance !== "enter") {
+    // Held position: the analysis flipped, the trade did not. Say both, in
+    // that order, or the reader concludes their filled trade was cancelled —
+    // see the matching branch in shouldAlert.
+    if (options.openTrade) {
+      const held = [
+        `<b>${signal.symbol} 分析已轉觀望 —— 持倉不受影響</b>`,
+        `你已進場的部位<b>不會</b>因重新掃描而取消。持倉由出場規則管理` +
+          `（停損／停利／保本移停／結構移停／反向 CHoCH 出場），監控持續追蹤中` +
+          (options.activeStop != null ? `，目前停損 ${fmt(options.activeStop)}` : "") +
+          `。`,
+        `本次掃描（${signal.grade}）已不再支持新開倉 —— 這則通知的意義是：進場當時的論點轉弱了，` +
+          `可自行考慮收緊停損或減碼，但系統沒有、也不會替你平倉。`,
+        "",
+        plan.summary,
+        "",
+        `<i>觸發：${reason}</i>`,
+      ];
+      if (appUrl) held.push(appUrl);
+      return held.filter((l) => l !== null).join("\n");
+    }
     // A withdrawal only makes sense for a trade that was announced, and
     // announcement now requires consensus — so the withdrawal checks the same
     // bar against the *previous* signal's own evidence. Without this, muting a
     // narrow trade would still let its disappearance ping the phone.
     const withdrawal = [
       `<b>${signal.symbol} 先前的進場訊號已失效</b>`,
-      `本次掃描結果：${signal.grade}，${plan.wait_for ? "觀望" : "不進場"}`,
+      `此訊號尚未成交，視為取消掛單。本次掃描結果：${signal.grade}，${plan.wait_for ? "觀望" : "不進場"}`,
       "",
       plan.summary,
       plan.wait_for ? `等待條件：${plan.wait_for}` : null,

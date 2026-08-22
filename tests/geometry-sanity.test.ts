@@ -175,6 +175,30 @@ async function main() {
       text.includes("已失效") && !text.includes("進場 —"), text);
     check("it carries what to wait for", text.includes("等待條件"), text);
 
+    // ── the same transition over a FILLED position is a different message ──
+    //
+    // 已觸及進場價 at 20:16, then 先前的進場訊號已失效 minutes later: the
+    // reader asked why their filled trade was "cancelled". It wasn't — a trade
+    // in flight outlives the signal that opened it — but the message could not
+    // say so. With the monitor holding the position, the alert still fires
+    // (the thesis weakening is exactly what to interrupt a holder for), and
+    // the body says the position stands and who manages the exit.
+    const heldDecision = shouldAlert(nowWaiting, entered, "A", { openTrade: true });
+    check("a withdrawal over an open position still alerts", heldDecision.alert, heldDecision);
+    check("but says the position is not cancelled",
+      heldDecision.reason.includes("持倉不取消"), heldDecision.reason);
+    const heldText = formatAlert(nowWaiting, heldDecision.reason, "r", {
+      openTrade: true,
+      activeStop: 53160,
+    });
+    check("the held message leads with 持倉不受影響",
+      heldText.includes("持倉不受影響") && !heldText.includes("已失效"), heldText);
+    check("names the stop currently in force", heldText.includes("53160"), heldText);
+    check("and says the system will not close it for you", heldText.includes("不會替你平倉"),
+      heldText);
+    // The pending-order wording now says which case it is.
+    check("a true cancellation says the order never filled", text.includes("取消掛單"), text);
+
     // A wait that follows a wait is not news.
     const wasWaiting = { ...entered, trade_plan: { stance: "wait" } } as unknown as SignalRow;
     check("but a quiet symbol staying quiet is not",
