@@ -7,6 +7,7 @@ import { fetchJson } from "./http";
 import { fetchStooqText } from "./stooq-fetch";
 import { fetchTwelveDataQuote } from "./twelvedata";
 import { fetchFmpQuote } from "./fmp";
+import { fetchTradingViewQuote } from "./tradingview";
 
 /**
  * The self-hosted yfinance proxy's engine.
@@ -171,6 +172,7 @@ export interface LatestPrice {
     | "twelvedata"
     | "fmp"
     | "binance"
+    | "tradingview"
     | "proxy-bar"
     | "fred"
     | "er-api"
@@ -279,12 +281,13 @@ export async function fetchLatestPrice(
   // the slowest of the three, not their sum, and the freshest answer wins
   // exactly as before.
   const live: LatestPrice[] = direct ? [direct] : [];
-  const [stooq, td, fmp] = await Promise.all([
+  const [stooq, td, fmp, tv] = await Promise.all([
     stooqTicker ? fetchStooqQuote(stooqTicker, gaps).catch(() => null) : null,
     symbol ? fetchTwelveDataQuote({ symbol }, gaps).catch(() => null) : null,
     symbol ? fetchFmpQuote({ symbol }, gaps).catch(() => null) : null,
+    symbol ? fetchTradingViewQuote({ symbol }, gaps).catch(() => null) : null,
   ]);
-  for (const candidate of [stooq, td, fmp]) if (candidate) live.push(candidate);
+  for (const candidate of [stooq, td, fmp, tv]) if (candidate) live.push(candidate);
 
   // Freshest live answer wins, and if it is genuinely recent nothing further
   // is asked. The daily sources below exist for when every live feed is dark.
