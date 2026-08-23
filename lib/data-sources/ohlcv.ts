@@ -1,5 +1,6 @@
 import { getKey } from "../api-keys";
 import type { CommodityMeta, Timeframe } from "@/types/signal";
+import { fetchBinanceOHLCV } from "./binance-crypto";
 import { CANDLE_STALE_MS } from "./cache";
 import { fetchFmpOHLCV } from "./fmp";
 import { fetchFree } from "./free-source";
@@ -14,7 +15,7 @@ export interface OHLCVResult {
   symbol: string;
   timeframe: Timeframe;
   candles: Candle[];
-  source: "yfinance-proxy" | "finnhub" | "stooq" | "twelvedata" | "fmp";
+  source: "yfinance-proxy" | "finnhub" | "stooq" | "twelvedata" | "fmp" | "binance";
   /** True when the candles came from cache past its TTL. Never hidden from the user. */
   stale: boolean;
 }
@@ -182,6 +183,22 @@ export async function fetchOHLCV(
       if (message.includes("stale")) gaps.push(message);
     }
   };
+
+  // Crypto trades on the exchange whose keyless API we can ask directly —
+  // routing BTCUSD through Yahoo's delayed mirror while Binance sits unused
+  // is how a 24/7 instrument reported "K 棒不足". The venue answers first;
+  // the ordinary chain below remains the fallback.
+  if (meta.category === "crypto") {
+    const binanceGaps: string[] = [];
+    const binance = await fetchBinanceOHLCV(meta, timeframe, binanceGaps, {
+      ttlMs: OHLCV_TTL_MS,
+    });
+    if (binance) {
+      promoteStale(binanceGaps);
+      return { symbol: meta.symbol, timeframe, candles: binance, source: "binance", stale: false };
+    }
+    attempts.push(...binanceGaps, "Binance 無回應");
+  }
 
   const proxyGaps: string[] = [];
   const proxied = await fetchViaProxy(meta.yfinanceSymbol, timeframe, proxyGaps);

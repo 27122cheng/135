@@ -49,6 +49,10 @@ const BY_CATEGORY: Record<CostCategory, TradingCost> = {
   // Oil is the widest of the four: ~$0.05 round trip on ~$65, and the
   // continuous contract pays a roll every month.
   energy: { roundTripPct: 0.08, perBarPct: 0.004 },
+  // Spot crypto on a major venue: taker fees ~0.1% per side at retail tiers,
+  // and perpetual funding commonly runs ~0.01%/8h. Pessimistic side of both,
+  // per the house rule.
+  crypto: { roundTripPct: 0.2, perBarPct: 0.03 },
 };
 
 export type TradingCostOverrides = Partial<Record<CostCategory, Partial<TradingCost>>>;
@@ -69,7 +73,7 @@ export type TradingCostOverrides = Partial<Record<CostCategory, Partial<TradingC
  */
 let activeOverrides: TradingCostOverrides = {};
 
-const CATEGORIES: readonly CostCategory[] = ["forex", "metal", "index", "energy"];
+const CATEGORIES: readonly CostCategory[] = ["forex", "metal", "index", "energy", "crypto"];
 
 /**
  * Validates the stored JSON, field by field, dropping anything unsound.

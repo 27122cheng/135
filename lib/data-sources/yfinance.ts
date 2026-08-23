@@ -1,5 +1,6 @@
 import type { Timeframe } from "@/types/signal";
 import { fetchBackupPrice } from "./backup-price";
+import { fetchBinanceQuote, isCryptoTicker } from "./binance-crypto";
 import { CANDLE_STALE_MS } from "./cache";
 import { fetchFree } from "./free-source";
 import { fetchJson } from "./http";
@@ -169,6 +170,7 @@ export interface LatestPrice {
     | "stooq"
     | "twelvedata"
     | "fmp"
+    | "binance"
     | "proxy-bar"
     | "fred"
     | "er-api"
@@ -192,6 +194,17 @@ export async function fetchLatestPrice(
   /** Our symbol — enables the third-witness backup sources (FRED / ER-API / gold-api). */
   symbol?: string,
 ): Promise<LatestPrice | null> {
+  // Crypto: the exchange's own keyless feed is the genuinely realtime one,
+  // so it leads and Yahoo becomes its fallback. Detection is by the ticker
+  // form (Yahoo's crypto tickers are BASE-USD) because this function does not
+  // receive the category. Not a witness — for a crypto instrument Binance IS
+  // the venue; the never-a-price-source rule belongs to basis-mismatched
+  // proxies (PAXG for gold), and those still never set a price.
+  if (isCryptoTicker(ticker)) {
+    const fromBinance = await fetchBinanceQuote({ symbol: symbol ?? ticker, yfinanceSymbol: ticker }, gaps);
+    if (fromBinance && fromBinance.ageMinutes <= 15) return fromBinance;
+  }
+
   const result = await fetchFree<{ price: number; at: string }>({
     source: "yahoo",
     label: `即時報價 (${ticker})`,

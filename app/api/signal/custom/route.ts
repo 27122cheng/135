@@ -1,4 +1,5 @@
 import { buildSignalFor } from "@/lib/signal-builder";
+import { isCryptoYahooTicker } from "@/lib/custom-symbols";
 import { defaultFundamentals } from "@/config/fundamentals";
 import type { CommodityMeta } from "@/types/signal";
 import { parseUserKeyHeader, withUserKeys } from "@/lib/api-keys";
@@ -66,7 +67,9 @@ export async function POST(request: Request) {
   const meta: CommodityMeta = {
     symbol,
     label,
-    category: "index",
+    // The server-side twin of toCommodityMeta's rule: crypto gets 24/7 market
+    // hours, crypto costs, and Binance as its primary data source.
+    category: isCryptoYahooTicker(yahooSymbol) ? "crypto" : "index",
     yfinanceSymbol: yahooSymbol,
     stooqSymbol: stooqSymbol || yahooSymbol,
     // User-added targets are quoted as whatever the ticker is; spot is the

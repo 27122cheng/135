@@ -225,6 +225,7 @@ const COST_CATEGORIES: { id: CostCategory; label: string; covers: string }[] = [
   { id: "metal", label: "貴金屬", covers: "XAUUSD" },
   { id: "index", label: "指數", covers: "NAS100、GER40、US30、SPX500" },
   { id: "energy", label: "能源", covers: "WTI" },
+  { id: "crypto", label: "加密貨幣", covers: "自訂的 BTC／ETH 等" },
 ];
 
 /**

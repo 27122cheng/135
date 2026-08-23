@@ -1,4 +1,5 @@
 import type { CommodityMeta } from "@/types/signal";
+import { fetchBinanceDeep } from "./binance-crypto";
 import { CANDLE_STALE_MS } from "./cache";
 import { fetchFree } from "./free-source";
 import { fetchStooqText } from "./stooq-fetch";
@@ -46,7 +47,7 @@ const TTL_MS = 12 * 60 * 60 * 1000;
 
 export interface DeepHistory {
   candles: Candle[];
-  source: "yfinance-proxy" | "stooq" | "twelvedata";
+  source: "yfinance-proxy" | "stooq" | "twelvedata" | "binance";
   /** Span of the series in years, one decimal. */
   years: number;
   stale: boolean;
@@ -105,6 +106,15 @@ export async function fetchDeepD1(
   meta: CommodityMeta,
   gaps: string[],
 ): Promise<DeepHistory | null> {
+  // Crypto: the venue's own paged klines (up to 3,000 daily bars ≈ 8 years),
+  // keyless and realtime — the mirrors below stay as fallbacks.
+  if (meta.category === "crypto") {
+    const binance = await fetchBinanceDeep(meta, "D1", gaps);
+    if (binance && binance.length >= SHORT_SERIES) {
+      return { candles: binance, source: "binance", years: span(binance), stale: false };
+    }
+  }
+
   const proxyGaps: string[] = [];
   const proxied = await fetchViaProxy(meta.yfinanceSymbol, "D1", proxyGaps, "10y");
   const fromProxy = proxied?.candles ?? null;
@@ -174,6 +184,14 @@ export async function fetchDeepH4(
   meta: CommodityMeta,
   gaps: string[],
 ): Promise<DeepHistory | null> {
+  // Crypto: 3,000 native 4h bars ≈ 16 months, straight from the venue.
+  if (meta.category === "crypto") {
+    const binance = await fetchBinanceDeep(meta, "H4", gaps);
+    if (binance && binance.length >= SHORT_SERIES) {
+      return { candles: binance, source: "binance", years: span(binance), stale: false };
+    }
+  }
+
   const proxyGaps: string[] = [];
   const proxied = await fetchViaProxy(meta.yfinanceSymbol, "H4", proxyGaps, "730d");
   const fromProxy = proxied?.candles ?? null;

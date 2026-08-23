@@ -96,9 +96,16 @@ export function marketStatus(
   now: Date,
   quoteAgeMinutes: number | null,
   barAgeMinutes: number | null = null,
-  /** The instrument's category — forex gets the 24/5 rule below. */
+  /** The instrument's category — forex gets the 24/5 rule, crypto 24/7. */
   category?: string,
 ): MarketStatus {
+  // Crypto never closes — not on weekends, not on holidays. The weekend
+  // clock below is a fact about FX/metal/index/energy venues, and applying
+  // it to BTCUSD produced 週末休市 over a market printing every second.
+  // Feed staleness on crypto is a data gap (already reported as one), never
+  // a closed market.
+  if (category === "crypto") return { closed: false, reason: null, basis: "open" };
+
   if (isWeekendClosed(now)) {
     return {
       closed: true,

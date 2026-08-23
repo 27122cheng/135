@@ -58,12 +58,24 @@ export function saveCustomSymbols(list: CustomSymbol[]): void {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
 }
 
+/**
+ * Yahoo writes crypto tickers as BASE-USD (BTC-USD, ETH-USD); nothing else
+ * uses that form (FX is EURUSD=X, futures GC=F, indices ^GSPC). Duplicated
+ * from binance-crypto's detector because this file ships to the browser and
+ * must not pull server data-source modules with it.
+ */
+export function isCryptoYahooTicker(ticker: string): boolean {
+  return /^[A-Za-z0-9]{2,10}-USD[TC]?$/.test(ticker.trim());
+}
+
 /** Shown in the same chip row as the built-ins. */
 export function toCommodityMeta(s: CustomSymbol): CommodityMeta {
   return {
     symbol: s.symbol,
     label: s.label,
-    category: "index",
+    // Crypto must be recognised or it inherits index market hours — which is
+    // how BTCUSD reported 週末休市 on a market that never closes.
+    category: isCryptoYahooTicker(s.yahooSymbol) ? "crypto" : "index",
     yfinanceSymbol: s.yahooSymbol,
     stooqSymbol: s.stooqSymbol || s.yahooSymbol,
     // User-added targets are quoted as whatever the ticker is; spot is the

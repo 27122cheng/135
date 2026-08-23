@@ -467,7 +467,7 @@ export interface CommodityMeta {
   /** Built-ins use SupportedSymbol; user-added targets supply their own id. */
   symbol: string;
   label: string;
-  category: "forex" | "metal" | "index" | "energy";
+  category: "forex" | "metal" | "index" | "energy" | "crypto";
   /** Primary OHLCV ticker, served through our own yfinance proxy. */
   yfinanceSymbol: string;
   /** Stooq ticker — keyless fallback (daily/weekly only). Unverified live. */
