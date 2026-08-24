@@ -187,6 +187,22 @@ async function main() {
     check("a withdrawal over an open position still alerts", heldDecision.alert, heldDecision);
     check("but says the position is not cancelled",
       heldDecision.reason.includes("持倉不取消"), heldDecision.reason);
+    // Tagged so the route can dedupe it. A setup sitting on the geometry
+    // floor can oscillate enter→wait→enter→wait across consecutive scans —
+    // the "back to enter" edge is silently swallowed by openTrade
+    // suppression, so every "back to wait" edge looks, from this function
+    // alone, exactly like the first one ("這筆信號一直發送"). The category
+    // is how the stateless decision hands the repeat-detection problem to
+    // the route, which has the database to solve it with.
+    check("the decision is tagged for route-level dedupe",
+      heldDecision.dedupeCategory === "held-weakened", heldDecision.dedupeCategory);
+    // A plain (non-held) withdrawal must not carry the tag — its own
+    // dedupe already works via the ordinary previous-stance comparison,
+    // and tagging it would make the route deduplicate a cancelled *order*
+    // against a completely different position later.
+    const plainDecision = shouldAlert(nowWaiting, entered, "A", { openTrade: false });
+    check("a plain cancellation is not tagged",
+      plainDecision.dedupeCategory === undefined, plainDecision.dedupeCategory);
     const heldText = formatAlert(nowWaiting, heldDecision.reason, "r", {
       openTrade: true,
       activeStop: 53160,

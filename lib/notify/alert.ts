@@ -52,6 +52,12 @@ export interface AlertDecision {
   alert: boolean;
   /** Why — surfaced in the refresh response so a silent run is explainable. */
   reason: string;
+  /**
+   * A category the route can dedupe against a persistent marker, for events
+   * that keep being "true" without being *new*. shouldAlert is pure and has
+   * no database, so it only names the category; the route decides the key.
+   */
+  dedupeCategory?: "held-weakened";
 }
 
 /**
@@ -125,7 +131,17 @@ export function shouldAlert(
       // 已失效 — the reader asked, reasonably, why their filled trade was
       // "cancelled". It wasn't; the message just couldn't say so.
       if (options.openTrade) {
-        return { alert: true, reason: "持倉中的進場論點已轉弱（僅通知，持倉不取消）" };
+        // Named so the route can dedupe: a setup sitting right on the
+        // geometry floor can flip enter→wait→enter→wait across consecutive
+        // scans, and the "back to enter" edge is silently swallowed by the
+        // openTrade suppression a few lines below — so every "back to wait"
+        // edge looked, from here alone, exactly like the first one. Without a
+        // route-level per-position dedupe this fires on every oscillation.
+        return {
+          alert: true,
+          reason: "持倉中的進場論點已轉弱（僅通知，持倉不取消）",
+          dedupeCategory: "held-weakened",
+        };
       }
       return { alert: true, reason: "先前的進場訊號已失效" };
     }

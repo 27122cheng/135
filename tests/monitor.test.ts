@@ -368,6 +368,19 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   const refresh = readFileSync("app/api/refresh/route.ts", "utf8");
   check("the refresh route reads the open-trade state before alerting",
     refresh.includes("openTrade"));
+  // 「這筆信號一直發送」— a held-position withdrawal repeated on every
+  // enter→wait oscillation because the route sent whatever shouldAlert
+  // decided, with no memory of having already said it. The fix routes the
+  // dedupeCategory tag through recordRelease, keyed to the tracked
+  // position's own identity so a genuinely new position still gets its
+  // own notice.
+  check("a held-weakened decision is deduped through recordRelease",
+    refresh.includes('decision.dedupeCategory === "held-weakened"') &&
+    refresh.includes("recordRelease") &&
+    refresh.includes("tracked?.generatedAt"),
+    refresh);
+  check("the dedupe fails open rather than silencing a real warning",
+    refresh.includes(".catch(() => ({ isNew: true }))"), refresh);
 }
 
 report("monitor + add-ons");

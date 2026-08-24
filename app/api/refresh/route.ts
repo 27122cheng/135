@@ -94,7 +94,31 @@ export async function GET(request: Request) {
       const openTrade = monitorState?.state === "entered" || monitorState?.state === "added";
       const decision = shouldAlert(signal, previous ?? null, minGrade, { openTrade });
       let notified: string[] = [];
-      if (decision.alert) {
+      let sendIt = decision.alert;
+      if (sendIt && decision.dedupeCategory === "held-weakened") {
+        // A setup sitting right on the geometry floor can flip
+        // enter→wait→enter→wait across consecutive scans; the "back to
+        // enter" edge is silently swallowed by the openTrade suppression
+        // below, so every "back to wait" edge read as a fresh discovery and
+        // the same "thesis weakened" notice fired on every oscillation —
+        // "這筆信號一直發送". Scoped to the currently tracked position's own
+        // identity (its generatedAt), so a genuinely new position that later
+        // weakens still gets its own notice, and the position resolving and
+        // reopening resets it. Fails open: a dedupe check that itself fails
+        // must not silence a real warning about a weakening thesis.
+        const posId = monitorState?.tracked?.generatedAt ?? "unknown";
+        const receipt = await store
+          .recordRelease({
+            seriesId: `held-weakened:${meta.symbol}`,
+            period: posId,
+            value: 0,
+            previousValue: null,
+            estimate: null,
+          })
+          .catch(() => ({ isNew: true }));
+        sendIt = receipt.isNew;
+      }
+      if (sendIt) {
         // A failing alert must not fail the refresh that produced it — the
         // signal is already stored and visible on the site either way.
         // The open-trade context rides along so a withdrawal over a filled
@@ -119,8 +143,13 @@ export async function GET(request: Request) {
         actionable: grouped.keyRelated.length + grouped.other.length,
         gapLines: [...grouped.keyRelated, ...grouped.other],
         noteLines: [...grouped.informational, ...grouped.permanent],
-        alerted: decision.alert,
-        alertReason: decision.reason,
+        // `alerted` reflects what actually happened, not just the raw
+        // decision — a deduped held-weakened notice decided "yes" and sent
+        // nothing, and a log line claiming otherwise is the same kind of
+        // undiagnosable lie the gap-count field above exists to avoid.
+        alerted: sendIt,
+        alertReason:
+          decision.alert && !sendIt ? `${decision.reason}（本持倉已通知過，本輪不重複發送）` : decision.reason,
         notified,
         forward,
       };
