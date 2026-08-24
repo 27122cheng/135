@@ -1,4 +1,5 @@
 import type { SignalStore } from "@/lib/db";
+import { COMMODITIES } from "@/types/signal";
 import type { JournalEntry } from "@/types/journal";
 import { computeTrackRecord, type TrackBucket } from "@/lib/journal/stats";
 import { notifyAll } from "@/lib/notify";
@@ -51,13 +52,42 @@ function bucketLine(label: string, b: TrackBucket): string | null {
   return `${label}：${b.trades} 筆，勝率 ${win}，期望值 ${exp}/筆`;
 }
 
+export interface OpenPositionSummary {
+  symbol: string;
+  direction: "long" | "short";
+  entry: number | null;
+  /** ISO time of the signal that opened it. */
+  since: string | null;
+}
+
 /** Pure formatter, so the message is testable without a store or a clock. */
-export function buildWeeklyDigest(entries: JournalEntry[], weekLabel: string): string {
+export function buildWeeklyDigest(
+  entries: JournalEntry[],
+  weekLabel: string,
+  openPositions: OpenPositionSummary[] = [],
+): string {
   const record = computeTrackRecord(entries);
   const lines: string[] = [`<b>週結摘要 ${weekLabel}</b>`];
 
+  // A settled count of zero is not the same claim as "nothing traded". The
+  // week this bit: XAUUSD entered on the 21st and was still in flight when
+  // the digest said 門檻未放行任何交易 — false, and exactly the sentence
+  // that made the next add-on alert read as coming from nowhere.
+  const held = openPositions
+    .map(
+      (p) =>
+        `${p.symbol} ${p.direction === "long" ? "做多" : "做空"}` +
+        (p.entry != null ? `（進場 ${Math.abs(p.entry) < 10 ? p.entry.toFixed(5) : p.entry.toFixed(2)}` +
+          (p.since ? `，${p.since.slice(5, 10)} 的訊號）` : "）") : ""),
+    )
+    .join("、");
+
   if (entries.length === 0) {
-    lines.push("本週 0 筆結算 —— 門檻未放行任何交易，觀望也是一種紀錄。");
+    lines.push(
+      openPositions.length > 0
+        ? `本週 0 筆結算，${openPositions.length} 筆持倉中：${held} —— 尚未觸及停損或停利，未結算不等於沒有交易。`
+        : "本週 0 筆結算 —— 門檻未放行任何交易，觀望也是一種紀錄。",
+    );
   } else {
     for (const [label, bucket] of [
       ["正式訊號", record.real],
@@ -77,6 +107,9 @@ export function buildWeeklyDigest(entries: JournalEntry[], weekLabel: string): s
     const worst = [...tagLoss.entries()].sort((a, b) => b[1] - a[1])[0];
     if (worst) {
       lines.push(`本週最痛的停損原因：${worst[0]}（合計 -${Math.round(worst[1] * 100) / 100}%）`);
+    }
+    if (openPositions.length > 0) {
+      lines.push(`另有 ${openPositions.length} 筆持倉中：${held}`);
     }
   }
 
@@ -105,7 +138,23 @@ export async function maybeSendWeeklyDigest(
     (e) => Date.parse(e.closed_at) >= weekAgo,
   );
 
-  const text = buildWeeklyDigest(entries, week) + (appUrl ? `\n${appUrl}/review` : "");
+  // Real positions still in flight — read from the monitor's own state, the
+  // same rows the 5-minute sweep manages. Paper trackers live under
+  // `${symbol}:ref` keys and are deliberately not counted here.
+  const open: OpenPositionSummary[] = [];
+  for (const meta of COMMODITIES) {
+    const row = await store.getMonitorState(meta.symbol).catch(() => null);
+    if (row && (row.state === "entered" || row.state === "added") && row.tracked?.plan) {
+      open.push({
+        symbol: meta.symbol,
+        direction: row.tracked.direction,
+        entry: row.tracked.plan.entry,
+        since: row.tracked.generatedAt ?? null,
+      });
+    }
+  }
+
+  const text = buildWeeklyDigest(entries, week, open) + (appUrl ? `\n${appUrl}/review` : "");
   await notifyAll(text);
-  return { sent: true, reason: `已發送（${entries.length} 筆結算）` };
+  return { sent: true, reason: `已發送（${entries.length} 筆結算、${open.length} 筆持倉中）` };
 }

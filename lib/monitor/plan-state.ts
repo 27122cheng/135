@@ -305,13 +305,46 @@ export function formatMonitorAlert(
   events: MonitorEvent[],
   priceAgeMinutes: number,
   appUrl?: string,
+  context: {
+    /** The tracked plan's entry, so every push names the trade it belongs to. */
+    entry?: number | null;
+    /** When the tracked plan was generated (ISO), for the same reason. */
+    generatedAt?: string | null;
+    /**
+     * Whether the *newest* analysis still supports this position's direction.
+     * The monitor manages the snapshot it entered on — that is the standing
+     * rule — but an add-on is the one action that increases risk, and a
+     * suggestion to add days after the analysis flipped reads as the system
+     * contradicting itself ("沒有交易建議怎麼突然要我加倉"). When this is
+     * false, an add-on level is reported as reached, with the advice not to
+     * act on it; the stop moves are unaffected — they only ever reduce risk.
+     */
+    analysisSupports?: boolean;
+  } = {},
 ): string {
-  const lines = [
-    `<b>${symbol} ${direction === "long" ? "做多 ▲" : "做空 ▼"}</b>`,
-    ...events.flatMap((e) => [`<b>${e.headline}</b>`, e.detail]),
+  const lines = [`<b>${symbol} ${direction === "long" ? "做多 ▲" : "做空 ▼"}</b>`];
+
+  // Which trade this is about. A push that names a level without naming the
+  // position it belongs to reads as a recommendation out of nowhere —
+  // especially days after the entry, when the reader has lost the thread.
+  if (context.entry != null && Number.isFinite(context.entry)) {
+    const when = context.generatedAt ? `（${context.generatedAt.slice(5, 10)} 的訊號）` : "";
+    lines.push(`追蹤中的持倉：進場 ${fmt(context.entry)}${when}`);
+  }
+
+  lines.push(...events.flatMap((e) => [`<b>${e.headline}</b>`, e.detail]));
+
+  if (context.analysisSupports === false && events.some((e) => e.kind === "add_on")) {
+    lines.push(
+      `⚠ 最新一輪分析已轉觀望，<b>不建議執行這次加倉</b> —— 加倉是唯一會增加風險的動作，` +
+        `只在最新分析仍支持這個方向時才值得做。停損上移照常執行，持倉本身不受影響。`,
+    );
+  }
+
+  lines.push(
     "",
     `<i>價格延遲約 ${Math.round(priceAgeMinutes)} 分鐘（免費資料源），僅適用 H4/D1 級別的部位管理</i>`,
-  ];
+  );
   if (appUrl) lines.push(appUrl);
   return lines.join("\n");
 }

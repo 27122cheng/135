@@ -65,4 +65,34 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
   check("teaches the reading", busy.includes("正期望"));
 }
 
+// ── an open position is not the same claim as nothing traded ──────
+//
+// The live bug: XAUUSD entered on the 21st, was still in flight when the
+// digest ran, and the message said 「本次不放行任何交易」— false, and the
+// falseness is exactly what made the next add-on alert read as coming out
+// of nowhere. A held position must be visible even when nothing settled.
+{
+  const held = [{ symbol: "XAUUSD", direction: "long" as const, entry: 4597.19, since: "2026-08-21T09:00:00Z" }];
+
+  const quietButHeld = buildWeeklyDigest([], "2026-W34", held);
+  check("zero settlements with an open position is not framed as no trading",
+    !quietButHeld.includes("門檻未放行任何交易"), quietButHeld);
+  check("the position is named, with its entry and signal date",
+    quietButHeld.includes("XAUUSD") && quietButHeld.includes("4597.19") &&
+    quietButHeld.includes("08-21"),
+    quietButHeld);
+  check("still says nothing settled",
+    quietButHeld.includes("0 筆結算"), quietButHeld);
+
+  const busyWithHeld = buildWeeklyDigest(
+    [entry({ result: "win", pnl_pct: 1.5 })], "2026-W34", held,
+  );
+  check("a week with settlements also lists what's still open",
+    busyWithHeld.includes("另有 1 筆持倉中") && busyWithHeld.includes("XAUUSD"), busyWithHeld);
+
+  const noneHeld = buildWeeklyDigest([], "2026-W34", []);
+  check("no open positions keeps the original quiet-week wording",
+    noneHeld.includes("門檻未放行任何交易"), noneHeld);
+}
+
 report("weekly digest");

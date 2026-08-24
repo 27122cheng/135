@@ -289,6 +289,54 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   check("links back", text.includes("https://x.app"));
 }
 
+// ── which trade this is about, and whether adding is still wise ───
+//
+// 「沒有交易建議怎麼突然要我加倉」— an add-on alert days after entry, with
+// nothing naming the position it belonged to, read as a recommendation out
+// of nowhere. Two fixes: name the entry and its signal date on every push,
+// and when the newest analysis has flipped away from this direction, say so
+// on an add-on specifically — adding is the one action that increases risk.
+{
+  const { events: addOnEvents } = step(2021, { state: "entered", addOnsFilled: 0, activeStop: 1980 });
+
+  const named = formatMonitorAlert("XAUUSD", "long", addOnEvents, 5, "https://x.app", {
+    entry: 2000,
+    generatedAt: "2026-08-21T09:00:00Z",
+  });
+  check("the push names the position it is about", named.includes("追蹤中的持倉：進場 2000"), named);
+  check("and when the signal was generated", named.includes("08-21"), named);
+
+  const stillSupported = formatMonitorAlert("XAUUSD", "long", addOnEvents, 5, "https://x.app", {
+    entry: 2000, generatedAt: "2026-08-21T09:00:00Z", analysisSupports: true,
+  });
+  check("no warning when the newest analysis still agrees",
+    !stillSupported.includes("不建議執行這次加倉"), stillSupported);
+
+  const flipped = formatMonitorAlert("XAUUSD", "long", addOnEvents, 5, "https://x.app", {
+    entry: 2000, generatedAt: "2026-08-21T09:00:00Z", analysisSupports: false,
+  });
+  check("a flipped analysis warns against the add-on specifically",
+    flipped.includes("不建議執行這次加倉"), flipped);
+  check("but says the stop move and the position itself are unaffected",
+    flipped.includes("停損上移照常執行"), flipped);
+
+  // A flip with no add-on in this batch (just a breakeven stop move, say)
+  // must not warn — the caveat is scoped to the action that actually raises
+  // risk. Add-on moved out to 2050 so it does not coincide with 1R (2020).
+  const farAddOnPlan = plan({ add_ons: [addOn(1, 2050, 2010)] });
+  const { events: stopOnly } = step(
+    2020, { state: "entered", addOnsFilled: 0, activeStop: 1980 }, farAddOnPlan,
+  );
+  check("fixture sanity: only a stop move fired, no add-on",
+    stopOnly.some((e) => e.kind === "stop_moved") && !stopOnly.some((e) => e.kind === "add_on"),
+    stopOnly);
+  const noAddOn = formatMonitorAlert("XAUUSD", "long", stopOnly, 5, "https://x.app", {
+    entry: 2000, analysisSupports: false,
+  });
+  check("no add-on this round means no add-on warning",
+    !noAddOn.includes("不建議執行這次加倉"), noAddOn);
+}
+
 // ── sticky tracking (structural) ──────────────────────────────────
 //
 // 「同一個商品的交易，必須要先結束，止盈或止損後再加入復盤」. The route

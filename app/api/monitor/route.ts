@@ -299,7 +299,15 @@ export async function GET(request: Request) {
       let notified: string[] = [];
       if (events.length > 0 && !paper) {
         const results = await notifyAll(
-          formatMonitorAlert(meta.symbol, tracked.direction, events, quote.ageMinutes, appUrl),
+          formatMonitorAlert(meta.symbol, tracked.direction, events, quote.ageMinutes, appUrl, {
+            entry: plan.entry,
+            generatedAt: tracked.generatedAt,
+            // The newest stored analysis, not the tracked snapshot: an add-on
+            // days later must know whether the thesis it would be adding to
+            // still stands.
+            analysisSupports:
+              latest.trade_plan?.stance === "enter" && latest.direction === tracked.direction,
+          }),
         );
         notified = results.filter((r) => r.ok).map((r) => r.channel);
       }
