@@ -34,7 +34,7 @@ interface ForwardCondition {
 
 interface ReviewResponse extends ReviewStats {
   trackRecord?: TrackRecord;
-  blockers?: { census: BlockerRow[]; scanned: number };
+  blockers?: { census: BlockerRow[]; scanned: number; windowDays?: number };
   forward?: {
     conditions: ForwardCondition[];
     resolved: number;
@@ -142,11 +142,18 @@ export default function ReviewPage() {
               the first scan onward, and it is what says which threshold is
               actually costing the volume. */}
           {stats.blockers && stats.blockers.census.length > 0 && (
-            <Section title={`目前 ${stats.blockers.scanned} 個商品卡在哪一關`}>
+            <Section
+              title={
+                stats.blockers.windowDays
+                  ? `最近 ${stats.blockers.windowDays} 天 ${stats.blockers.scanned} 次掃描卡在哪一關`
+                  : `目前 ${stats.blockers.scanned} 個商品卡在哪一關`
+              }
+            >
               <p className="mb-2 text-[11px] leading-relaxed text-neutral-500">
                 「訊號太少」不是一個可以直接修的東西，「62% 卡在找不到停利結構」才是。
-                標<span className="text-amber-400">可調</span>的是本系統自己訂的門檻，
-                沒標的是市場本身就沒有給的條件 —— 那個調了也沒用。
+                這裡是整週掃描的分布，不是單一時刻的快照 —— 佔比最高又標
+                <span className="text-amber-400">可調</span>的那一關，就是門檻鬆緊的討論對象；
+                沒標的是市場本身就沒有給的條件，調了也沒用。
               </p>
               <table className="w-full">
                 <thead>

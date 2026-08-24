@@ -47,8 +47,11 @@ import { breadthOf } from "./evidence";
  *  - B (55) needs the geometry to be genuinely good to get over the line
  *  - C (40) cannot reach it at all, which matches `MIN_ENTRY_GRADE`
  *
- * The −10 for an AI-less plan still blocks most entries on its own. That is
- * intended: levels picked by the default rules are not a confident trade.
+ * The AI-less penalty is −5 (see planConfidence): enough that a degraded run
+ * needs a genuinely strong setup, no longer enough to disable entries on its
+ * own — the deterministic path clears the same measured floors the AI path
+ * does, so its plans are penalised for the missing judgement, not treated as
+ * untrustworthy.
  */
 export const CONFIDENT_ENTRY_MIN = 60;
 
