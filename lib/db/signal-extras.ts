@@ -1,0 +1,44 @@
+import type { SignalRow, TradeSignal } from "@/types/signal";
+
+/**
+ * 歷史列補遺 — the gate-evidence fields the history table did not originally
+ * store, packed into one `extras` jsonb column.
+ *
+ * The history insert writes named columns, and five fields the signal type
+ * grew later — confidence, lab_gate, downgrades, reference_plan, graded_as —
+ * were never added to it. Nothing noticed until the blocker census switched
+ * from latestPerSymbol (the full payload) to a week of history rows: on those
+ * rows classifyBlocker could never see the confidence gate, the lab gate, the
+ * trend gate or an intervention, so the census silently under-reported the
+ * exact tunable gates it exists to expose.
+ *
+ * One jsonb column rather than five: a single idempotent migration, and the
+ * next field the signal type grows rides along without another one. Both
+ * stores write it via {@link signalExtras} and unpack it via
+ * {@link unpackSignalRow}; rows written before the migration have no extras
+ * and unpack to themselves, which classifyBlocker already treats as "gate not
+ * observable" rather than an error.
+ *
+ * Its own module (not lib/db/index.ts) because both store implementations
+ * need it as a value and index imports the stores — helpers in index would
+ * close an import cycle that only works by accident of hoisting.
+ */
+export function signalExtras(signal: TradeSignal): Record<string, unknown> {
+  return {
+    confidence: signal.confidence ?? null,
+    lab_gate: signal.lab_gate ?? null,
+    downgrades: signal.downgrades ?? null,
+    reference_plan: signal.reference_plan ?? null,
+    graded_as: signal.graded_as ?? null,
+  };
+}
+
+export function unpackSignalRow(row: Record<string, unknown>): SignalRow {
+  const { extras, ...rest } = row;
+  if (!extras || typeof extras !== "object" || Array.isArray(extras)) {
+    return rest as unknown as SignalRow;
+  }
+  // Named fields win over the packed copy on collision — the columns are the
+  // table's own contract; extras only fills what they never carried.
+  return { ...(extras as Record<string, unknown>), ...rest } as unknown as SignalRow;
+}

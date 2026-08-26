@@ -35,6 +35,8 @@ export interface HistoryFilter {
   limit: number;
 }
 
+export { signalExtras, unpackSignalRow } from "./signal-extras";
+
 export interface SignalStore {
   readonly kind: "postgres" | "supabase";
   /** Append-only: /history shows the timeline, so rows are never updated in place. */

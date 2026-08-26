@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { signalExtras, unpackSignalRow } from "./signal-extras";
 import type { SignalRow, TradeSignal } from "@/types/signal";
 import type { JournalEntry, JournalEntryInput } from "@/types/journal";
 import type {
@@ -53,7 +54,7 @@ export function supabaseStore(): SignalStore | null {
     async insertSignal(signal: TradeSignal): Promise<void> {
       const client = getSupabaseServerClient();
       if (!client) throw new Error("缺少 SUPABASE_SERVICE_ROLE_KEY，無法寫入 signals");
-      const { error } = await client.from("signals").insert({
+      const base = {
         symbol: signal.symbol,
         direction: signal.direction,
         grade: signal.grade,
@@ -71,8 +72,19 @@ export function supabaseStore(): SignalStore | null {
         plan_backtest: signal.plan_backtest,
         data_gaps: signal.data_gaps,
         generated_at: signal.generated_at,
-      });
-      if (error) throw new Error(error.message);
+      };
+      const { error } = await client
+        .from("signals")
+        .insert({ ...base, extras: signalExtras(signal) });
+      if (error) {
+        // The `extras` column arrives via the schema migration, but the
+        // scheduled sweep runs the moment a deploy lands — before anyone has
+        // re-applied schema.sql. Losing the whole history row over one
+        // enrichment column would be the tail wagging the dog.
+        if (!/extras/i.test(error.message)) throw new Error(error.message);
+        const retry = await client.from("signals").insert(base);
+        if (retry.error) throw new Error(retry.error.message);
+      }
     },
 
     async prune(): Promise<{ signals: number; cache: number }> {
@@ -109,7 +121,10 @@ export function supabaseStore(): SignalStore | null {
 
       const { data, error } = await query;
       if (error) throw new Error(error.message);
-      return (data ?? []) as SignalRow[];
+      // History rows pack the late-added fields into `extras`; unpacking here
+      // is what lets classifyBlocker see the confidence/lab/trend gates on
+      // rows the named columns never carried.
+      return ((data ?? []) as Record<string, unknown>[]).map(unpackSignalRow);
     },
 
     async saveLatest(signal: TradeSignal): Promise<void> {

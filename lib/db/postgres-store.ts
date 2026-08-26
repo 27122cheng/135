@@ -10,6 +10,7 @@ import type {
   SignalStore,
   StoredRelease,
 } from "./index";
+import { signalExtras, unpackSignalRow } from "./signal-extras";
 import type { PlanState } from "@/lib/monitor/plan-state";
 
 /**
@@ -77,17 +78,38 @@ export function postgresStore(connectionString: string): SignalStore {
     kind: "postgres",
 
     async insertSignal(signal: TradeSignal): Promise<void> {
-      try {
-        // Parameterised throughout — every value here is interpolated by the
-        // driver, never concatenated into the statement.
-        //
-        // `returning id` is the receipt. A day of sweeps "succeeded" while
-        // nothing became readable, and a bare INSERT's success only proves
-        // the statement ran — RETURNING proves a row exists in the database
-        // that ran it. An empty return means something inside the database
-        // (a rule, a trigger, an interceptor) discarded the row, which is a
-        // storage failure and must throw, not report success.
-        const rows = (await sql`
+      // Parameterised throughout — every value here is interpolated by the
+      // driver, never concatenated into the statement.
+      //
+      // `returning id` is the receipt. A day of sweeps "succeeded" while
+      // nothing became readable, and a bare INSERT's success only proves
+      // the statement ran — RETURNING proves a row exists in the database
+      // that ran it. An empty return means something inside the database
+      // (a rule, a trigger, an interceptor) discarded the row, which is a
+      // storage failure and must throw, not report success.
+      // Two complete statements rather than one composed from fragments —
+      // Neon's HTTP driver treats every interpolation as a bound parameter,
+      // so SQL cannot be assembled by nesting template pieces.
+      const insertWithExtras = () => sql`
+        insert into signals (
+          symbol, direction, grade, bias_score, entry_structure_score, total_score,
+          entry_zone, stop_loss, take_profits, bias_items, entry_structures,
+          path_obstacles, narrative, trade_plan, plan_backtest, data_gaps, generated_at,
+          extras
+        ) values (
+          ${signal.symbol}, ${signal.direction}, ${signal.grade}, ${signal.bias_score},
+          ${signal.entry_structure_score}, ${signal.total_score},
+          ${JSON.stringify(signal.entry_zone)}, ${JSON.stringify(signal.stop_loss)},
+          ${JSON.stringify(signal.take_profits)}, ${JSON.stringify(signal.bias_items)},
+          ${JSON.stringify(signal.entry_structures)}, ${JSON.stringify(signal.path_obstacles)},
+          ${signal.narrative}, ${JSON.stringify(signal.trade_plan)},
+          ${signal.plan_backtest === null ? null : JSON.stringify(signal.plan_backtest)},
+          ${JSON.stringify(signal.data_gaps)}, ${signal.generated_at},
+          ${JSON.stringify(signalExtras(signal))}
+        )
+        returning id
+      `;
+      const insertLegacy = () => sql`
         insert into signals (
           symbol, direction, grade, bias_score, entry_structure_score, total_score,
           entry_zone, stop_loss, take_profits, bias_items, entry_structures,
@@ -103,7 +125,21 @@ export function postgresStore(connectionString: string): SignalStore {
           ${JSON.stringify(signal.data_gaps)}, ${signal.generated_at}
         )
         returning id
-      `) as unknown as Array<{ id: string }>;
+      `;
+      const insert = (withExtras: boolean) => (withExtras ? insertWithExtras() : insertLegacy());
+      try {
+        let rows: Array<{ id: string }>;
+        try {
+          rows = (await insert(true)) as unknown as Array<{ id: string }>;
+        } catch (err) {
+          // The `extras` column arrives via /api/setup's migration, but the
+          // scheduled sweep runs the moment a deploy lands — before anyone
+          // has pressed 建立資料表. Losing the whole history row over one
+          // enrichment column would be the tail wagging the dog: fall back
+          // to the original statement and let the migration catch up.
+          if (!/extras/i.test(err instanceof Error ? err.message : String(err))) throw err;
+          rows = (await insert(false)) as unknown as Array<{ id: string }>;
+        }
         if (rows.length === 0) {
           throw new Error(
             "insert 被資料庫吞掉：陳述式執行成功但沒有建立任何列（RETURNING 為空）",
@@ -129,7 +165,10 @@ export function postgresStore(connectionString: string): SignalStore {
         order by generated_at desc
         limit ${filter.limit}
       `;
-        return rows as unknown as SignalRow[];
+        // History rows pack the late-added fields into `extras`; unpacking
+        // here is what lets classifyBlocker see the confidence/lab/trend
+        // gates on rows the named columns never carried.
+        return (rows as unknown as Record<string, unknown>[]).map(unpackSignalRow);
       } catch (err) {
         throw explain(err);
       }

@@ -50,6 +50,10 @@ create policy "Public read access" on public.signals
 -- Migration for tables created before trade_plan existed; no-op on new ones.
 alter table public.signals add column if not exists trade_plan jsonb not null default '{}'::jsonb;
 alter table public.signals add column if not exists plan_backtest jsonb;
+-- The gate-evidence fields the insert never carried (confidence, lab_gate,
+-- downgrades, reference_plan, graded_as), packed as one jsonb — see
+-- signalExtras in lib/db/index.ts. Null on rows written before this existed.
+alter table public.signals add column if not exists extras jsonb;
 
 -- ─────────────────────────────────────────────────────────────────
 -- Stage 3: 停損復盤與干涉機制

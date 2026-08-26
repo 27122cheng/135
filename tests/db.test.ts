@@ -2,10 +2,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { check, report } from "./_harness";
 import { directNeonUrl } from "@/lib/db";
+import { signalExtras, unpackSignalRow } from "@/lib/db/signal-extras";
 import { explain } from "@/lib/db/postgres-store";
 import { REQUIRED_TABLES, SCHEMA_SQL, schemaStatements } from "@/lib/db/schema";
 import { USER_SETTABLE_KEYS } from "@/lib/api-key-names";
 import { parseUserKeyHeader } from "@/lib/api-keys";
+import { classifyBlocker } from "@/lib/analysis/blockers";
+import type { TradeSignal } from "@/types/signal";
 
 /**
  * First-run setup errors, and the boundary that keeps database credentials
@@ -119,6 +122,87 @@ import { parseUserKeyHeader } from "@/lib/api-keys";
     /neon\(connectionString,\s*\{\s*fetchOptions:\s*\{\s*cache:\s*"no-store"/.test(store));
   check("the schema-setup driver disables it too",
     setup.includes('cache: "no-store"') && !/neon\((url|connectionString)\)[^,]/.test(setup));
+}
+
+// ── history rows carry the gate evidence, packed and unpacked ─────
+//
+// The history insert writes named columns, and five later-added fields
+// (confidence, lab_gate, downgrades, reference_plan, graded_as) were never
+// among them — so the blocker census, once it switched from latestPerSymbol
+// to a week of history rows, could not see the confidence/lab/trend gates at
+// all and silently under-reported the exact tunable gates it exists to
+// expose. They now ride in one `extras` jsonb; this pins the round trip.
+{
+  const signal = {
+    symbol: "XAUUSD",
+    grade: "A",
+    graded_as: "A+",
+    bias_score: 6,
+    entry_structure_score: 5,
+    total_score: 11,
+    confidence: { score: 42, level: "low", factors: ["評等 A（基準 70）", "缺口 -15"] },
+    lab_gate: { ids: ["ema-stack"], labels: ["均線排列"], met: false, blocked: true, checks: [] },
+    downgrades: ["逆勢：D1 趨勢與方向相反"],
+    reference_plan: null,
+    trade_plan: { stance: "wait", wait_for: "w", summary: "s" },
+    data_gaps: [],
+  } as unknown as TradeSignal;
+
+  const packed = signalExtras(signal);
+  const restored = unpackSignalRow({
+    id: "row-1", symbol: "XAUUSD", grade: "A", trade_plan: signal.trade_plan,
+    data_gaps: [], extras: packed,
+  });
+  check("confidence survives the round trip",
+    restored.confidence?.score === 42, restored.confidence);
+  check("the lab gate survives", restored.lab_gate?.blocked === true, restored.lab_gate);
+  check("downgrades survive", restored.downgrades?.[0]?.includes("逆勢") === true,
+    restored.downgrades);
+  check("graded_as survives", restored.graded_as === "A+", restored.graded_as);
+
+  // The point of the exercise: the census can now see these gates on a
+  // history row at all. This row carries a 逆勢 downgrade, which sits
+  // earlier in the pipeline than confidence — first gate wins, so the
+  // trend gate is the correct classification AND the proof that a field
+  // the named columns never carried reached the classifier.
+  check("classifyBlocker sees the trend gate on an unpacked history row",
+    classifyBlocker(restored as unknown as TradeSignal).id === "trend-gate",
+    classifyBlocker(restored as unknown as TradeSignal));
+
+  // Without the downgrade, the same row classifies on its low confidence —
+  // the other previously-invisible gate.
+  const confidenceOnly = unpackSignalRow({
+    id: "row-2", symbol: "XAUUSD", grade: "A", trade_plan: signal.trade_plan,
+    data_gaps: [], extras: { ...packed, downgrades: [], lab_gate: null },
+  });
+  check("and the confidence gate on a row with nothing earlier in the pipeline",
+    classifyBlocker(confidenceOnly as unknown as TradeSignal).id === "confidence",
+    classifyBlocker(confidenceOnly as unknown as TradeSignal));
+
+  // A row written before the migration has no extras and must unpack to
+  // itself — "gate not observable", never an error.
+  const legacy = unpackSignalRow({ id: "old", symbol: "XAUUSD", grade: "B", extras: null });
+  check("a pre-migration row unpacks to itself", legacy.symbol === "XAUUSD" && legacy.grade === "B");
+
+  // Named columns are the table's contract; a colliding key inside extras
+  // must never override one.
+  const collided = unpackSignalRow({
+    symbol: "XAUUSD", grade: "B", extras: { grade: "A+", confidence: { score: 9 } },
+  });
+  check("named columns win over the packed copy", collided.grade === "B", collided.grade);
+
+  // Both stores actually write and unpack it — structural, like the driver
+  // pin above, so a refactor cannot quietly drop one side.
+  const pg = readFileSync(join(__dirname, "..", "lib", "db", "postgres-store.ts"), "utf8");
+  const sb = readFileSync(join(__dirname, "..", "lib", "db", "supabase-store.ts"), "utf8");
+  for (const [name, src] of [["postgres", pg], ["supabase", sb]] as const) {
+    check(`${name} writes extras on insert`, src.includes("signalExtras(signal)"), name);
+    check(`${name} unpacks extras on read`, src.includes("unpackSignalRow"), name);
+    // And neither may lose the whole history row when the column predates
+    // the migration — the fallback keys on the column's own name.
+    check(`${name} falls back when the column is missing`, /extras/i.test(src) &&
+      src.includes("/extras/i"), name);
+  }
 }
 
 report("db setup errors");
