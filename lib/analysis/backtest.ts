@@ -332,7 +332,7 @@ function walk(
     costPct: Math.round(costFraction * 100 * 1000) / 1000,
     basis:
       `只取「${tier.label}」的 ${sampled} 根 K 棒為進場點，依實際執行的管理規則模擬` +
-      `（1R 保本、結構移停、反向 CHoCH 出場、逾時以市價結束），` +
+      `（觸及停利先平一半、剩餘保本追蹤、1R 保本、結構移停、反向 CHoCH 出場、逾時以市價結束），` +
       `已扣除來回交易成本 ${(costFraction * 100).toFixed(3)}%`,
   };
 }

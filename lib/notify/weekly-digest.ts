@@ -147,7 +147,11 @@ export async function maybeSendWeeklyDigest(
   const roster = await allInstruments().catch(() => [...COMMODITIES]);
   for (const meta of roster) {
     const row = await store.getMonitorState(meta.symbol).catch(() => null);
-    if (row && (row.state === "entered" || row.state === "added") && row.tracked?.plan) {
+    if (
+      row &&
+      (row.state === "entered" || row.state === "added" || row.state === "scaled") &&
+      row.tracked?.plan
+    ) {
       open.push({
         symbol: meta.symbol,
         direction: row.tracked.direction,

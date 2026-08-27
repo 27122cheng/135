@@ -4,7 +4,7 @@ import { getSignalStore, type MonitorRow, type TrackedPlan } from "@/lib/db";
 import { readLatest } from "@/lib/latest-signals";
 import { fetchLatestPrice } from "@/lib/data-sources/yfinance";
 import { notifyAll } from "@/lib/notify";
-import { upcomingHighImpactEvent } from "@/lib/analysis/timing";
+import { EVENT_BLACKOUT_MS, upcomingHighImpactEvent } from "@/lib/analysis/timing";
 import { formatReleaseAlert } from "@/lib/notify/alert";
 import { ingestReleases } from "@/lib/analysis/data-release";
 import { withUserKeys } from "@/lib/api-keys";
@@ -167,7 +167,7 @@ export async function GET(request: Request) {
       // snapshot until it resolves. Newer analysis waits its turn.
       const inFlight = (row: MonitorRow | null) =>
         row !== null &&
-        (row.state === "entered" || row.state === "added") &&
+        (row.state === "entered" || row.state === "added" || row.state === "scaled") &&
         row.tracked?.plan != null;
 
       const openReal = await store.getMonitorState(meta.symbol).catch(() => null);
@@ -238,7 +238,7 @@ export async function GET(request: Request) {
       // on its levels alone. Structure computed from D1 — the same anchors
       // the backtest measured this plan under.
       const structure =
-        memory.state === "entered" || memory.state === "added"
+        memory.state === "entered" || memory.state === "added" || memory.state === "scaled"
           ? await structureFor(meta, tracked.direction, gaps)
           : null;
 
@@ -342,6 +342,13 @@ export async function GET(request: Request) {
               : resolved.kind === "structure_exit"
                 ? "structure_exit"
                 : "stop_hit",
+          // The banked half's price, when this trade scaled out before its
+          // final exit — either earlier (state remembered as scaled) or in
+          // this very sweep (scale_out event ahead of the resolving one).
+          scaleOutPrice:
+            memory.state === "scaled" || events.some((e) => e.kind === "scale_out")
+              ? plan.take_profit
+              : null,
           paper,
           // Filled in below from this run's own release check — the releases
           // are ingested in the same pass, so "landed while we held" is
@@ -386,11 +393,11 @@ export async function GET(request: Request) {
   // naming all held symbols beats nine phones buzzing separately.
   let eventWarning: string | null = null;
   try {
-    const event = upcomingHighImpactEvent(new Date(), 2 * 60 * 60 * 1000);
+    const event = upcomingHighImpactEvent(new Date(), EVENT_BLACKOUT_MS);
     const held = results.filter(
       (r): r is typeof r & { symbol: string; state: string; paper: boolean } =>
         "state" in r &&
-        (r.state === "entered" || r.state === "added") &&
+        (r.state === "entered" || r.state === "added" || r.state === "scaled") &&
         "paper" in r &&
         r.paper === false,
     );

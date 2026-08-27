@@ -64,6 +64,16 @@ const FOMC_2026_DECISIONS: ReadonlyArray<{ date: string; utcHour: number }> = [
 ];
 
 /**
+ * 數據前禁入窗 — how close a clock-derivable release may be before new entries
+ * are refused outright. Shared by the signal builder's hard blackout and the
+ * monitor's held-position warning, so "don't open" and "consider reducing"
+ * always describe the same window. Two hours: pre-positioning and spread
+ * widening start inside it, and no technical setup's edge was measured on
+ * those bars.
+ */
+export const EVENT_BLACKOUT_MS = 2 * 60 * 60 * 1000;
+
+/**
  * The next clock-derivable high-impact release inside `horizonMs`, or null.
  *
  * For the monitor's pre-event warning on *held* positions. The S4 intervention

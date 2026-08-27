@@ -25,7 +25,7 @@ export interface PositionRow {
   symbol: string;
   label: string;
   category: string;
-  /** "entered" / "added" are live; the rest are history for this plan. */
+  /** "entered" / "added" / "scaled" are live; the rest are history for this plan. */
   state: string;
   direction: "long" | "short" | null;
   grade: string | null;
@@ -121,7 +121,9 @@ export async function GET() {
       }),
     );
     const all = settled.flat();
-    const open = all.filter((r) => r.state === "entered" || r.state === "added");
+    const open = all.filter(
+      (r) => r.state === "entered" || r.state === "added" || r.state === "scaled",
+    );
 
     // The cluster warning matters more here than on the board: this is the
     // page where the reader is looking at what they are actually carrying.

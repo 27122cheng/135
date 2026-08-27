@@ -10,7 +10,7 @@ import {
   summariseTags,
   triggeredTags,
 } from "@/lib/journal/interventions";
-import { computeReviewStats, computeTrackRecord } from "@/lib/journal/stats";
+import { computeEquityCurve, computeReviewStats, computeTrackRecord } from "@/lib/journal/stats";
 import { applyTrendAlignmentGate, computeBiasScore, gradeSignal, weightedNet } from "@/lib/scoring";
 import type { JournalEntry } from "@/types/journal";
 import type { BiasItem, Grade } from "@/types/signal";
@@ -70,6 +70,35 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
   const allWins = computeTrackRecord([auto("win", 1), auto("win", 2)]).real;
   check("all-wins has no payoff ratio", allWins.payoffRatio === null);
   check("but still has an expectancy", allWins.expectancyPct === 1.5, allWins.expectancyPct);
+}
+
+// ── 權益曲線與最大回撤 ────────────────────────────────────────────
+//
+// Additive pnl%, never compounded (sizes are unknown by design), drawdown
+// measured against the running peak. The sequence below: +2, +3 (peak 5),
+// −4, −2 (trough −1, drawdown −6), +1.5 — so the curve ends positive while
+// the drawdown shows the pain the total hides.
+{
+  const seq2 = [
+    entry({ result: "win", pnl_pct: 2, closed_at: "2026-02-01T00:00:00.000Z" }),
+    entry({ result: "win", pnl_pct: 3, closed_at: "2026-02-02T00:00:00.000Z" }),
+    entry({ result: "loss", pnl_pct: -4, closed_at: "2026-02-03T00:00:00.000Z" }),
+    entry({ result: "loss", pnl_pct: -2, closed_at: "2026-02-04T00:00:00.000Z" }),
+    entry({ result: "win", pnl_pct: 1.5, closed_at: "2026-02-05T00:00:00.000Z" }),
+  ];
+  // Handed in newest-first, the store's order — the curve must sort for itself.
+  const curve = computeEquityCurve([...seq2].reverse());
+  check("the curve ends at the additive total", curve.totalPct === 0.5, curve.totalPct);
+  check("equity points run chronologically",
+    curve.points.map((p) => p.equityPct).join(",") === "2,5,1,-1,0.5", curve.points);
+  check("max drawdown is peak-to-trough, not peak-to-end",
+    curve.maxDrawdownPct === -6, curve.maxDrawdownPct);
+  check("and dated at the trough", curve.maxDrawdownAt === "2026-02-04T00:00:00.000Z", curve.maxDrawdownAt);
+  check("the longest loss streak is counted", curve.longestLossStreak === 2, curve.longestLossStreak);
+  check("the current streak is the newest run",
+    curve.currentStreak.kind === "win" && curve.currentStreak.length === 1, curve.currentStreak);
+  check("an empty journal yields an empty curve, not NaN",
+    computeEquityCurve([]).totalPct === 0 && computeEquityCurve([]).maxDrawdownPct === 0);
 }
 
 // ── 層與層的統一：佐證層不得蓋過價格行為 ─────────────────────────

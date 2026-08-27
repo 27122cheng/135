@@ -17,6 +17,7 @@ export type PlanState =
   | "waiting"      // price hasn't reached the entry
   | "entered"      // entry touched, position assumed open
   | "added"        // at least one add-on level reached
+  | "scaled"       // first target banked half; the remainder trails at ≥ breakeven
   | "stop_hit"
   | "target_hit"
   | "structure_exit" // closed at market on an opposite structure break
@@ -59,7 +60,14 @@ export interface MonitorInput {
 }
 
 export interface MonitorEvent {
-  kind: "entered" | "add_on" | "stop_moved" | "stop_hit" | "target_hit" | "structure_exit";
+  kind:
+    | "entered"
+    | "add_on"
+    | "stop_moved"
+    | "stop_hit"
+    | "target_hit"
+    | "scale_out"
+    | "structure_exit";
   headline: string;
   detail: string;
   /** The stop that should now be in force, when this event changes it. */
@@ -151,27 +159,47 @@ export function advancePlan(input: MonitorInput): MonitorResult {
         ...events,
         {
           kind: "stop_hit",
-          headline: "停損觸及",
-          detail: `價格 ${fmt(price)} 觸及停損 ${fmt(activeStop)}，本次交易結束。請到 /review 記錄並選一個 S1–S8 停損原因。`,
+          headline: state === "scaled" ? "剩餘半倉停損觸及" : "停損觸及",
+          detail:
+            state === "scaled"
+              ? `價格 ${fmt(price)} 觸及停損 ${fmt(activeStop)}，剩餘半倉出場（前一半已在停利 ${plan.take_profit !== null ? fmt(plan.take_profit) : "—"} 落袋）。本次交易結束，請到 /review 記錄。`
+              : `價格 ${fmt(price)} 觸及停損 ${fmt(activeStop)}，本次交易結束。請到 /review 記錄並選一個 S1–S8 停損原因。`,
           newStop: null,
         },
       ],
     };
   }
 
-  if (plan.take_profit !== null && reached(direction, price, plan.take_profit)) {
-    return {
-      memory: { state: "target_hit", addOnsFilled, activeStop },
-      events: [
-        ...events,
-        {
-          kind: "target_hit",
-          headline: "停利觸及",
-          detail: `價格 ${fmt(price)} 觸及停利 ${fmt(plan.take_profit)}。請到 /review 記錄這筆交易。`,
-          newStop: null,
-        },
-      ],
-    };
+  // 分批止盈 — the first target banks half, not the whole position.
+  //
+  // Full exit at the first shelf was the amateur shape: every winner capped
+  // at the nearest pressure while losers still cost a full R. Touching the
+  // target now closes half, moves the remainder's stop to at least the entry
+  // (the banked half has paid for the trade), and hands the rest to the
+  // trailing/flip rules. Same rule the exit engine backtests, so the number
+  // that chose this plan describes the trade actually being run.
+  if (
+    state !== "scaled" &&
+    plan.take_profit !== null &&
+    reached(direction, price, plan.take_profit)
+  ) {
+    state = "scaled";
+    const banked = plan.take_profit;
+    const toward =
+      direction === "long"
+        ? Math.max(activeStop, plan.entry)
+        : Math.min(activeStop, plan.entry);
+    const movedStop = toward !== activeStop;
+    activeStop = toward;
+    events.push({
+      kind: "scale_out",
+      headline: "觸及停利 —— 先平一半，剩餘保本追蹤",
+      detail:
+        `價格 ${fmt(price)} 觸及停利 ${fmt(banked)}：平掉一半部位落袋，` +
+        `剩餘半倉停損${movedStop ? `移至進場價 ${fmt(plan.entry)}` : `維持 ${fmt(activeStop)}（已優於進場價）`}，` +
+        `之後交由結構移停與反向 CHoCH 出場管理 —— 這半倉最差是打平，最好是跑出一段趨勢。`,
+      newStop: activeStop,
+    });
   }
 
   // 看法改變就出場 — an opposite CHoCH on the daily structure closes the
@@ -180,17 +208,17 @@ export function advancePlan(input: MonitorInput): MonitorResult {
   // hard levels: a bar that actually ran through the stop reports the stop.
   // Only while a position is open — a waiting plan has nothing to close, and
   // the terminal check above makes this fire exactly once.
-  if ((state === "entered" || state === "added") && input.structure?.flipped) {
+  if ((state === "entered" || state === "added" || state === "scaled") && input.structure?.flipped) {
     return {
       memory: { state: "structure_exit", addOnsFilled, activeStop },
       events: [
         ...events,
         {
           kind: "structure_exit",
-          headline: "結構翻轉，出場",
+          headline: state === "scaled" ? "結構翻轉，剩餘半倉出場" : "結構翻轉，出場",
           detail:
             `日線出現反向 CHoCH（結構翻轉），進場理由已不成立。` +
-            `以現價 ${fmt(price)} 出場，不等停損 ${fmt(activeStop)} —— ` +
+            `以現價 ${fmt(price)} ${state === "scaled" ? "將剩餘半倉出場（前一半已在停利落袋）" : "出場"}，不等停損 ${fmt(activeStop)} —— ` +
             `技術面看法改變時出場是管理規則的一部分，和回測量的是同一種交易。`,
           newStop: null,
         },
@@ -237,7 +265,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
   // behind it, the same trailing rule the lab's exit engine runs. Toward
   // safety only, and never through the current price: a suggested stop on the
   // wrong side of the market would manufacture an exit out of thin air.
-  if (state === "entered" || state === "added") {
+  if (state === "entered" || state === "added" || state === "scaled") {
     const trail = input.structure?.trailStop;
     if (trail != null && Number.isFinite(trail)) {
       const improves =
@@ -258,9 +286,14 @@ export function advancePlan(input: MonitorInput): MonitorResult {
 
   // Add-ons fire in order. Skipping straight to level 3 on a gap would announce
   // fills at prices that were never offered in sequence, so each is reported.
-  const pending: AddOnLevel[] = plan.add_ons
-    .filter((level) => level.sequence > addOnsFilled)
-    .sort((a, b) => a.sequence - b.sequence);
+  // A scaled position is in harvest mode — half is already banked and the
+  // remainder is being trailed out, so adding size back on is off the table.
+  const pending: AddOnLevel[] =
+    state === "scaled"
+      ? []
+      : plan.add_ons
+          .filter((level) => level.sequence > addOnsFilled)
+          .sort((a, b) => a.sequence - b.sequence);
 
   for (const level of pending) {
     if (!reached(direction, price, level.price)) break;

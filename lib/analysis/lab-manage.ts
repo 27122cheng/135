@@ -101,12 +101,21 @@ export function registerLevels(
   return null;
 }
 
+/** Fraction of the position banked when the first target is touched. */
+export const SCALE_OUT_FRACTION = 0.5;
+
 export interface ManagedExit {
   exitIndex: number;
   exitPrice: number;
-  /** Exit distance over the initial risk, net of the round-trip cost. */
+  /**
+   * Blended R over the initial risk, net of the round-trip cost: when the
+   * trade scaled out, half the position's R comes from the banked target and
+   * half from wherever the remainder exited.
+   */
   r: number;
   kind: "stop" | "target" | "flip" | "horizon";
+  /** Set when half was banked at the target before the final exit. */
+  scaleOut?: { index: number; price: number };
 }
 
 export interface WalkInput {
@@ -139,7 +148,7 @@ export interface WalkInput {
  * still legitimately open.
  */
 export function walkManaged(input: WalkInput): ManagedExit | null {
-  const { ctx, direction, firstBar, entry, target, entryAtr, horizon, costFraction } = input;
+  const { ctx, direction, firstBar, entry, entryAtr, horizon, costFraction } = input;
   const long = direction === "long";
   const risk0 = long ? entry - input.stop : input.stop - entry;
   if (!(risk0 > 0)) return null;
@@ -149,17 +158,51 @@ export function walkManaged(input: WalkInput): ManagedExit | null {
 
   const lastBar = Math.min(firstBar + horizon - 1, ctx.candles.length - 1);
   let stop = input.stop;
+  // 分批止盈 — the first target banks half, the remainder rides.
+  //
+  // Full exit at the first overhead pressure was the amateur shape: it caps
+  // every winner at the nearest shelf while losers still cost a full R. The
+  // professional shape sells SCALE_OUT_FRACTION into the pressure, moves the
+  // stop to at least breakeven (the banked half has paid for the trade), and
+  // lets the rest run under the trailing/flip rules — smaller losers when the
+  // move fails after touching the target, and the occasional runner the old
+  // shape never kept. Blended R makes the accounting exact, and because this
+  // is the one exit engine, the lab, the forward ledger and the plan
+  // selection all measure the same behaviour the monitor executes.
+  let target = input.target;
+  let scaleOut: { index: number; price: number } | null = null;
+  const finish = (exitIndex: number, exitPrice: number, kind: ManagedExit["kind"]): ManagedExit =>
+    scaleOut
+      ? {
+          exitIndex,
+          exitPrice,
+          r:
+            Math.round(
+              (SCALE_OUT_FRACTION * netR(scaleOut.price) +
+                (1 - SCALE_OUT_FRACTION) * netR(exitPrice)) *
+                1000,
+            ) / 1000,
+          kind,
+          scaleOut,
+        }
+      : { exitIndex, exitPrice, r: netR(exitPrice), kind };
 
   for (let j = firstBar; j <= lastBar; j++) {
     const hitStop = long ? ctx.low[j] <= stop : ctx.high[j] >= stop;
-    if (hitStop) return { exitIndex: j, exitPrice: stop, r: netR(stop), kind: "stop" };
+    if (hitStop) return finish(j, stop, "stop");
     if (target !== null) {
       const hitTarget = long ? ctx.high[j] >= target : ctx.low[j] <= target;
-      if (hitTarget) return { exitIndex: j, exitPrice: target, r: netR(target), kind: "target" };
+      if (hitTarget) {
+        // Bank half, arm the remainder: stop to at least breakeven, no
+        // second fixed target — structure decides the rest.
+        scaleOut = { index: j, price: target };
+        target = null;
+        stop = long ? Math.max(stop, entry) : Math.min(stop, entry);
+      }
     }
     // 看法改變：反向 CHoCH 確認在這根 —— 結構翻轉，以收盤離場。
     if (long ? ctx.chochDown[j] : ctx.chochUp[j]) {
-      return { exitIndex: j, exitPrice: ctx.close[j], r: netR(ctx.close[j]), kind: "flip" };
+      return finish(j, ctx.close[j], "flip");
     }
 
     // ── management, from this bar's information ──
@@ -183,8 +226,7 @@ export function walkManaged(input: WalkInput): ManagedExit | null {
 
   // Out of time with data still flowing: closed at the market, a real result.
   if (lastBar - firstBar + 1 >= horizon) {
-    const c = ctx.close[lastBar];
-    return { exitIndex: lastBar, exitPrice: c, r: netR(c), kind: "horizon" };
+    return finish(lastBar, ctx.close[lastBar], "horizon");
   }
   return null;
 }

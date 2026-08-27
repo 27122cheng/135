@@ -108,7 +108,10 @@ export async function GET(request: Request) {
       // One trade at a time: while the monitor holds an unresolved position
       // on this symbol, new entries and level updates stay off the phone.
       const monitorState = await store.getMonitorState(meta.symbol).catch(() => null);
-      const openTrade = monitorState?.state === "entered" || monitorState?.state === "added";
+      const openTrade =
+        monitorState?.state === "entered" ||
+        monitorState?.state === "added" ||
+        monitorState?.state === "scaled";
       const decision = shouldAlert(signal, previous ?? null, minGrade, { openTrade });
       let notified: string[] = [];
       let sendIt = decision.alert;

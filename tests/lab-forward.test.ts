@@ -122,10 +122,16 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
     open: 100, high, low, close: (high + low) / 2, volume: 1,
   });
 
-  const won = resolveForwardTrade(base, [at(0, 101, 99), at(1, 101, 99), at(2, 104, 100)])!;
-  check("a target hit is a win", won.status === "win", won);
-  check("recorded at the target price and the bar that reached it",
-    won.exitPrice === 103 && won.barsHeld === 3, won);
+  // 分批止盈: the target banks half and the trade *stays open* — the
+  // remainder trails at ≥ breakeven until a stop, a flip or the horizon.
+  const scaledOpen = resolveForwardTrade(base, [at(0, 101, 99), at(1, 101, 99), at(2, 104, 100)]);
+  check("a target touch alone no longer closes the trade", scaledOpen === null);
+  const won = resolveForwardTrade(base, [
+    at(0, 101, 99), at(1, 101, 99), at(2, 104, 100), at(3, 101, 100),
+  ])!;
+  check("the remainder stopping at breakeven closes it as a win", won.status === "win", won);
+  check("recorded at the volume-weighted exit — half at the 103 target, half at the 100 breakeven stop",
+    won.exitPrice === 101.5 && won.barsHeld === 4, won);
 
   const lost = resolveForwardTrade(base, [at(0, 101, 99), at(1, 100, 97)])!;
   check("a stop hit is a loss", lost.status === "loss" && lost.barsHeld === 2, lost);
@@ -160,8 +166,10 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
     resolveForwardTrade(base, before) === null);
 
   const short = { ...base, direction: "short" as const, stop: 102, target: 97 };
+  check("a short's target touch scales out and stays open",
+    resolveForwardTrade(short, [at(0, 101, 96)]) === null);
   check("a short resolves the other way up",
-    resolveForwardTrade(short, [at(0, 101, 96)])!.status === "win");
+    resolveForwardTrade(short, [at(0, 101, 96), at(1, 101, 99)])!.status === "win");
   check("and stops out on a rise",
     resolveForwardTrade(short, [at(0, 103, 99)])!.status === "loss");
 }

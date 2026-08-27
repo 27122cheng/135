@@ -45,6 +45,14 @@ export interface ResolveInput {
   takeProfit: number;
   exitPrice: number;
   outcome: "stop_hit" | "target_hit" | "structure_exit";
+  /**
+   * 分批止盈 — the price at which half the position was banked before the
+   * final exit, or null when the trade never touched its target. When set,
+   * the P&L is blended: half the position at this price, half at exitPrice —
+   * the same arithmetic the exit engine's backtest uses (SCALE_OUT_FRACTION),
+   * so the journal and the lab describe the same trade.
+   */
+  scaleOutPrice?: number | null;
   /** True when these levels were 參考價位 rather than a recommended trade. */
   paper: boolean;
   /** A high-impact release landed while the position was open. */
@@ -88,14 +96,66 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
   const { store, signal, entry, stopLoss, takeProfit, exitPrice, outcome, paper } = input;
 
   const risk = Math.abs(entry - stopLoss);
-  const move = signal.direction === "long" ? exitPrice - entry : entry - exitPrice;
+  const scaled = input.scaleOutPrice ?? null;
+  const dirMove = (px: number) => (signal.direction === "long" ? px - entry : entry - px);
+  // Blended when half was banked at the target first — half the position's
+  // move comes from the scale-out price, half from the final exit.
+  const move = scaled !== null ? 0.5 * dirMove(scaled) + 0.5 * dirMove(exitPrice) : dirMove(exitPrice);
   const pnlPct = entry > 0 ? Math.round((move / entry) * 10000) / 100 : 0;
-  // A structure exit closed at the market, not at a level: the result is
-  // whatever the price said, not what the exit kind implies.
+  // A structure exit (or a scaled trade's final exit) closed at the market or
+  // at a stop that may sit at breakeven: the result is whatever the blended
+  // price says, not what the exit kind implies.
   const result: TradeResult =
-    outcome === "target_hit" ? "win" : outcome === "structure_exit" ? (move > 0 ? "win" : "loss") : "loss";
+    outcome === "target_hit"
+      ? "win"
+      : scaled !== null || outcome === "structure_exit"
+        ? move > 0
+          ? "win"
+          : "loss"
+        : "loss";
 
   const markers = paper ? `${AUTO_MARKER}${PAPER_MARKER}` : AUTO_MARKER;
+
+  if (scaled !== null && outcome !== "target_hit") {
+    // 分批止盈後的收尾 — not a stop-out to classify. The S1–S8 taxonomy
+    // diagnoses trades the market took out at the original risk; a trade
+    // that banked half at its target and then had the remainder trailed or
+    // scratched is the management rules *working*, and feeding it to the
+    // intervention engine as a loss-to-fix would teach exactly the wrong
+    // lesson. It still counts toward the realized-rate audit.
+    try {
+      const written = await store.insertJournalEntry(
+        {
+          signal_id: signal.id,
+          symbol: signal.symbol,
+          direction: signal.direction,
+          grade: signal.grade,
+          entry_price: entry,
+          exit_price: exitPrice,
+          result,
+          pnl_pct: pnlPct,
+          closed_at: new Date().toISOString(),
+          stop_reason_tag: null,
+          review_note:
+            `${markers} 分批止盈：先在 ${scaled} 平一半落袋，剩餘半倉` +
+            (outcome === "stop_hit"
+              ? `於停損 ${exitPrice} 出場`
+              : `因結構翻轉以市價 ${exitPrice} 出場`) +
+            `（兩半各計一半，合計${result === "win" ? "獲利" : "虧損"} ${pnlPct}%）。` +
+            (paper ? "此為參考價位的紙上追蹤，假設在價位上成交、無滑價與點差。" : ""),
+        },
+        null,
+      );
+      return { entry: written, tag: null, decidedBy: null, note: "分批止盈後收尾，已記錄" };
+    } catch (err) {
+      return {
+        entry: null,
+        tag: null,
+        decidedBy: null,
+        note: `寫入交易日誌失敗：${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
 
   if (outcome === "structure_exit") {
     // Not a stop-out: the S1–S8 stop taxonomy classifies trades the market

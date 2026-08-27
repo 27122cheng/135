@@ -59,7 +59,11 @@ export function PositionSizing({
         const positions = (await posRes.json()) as { open?: HeldPosition[] };
         const corr = (await corrRes.json()) as { report?: CorrelationReport };
         const held = (positions.open ?? [])
-          .filter((p) => !p.paper && (p.state === "entered" || p.state === "added"))
+          .filter(
+            (p) =>
+              !p.paper &&
+              (p.state === "entered" || p.state === "added" || p.state === "scaled"),
+          )
           .map((p) => p.symbol)
           .filter((s) => s !== symbol);
         const clusters = corr.report?.clusters ?? [];

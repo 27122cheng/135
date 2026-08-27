@@ -1242,7 +1242,7 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
                   different tiers, which read as the site contradicting itself. */}
               這個方向上有兩層門檻，都沒有組合通過：
               <span className="text-neutral-400">交易建議</span>要求實測期望值 ≥ +{TRADE_MIN_EXPECTANCY_R}R 且勝率 ≥55%
-              （回測含保本移停、結構移停與反向 CHoCH 出場，量的是實際會執行的交易）、
+              （回測含分批止盈、保本移停、結構移停與反向 CHoCH 出場，量的是實際會執行的交易）、
               <span className="text-neutral-400">參考價位</span>（僅供觀察、非建議）門檻為勝率 ≥55%，
               風報比兩層都要 ≥1:1.5。
               {(signal.data_gaps ?? []).find((g) => g.startsWith("本次不提供參考價位")) ??

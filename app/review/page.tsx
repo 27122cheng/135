@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { COMMODITIES } from "@/types/signal";
 import { STOP_REASON_LABELS } from "@/types/journal";
-import type { GradePerformance, ReviewStats, TagDistribution, TrackRecord } from "@/lib/journal/stats";
+import type {
+  EquityCurve,
+  GradePerformance,
+  ReviewStats,
+  TagDistribution,
+  TrackRecord,
+} from "@/lib/journal/stats";
 import type { TagStat } from "@/types/journal";
 import { SeverityTrend, StopReasonDonut, TAG_COLORS } from "@/components/review-charts";
 import { JournalForm } from "@/components/journal-form";
@@ -34,6 +40,7 @@ interface ForwardCondition {
 
 interface ReviewResponse extends ReviewStats {
   trackRecord?: TrackRecord;
+  equityCurve?: EquityCurve;
   blockers?: { census: BlockerRow[]; scanned: number; windowDays?: number };
   forward?: {
     conditions: ForwardCondition[];
@@ -135,6 +142,17 @@ export default function ReviewPage() {
               </p>
             )}
           </Section>
+
+          {/* 權益曲線 — the running sum of real trades' pnl, with the deepest
+              drawdown named. The one chart a desk reads before any win rate:
+              a rising line with shallow dips is the actual goal that 交易量
+              and 勝率 are both proxies for. Paper 參考價位 rows are excluded
+              server-side. */}
+          {stats.equityCurve && stats.equityCurve.points.length >= 2 && (
+            <Section title="權益曲線與最大回撤（實際交易，含自動結算與人工記錄）">
+              <EquityCurveChart curve={stats.equityCurve} />
+            </Section>
+          )}
 
           {/* 為什麼沒有訊號 — the distribution of rejections.
               With almost nothing entering, the hit-rate table above has no
@@ -438,6 +456,78 @@ function LossRanking({ data }: { data: TagDistribution[] }) {
  * numbers sit on one row. Paper fills are assumed perfect — stated here, so
  * its win rate is read as a ceiling rather than a promise.
  */
+/**
+ * 權益曲線 — an inline SVG, no chart library. Additive pnl% per trade (sizes
+ * are unknown by design: account size never leaves the browser), zero line
+ * marked, the deepest drawdown's trough dotted in red. Scales itself to the
+ * data; with two points it is a line, with fifty it is a curve.
+ */
+function EquityCurveChart({ curve }: { curve: EquityCurve }) {
+  const W = 560;
+  const H = 120;
+  const PAD = 6;
+  const values = [0, ...curve.points.map((p) => p.equityPct)];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const x = (i: number) => PAD + (i / (values.length - 1 || 1)) * (W - PAD * 2);
+  const y = (v: number) => PAD + ((max - v) / span) * (H - PAD * 2);
+  const path = values.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const troughIdx =
+    curve.maxDrawdownAt === null
+      ? -1
+      : curve.points.findIndex((p) => p.closedAt === curve.maxDrawdownAt);
+  const last = curve.points[curve.points.length - 1];
+  const up = curve.totalPct >= 0;
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+        <span className={up ? "text-emerald-400" : "text-red-400"}>
+          累計 {curve.totalPct > 0 ? "+" : ""}
+          {curve.totalPct}%
+        </span>
+        <span className="text-red-400/80">最大回撤 {curve.maxDrawdownPct}%</span>
+        <span className="text-neutral-500">最長連敗 {curve.longestLossStreak} 筆</span>
+        {curve.currentStreak.kind !== "none" && (
+          <span className="text-neutral-500">
+            目前連{curve.currentStreak.kind === "win" ? "勝" : "敗"} {curve.currentStreak.length} 筆
+          </span>
+        )}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="權益曲線">
+        <line
+          x1={PAD}
+          x2={W - PAD}
+          y1={y(0)}
+          y2={y(0)}
+          stroke="#525252"
+          strokeWidth="0.5"
+          strokeDasharray="3 3"
+        />
+        <path d={path} fill="none" stroke={up ? "#34d399" : "#f87171"} strokeWidth="1.5" />
+        {troughIdx >= 0 && (
+          <circle
+            cx={x(troughIdx + 1)}
+            cy={y(curve.points[troughIdx].equityPct)}
+            r="3"
+            fill="none"
+            stroke="#f87171"
+            strokeWidth="1.2"
+          />
+        )}
+      </svg>
+      <p className="text-[10px] leading-relaxed text-neutral-600">
+        每筆以進場價的損益百分比累加（不複利、不假設倉位大小 —— 帳戶資金只存在你的瀏覽器）。
+        紅圈是最深回撤的谷底
+        {curve.maxDrawdownAt ? `（${curve.maxDrawdownAt.slice(0, 10)}）` : ""}。
+        最大回撤和最長連敗是倉位大小必須撐得過的兩個數字 —— 風控頁的單筆風險 % 乘上最長連敗，
+        就是這套系統歷史上會讓你經歷的最痛一段。
+        {last ? ` 最近一筆：${last.symbol} ${last.pnlPct > 0 ? "+" : ""}${last.pnlPct}%。` : ""}
+      </p>
+    </div>
+  );
+}
+
 function TrackRecordTable({ record }: { record: TrackRecord }) {
   const rows = [record.real, record.paper, record.manual].filter((b) => b.trades > 0);
   if (rows.length === 0) {

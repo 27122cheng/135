@@ -43,9 +43,11 @@ function fmt(n: number | null): string {
 const STATE_LABEL: Record<string, string> = {
   entered: "已進場",
   added: "已加倉",
+  scaled: "已分批止盈（剩半倉）",
   waiting: "等待進場",
   stop_hit: "已停損",
   target_hit: "已停利",
+  structure_exit: "結構翻轉出場",
   invalidated: "已失效",
 };
 

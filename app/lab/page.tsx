@@ -347,7 +347,8 @@ export default function LabPage() {
         <span className="text-neutral-300">回測</span>則把同一套條件放到十年日線上重跑一次，先單獨測，
         表現勝過基準的再層層疊加（兩個、三個、四個都試），全部扣掉交易成本。
         每一筆實驗交易都用和 live 相同的結構管理：停損掛在已確認 swing 外、停利掛在最近壓力、
-        走出 1R 保本移停、新 swing 確認就墊高停損、結構翻轉（反向 CHoCH）就出場 —— 不是固定 R。
+        觸及停利先平一半落袋（剩餘半倉保本追蹤）、走出 1R 保本移停、新 swing 確認就墊高停損、
+        結構翻轉（反向 CHoCH）就出場 —— 不是固定 R，盈虧以兩半各計一半的混合 R 結算。
         採用標準：<span className="text-neutral-300">樣本數 ≥100 筆、期望值 ≥ +1R、勝率 ≥55%</span>，
         而且只用最舊的 70% 歷史搜尋 —— 最新的 30% 完全不參與搜尋，只用來驗證，兩邊都要達標。
       </p>
@@ -514,7 +515,8 @@ export default function LabPage() {
         <p className="mb-2 text-[10px] leading-relaxed text-neutral-500">
           每個條件<span className="text-neutral-300">各自獨立</span>下單：條件成立且掛得出合理的結構停損，
           就以當根收盤價進場 —— 停損在已確認 swing 外 0.5×ATR、停利在最近壓力（沒有壓力就不設，靠移動停損出場）、
-          走出 1R 保本移停、新 swing 墊高停損、反向 CHoCH 出場，最多持有 20 根後以市價結算。
+          觸及停利先平一半（剩餘保本追蹤）、走出 1R 保本移停、新 swing 墊高停損、反向 CHoCH 出場，
+          最多持有 20 根後以市價結算；分批出場的紀錄以兩半的均價入帳。
           進場價與初始停損停利在開倉當下就寫進資料庫，之後只能結算、不能修改 ——
           這是<span className="text-neutral-300">事前登記</span>，和回測「事後翻歷史」是兩件事。
           每 4 小時的自動掃描會推進一次。前進帳本目前只跑日線 —— H4 的樣本速度優勢由上方回測提供。
@@ -645,7 +647,8 @@ export default function LabPage() {
             </div>
             <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-600">
               結構管理式出場（和 live 相同）：停損掛已確認 swing 外 0.5×ATR、停利掛最近壓力、
-              1R 保本移停、新 swing 墊高停損、反向 CHoCH 出場，最多持有 20 根後以市價結算。
+              觸及停利先平一半（剩餘保本追蹤）、1R 保本移停、新 swing 墊高停損、反向 CHoCH 出場，
+              最多持有 20 根後以市價結算。
               所有條件都用同一套管理規則測，比較的才是「條件」而不是「條件配上剛好適合它的出場」。
             </p>
           </section>

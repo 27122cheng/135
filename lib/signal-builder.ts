@@ -5,7 +5,7 @@ import { fetchOHLCV, type Candle } from "./data-sources/ohlcv";
 import { fetchLatestPrice } from "./data-sources/yfinance";
 import { atr as computeAtr } from "./analysis/indicators";
 import { analyzeTechnical } from "./analysis/technical";
-import { analyzeTiming } from "./analysis/timing";
+import { EVENT_BLACKOUT_MS, analyzeTiming, upcomingHighImpactEvent } from "./analysis/timing";
 import { detectAllPatterns, patternContributions } from "./analysis/patterns";
 import { dedupeBiasItems } from "./analysis/evidence";
 import { describeProximity, isNearEntry } from "./analysis/proximity";
@@ -880,6 +880,43 @@ async function buildSignalForSymbol(
   }
 
   applyLabGate(signal, adoptions, { D1: d1?.candles, H4: h4?.candles });
+
+  // 數據前禁入 — a hard blackout inside two hours of a clock-derivable
+  // high-impact release (NFP / FOMC decision).
+  //
+  // The S4 intervention *downgrades* ahead of these events, which a strong
+  // enough setup can survive — and the bars inside the window are exactly the
+  // ones no backtest measured an edge on: spreads widen, liquidity thins, and
+  // the print itself resolves the trade by coin flip. A senior desk simply
+  // does not initiate two hours before NFP; now neither does this system.
+  // Applied last so the withdrawal is attributable to the event and nothing
+  // else — every other gate already passed. Deliberately only blocks *new*
+  // entries: held positions get the monitor's pre-event warning instead
+  // (reduce or tighten), because force-flattening a working trade is a
+  // different and worse rule.
+  if (signal.trade_plan.stance === "enter") {
+    const blackout = upcomingHighImpactEvent(new Date(), EVENT_BLACKOUT_MS);
+    if (blackout) {
+      const note =
+        `數據前禁入：${blackout.minutesAway} 分鐘後公布${blackout.label}，` +
+        `公布前 2 小時內不建立新倉`;
+      signal.downgrades = [...(signal.downgrades ?? []), note];
+      signal.trade_plan = {
+        ...signal.trade_plan,
+        stance: "wait",
+        summary:
+          `${note}。分析全部通過（這不是訊號變弱），純粹是時機：` +
+          `數據前的行情由頭寸調整主導，技術結構的勝率在這些 K 棒上沒有被驗證過。` +
+          `下方價位仍是分析算出的真實結構。`,
+        wait_for: `等${blackout.label}公布並消化後（約公布後 2 小時），若結構仍成立再進場。`,
+        entry: null,
+        stop_loss: null,
+        take_profit: null,
+        risk_reward: null,
+        add_ons: [],
+      };
+    }
+  }
 
   // 信心度過低就連參考價位都不給。
   //

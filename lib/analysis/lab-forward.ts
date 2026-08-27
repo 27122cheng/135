@@ -2,7 +2,7 @@ import type { Candle } from "../data-sources/ohlcv";
 import { COMMODITIES, type CommodityMeta } from "@/types/signal";
 import type { LabTradeRow, LabTradeStatus } from "../db";
 import { CONDITIONS, WARMUP, buildContext, type LabContext } from "./lab";
-import { MANAGE_HORIZON, registerLevels, walkManaged } from "./lab-manage";
+import { MANAGE_HORIZON, SCALE_OUT_FRACTION, registerLevels, walkManaged } from "./lab-manage";
 import { totalCostFraction, tradingCostFor } from "@/config/trading-costs";
 
 /**
@@ -177,10 +177,17 @@ export function resolveForwardTrade(
   if (!exit) return null;
 
   const status: LabTradeStatus = exit.r > 0 ? "win" : "loss";
+  // 分批止盈 makes one trade exit at two prices. The ledger stores a single
+  // exit_price, so a scaled trade records its volume-weighted average exit —
+  // with SCALE_OUT_FRACTION at one half that is the plain midpoint, and it
+  // reproduces the blended R exactly when rowR reconstructs it from prices.
+  const exitPrice = exit.scaleOut
+    ? SCALE_OUT_FRACTION * exit.scaleOut.price + (1 - SCALE_OUT_FRACTION) * exit.exitPrice
+    : exit.exitPrice;
   return {
     ...trade,
     status,
-    exitPrice: exit.exitPrice,
+    exitPrice,
     exitBarTime: candles[exit.exitIndex].time,
     barsHeld: exit.exitIndex - firstBar + 1,
     closedAt: now.toISOString(),

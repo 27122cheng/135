@@ -107,6 +107,17 @@ function signal(over: Partial<TradeSignal> = {}): TradeSignal {
   const intervened = signal({ downgrades: ["S2 干涉：要求回測確認，但沒有可回測的保護結構"] });
   check("a journal intervention is named", classifyBlocker(intervened).id === "intervention");
 
+  // 數據前禁入 is only ever written after every other gate passed, so its
+  // presence IS the attribution — even when the trend gate's wording also
+  // appears (it cannot: the builder skips the blackout on an already-waiting
+  // plan, pinned by checking it outranks later gates here).
+  const blackout = signal({
+    downgrades: ["數據前禁入：45 分鐘後公布美國非農就業（NFP），公布前 2 小時內不建立新倉"],
+  });
+  const bo = classifyBlocker(blackout);
+  check("the pre-event blackout is its own gate", bo.id === "event-blackout", bo);
+  check("and quotes the event and countdown", bo.detail.includes("NFP"), bo.detail);
+
   const labBlocked = signal({
     lab_gate: {
       ids: ["ema50-side"], labels: ["站在 EMA50 正確側"], met: false, checks: [],

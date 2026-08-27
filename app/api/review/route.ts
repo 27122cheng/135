@@ -2,7 +2,7 @@ import { getSignalStore, type LabTradeRow } from "@/lib/db";
 import { censusOf } from "@/lib/analysis/blockers";
 import { summariseForward } from "@/lib/analysis/lab-forward";
 import { buildRiskAdvice } from "@/lib/journal/advice";
-import { computeReviewStats, computeTrackRecord } from "@/lib/journal/stats";
+import { computeEquityCurve, computeReviewStats, computeTrackRecord } from "@/lib/journal/stats";
 import { summariseTags, triggeredTags } from "@/lib/journal/interventions";
 import { json } from "@/lib/json-response";
 
@@ -67,6 +67,12 @@ export async function GET(request: Request) {
     return json({
       ...stats,
       trackRecord: computeTrackRecord(entries),
+      // 權益曲線 — real trades only (auto-tracked or hand-logged), excluding
+      // the paper 參考價位 stream: mixing perfect-fill paper trades into the
+      // curve would flatter both the total and the drawdown.
+      equityCurve: computeEquityCurve(
+        entries.filter((e) => !e.review_note?.includes("[參考價位紙上追蹤]")),
+      ),
       activeInterventions: active,
       recentTagStats: tagStats,
       riskAdvice: buildRiskAdvice(tagStats, active),

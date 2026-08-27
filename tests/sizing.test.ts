@@ -113,9 +113,12 @@ import type { TradePlan } from "@/types/signal";
   check("a short's stop moves down to entry at 1R", shortMove.memory.activeStop === 100,
     shortMove.memory);
 
-  // Price beyond the TP resolves as target_hit, not as a stop move — order.
+  // Price beyond the TP scales out — half banked, remainder trailing at
+  // breakeven — and the stop move folds into the scale_out event, not a
+  // separate stop_moved announcement.
   const won = step(110, entered);
-  check("reaching the target still wins outright", won.memory.state === "target_hit");
+  check("reaching the target banks half and keeps the remainder",
+    won.memory.state === "scaled" && won.memory.activeStop === 100, won.memory);
 
   // Waiting plans are untouched: no entry, no breakeven.
   const waiting = step(104, INITIAL_MEMORY);

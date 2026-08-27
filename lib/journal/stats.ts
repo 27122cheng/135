@@ -227,6 +227,95 @@ function bucketOf(label: string, entries: JournalEntry[]): TrackBucket {
   };
 }
 
+/**
+ * 權益曲線與最大回撤 — the two numbers a desk looks at before any win rate.
+ *
+ * Additive in pnl percentage points rather than compounded: journal entries
+ * carry pnl as a percent of entry price, position sizes are unknown (account
+ * size deliberately never leaves the browser), and compounding invented
+ * numbers would dress a measurement up as a simulation. Each point is the
+ * running sum of pnl_pct in close order — "one unit risked per trade" — which
+ * is exactly comparable across time and immune to sizing assumptions.
+ *
+ * Max drawdown is measured on that curve: the deepest fall from any running
+ * peak, in the same percentage points. It answers the question the win rate
+ * hides — how much pain sat between the peaks — and a rising curve with a
+ * shallow drawdown is the actual goal the operator's two standing complaints
+ * (交易量、勝率) are proxies for.
+ */
+export interface EquityPoint {
+  closedAt: string;
+  symbol: string;
+  pnlPct: number;
+  /** Running sum of pnl_pct up to and including this trade. */
+  equityPct: number;
+  /** Drawdown from the running peak at this point, ≤ 0. */
+  drawdownPct: number;
+}
+
+export interface EquityCurve {
+  points: EquityPoint[];
+  /** Final running sum — where the curve ends. */
+  totalPct: number;
+  /** Deepest fall from a running peak, ≤ 0. */
+  maxDrawdownPct: number;
+  /** When the deepest drawdown bottomed, for the marker on the chart. */
+  maxDrawdownAt: string | null;
+  /** Longest run of consecutive losses — the streak risk sizing must survive. */
+  longestLossStreak: number;
+  currentStreak: { kind: "win" | "loss" | "none"; length: number };
+}
+
+export function computeEquityCurve(entries: JournalEntry[]): EquityCurve {
+  const chronological = [...entries].sort((a, b) => a.closed_at.localeCompare(b.closed_at));
+  const points: EquityPoint[] = [];
+  let equity = 0;
+  let peak = 0;
+  let maxDd = 0;
+  let maxDdAt: string | null = null;
+  let lossStreak = 0;
+  let longestLossStreak = 0;
+  for (const e of chronological) {
+    equity += e.pnl_pct;
+    if (equity > peak) peak = equity;
+    const dd = equity - peak;
+    if (dd < maxDd) {
+      maxDd = dd;
+      maxDdAt = e.closed_at;
+    }
+    if (e.result === "loss") {
+      lossStreak++;
+      if (lossStreak > longestLossStreak) longestLossStreak = lossStreak;
+    } else if (e.result === "win") {
+      lossStreak = 0;
+    }
+    points.push({
+      closedAt: e.closed_at,
+      symbol: e.symbol,
+      pnlPct: round2(e.pnl_pct),
+      equityPct: round2(equity),
+      drawdownPct: round2(dd),
+    });
+  }
+  // The streak the reader is currently living through, newest backwards.
+  let currentStreak: EquityCurve["currentStreak"] = { kind: "none", length: 0 };
+  for (let i = chronological.length - 1; i >= 0; i--) {
+    const r = chronological[i].result;
+    if (r !== "win" && r !== "loss") continue;
+    if (currentStreak.kind === "none") currentStreak = { kind: r, length: 1 };
+    else if (currentStreak.kind === r) currentStreak.length++;
+    else break;
+  }
+  return {
+    points,
+    totalPct: round2(equity),
+    maxDrawdownPct: round2(maxDd),
+    maxDrawdownAt: maxDdAt,
+    longestLossStreak,
+    currentStreak,
+  };
+}
+
 export function computeTrackRecord(entries: JournalEntry[]): TrackRecord {
   const paper = entries.filter((e) => e.review_note?.includes(PAPER));
   const real = entries.filter((e) => e.review_note?.includes(AUTO) && !e.review_note?.includes(PAPER));

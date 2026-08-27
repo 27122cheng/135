@@ -43,6 +43,7 @@ export type BlockerId =
   | "trend-gate"
   | "intervention"
   | "lab-gate"
+  | "event-blackout"
   | "confidence"
   | "geometry"
   | "plan-judgement";
@@ -88,6 +89,15 @@ export function classifyBlocker(signal: TradeSignal): Blocker {
   const noTarget = has(downgrades, /無法錨定停利/) ?? has(gaps, /找不到方向正確的停利價位/);
   if (noTarget) {
     return { id: "no-target", label: "找不到停利結構", detail: noTarget, tunable: false };
+  }
+
+  // 數據前禁入 is applied *last* in the builder and only to a plan that had
+  // already cleared every other gate, so when its note is present it is by
+  // construction the gate that withdrew the trade — checked early here so the
+  // census never books a blackout day against the grade or the confidence bar.
+  const blackout = has(downgrades, /數據前禁入/);
+  if (blackout) {
+    return { id: "event-blackout", label: "數據前禁入窗", detail: blackout, tunable: true };
   }
 
   const trend = has(downgrades, /逆勢/);

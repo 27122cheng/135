@@ -1,5 +1,13 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { check, report } from "./_harness";
-import { analyzeTiming, lastBusinessDay, nfpTimeFor } from "@/lib/analysis/timing";
+import {
+  EVENT_BLACKOUT_MS,
+  analyzeTiming,
+  lastBusinessDay,
+  nfpTimeFor,
+  upcomingHighImpactEvent,
+} from "@/lib/analysis/timing";
 
 /**
  * 時間與事件因子 — deterministic calendar effects, derived from the clock
@@ -75,6 +83,30 @@ const at = (iso: string) => new Date(iso);
   const ordinary = analyzeTiming(at("2026-09-10T06:00:00Z"));
   check("an ordinary day carries no FOMC item",
     !ordinary.items.some((i) => i.factor.includes("FOMC")));
+}
+
+// ── 數據前禁入窗 ───────────────────────────────────────────────────
+//
+// One constant, two consumers: the builder's hard entry blackout and the
+// monitor's held-position warning must describe the same window, and the
+// builder must apply it after every other gate so the census attributes a
+// blackout day to the event rather than to whichever gate it shadowed.
+{
+  check("the blackout window is two hours", EVENT_BLACKOUT_MS === 2 * 60 * 60 * 1000);
+  // 2026-09-04 is the first Friday → NFP at 12:30 UTC.
+  const inside = upcomingHighImpactEvent(at("2026-09-04T11:00:00Z"), EVENT_BLACKOUT_MS);
+  check("90 minutes before NFP is inside the window",
+    inside?.label.includes("NFP") === true && inside.minutesAway === 90, inside);
+  check("just past the print, the window is over",
+    upcomingHighImpactEvent(at("2026-09-04T12:31:00Z"), EVENT_BLACKOUT_MS) === null);
+  check("an ordinary morning is not blacked out",
+    upcomingHighImpactEvent(at("2026-09-10T09:00:00Z"), EVENT_BLACKOUT_MS) === null);
+
+  const builder = readFileSync(join(__dirname, "..", "lib", "signal-builder.ts"), "utf8");
+  check("the builder blacks out entries with the shared constant",
+    builder.includes("EVENT_BLACKOUT_MS") && builder.includes("數據前禁入"));
+  check("applied after the lab gate, so the withdrawal is attributable to the event",
+    builder.indexOf("數據前禁入") > builder.indexOf("applyLabGate(signal"));
 }
 
 // ── month-end ──────────────────────────────────────────────────────

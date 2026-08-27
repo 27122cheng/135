@@ -220,9 +220,47 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   check("1994 would not have hit the original 1980",
     step(1994, entered.memory).memory.state === "entered");
 
+  // ── 分批止盈 — the target banks half, it no longer terminates ──
   const target = step(2085, entered.memory);
-  check("the target reports and terminates", target.memory.state === "target_hit");
-  check("it points at the journal", target.events.some((e) => e.detail.includes("/review")));
+  check("the target scales out instead of terminating", target.memory.state === "scaled", target.memory.state);
+  check("the scale-out is announced", target.events.some((e) => e.kind === "scale_out"), target.events);
+  check("the remainder's stop moves to at least the entry",
+    target.memory.activeStop === 2000, target.memory.activeStop);
+  const afterScale = step(2085, target.memory);
+  check("a scaled position is silent while nothing changes", afterScale.events.length === 0, afterScale.events);
+  check("and stays scaled", afterScale.memory.state === "scaled");
+  // Add-ons are off the table in harvest mode — half is banked, the rest is
+  // being trailed out; announcing "第 1 段加倉點到達" here would contradict it.
+  check("no add-on fires after scaling out",
+    afterScale.events.every((e) => e.kind !== "add_on") &&
+    afterScale.memory.addOnsFilled === 0);
+  // The remainder resolves at the (breakeven) stop, named as the half it is.
+  const scaledStop = step(2000, target.memory);
+  check("the remainder's stop-out terminates", scaledStop.memory.state === "stop_hit", scaledStop.memory.state);
+  check("and says the first half was banked",
+    scaledStop.events.some((e) => e.kind === "stop_hit" && e.headline.includes("剩餘半倉")), scaledStop.events);
+  check("it points at the journal", scaledStop.events.some((e) => e.detail.includes("/review")));
+  // A structure flip closes the scaled remainder too.
+  const scaledFlip = advancePlan({
+    direction: "long", plan: plan(), price: 2050, priceAgeMinutes: 5,
+    memory: target.memory, structure: { trailStop: null, flipped: true },
+  });
+  check("a flip closes the scaled remainder", scaledFlip.memory.state === "structure_exit", scaledFlip.memory.state);
+  check("named as the remaining half",
+    scaledFlip.events.some((e) => e.kind === "structure_exit" && e.headline.includes("剩餘半倉")));
+  // And the structure trailing keeps stepping the remainder's stop up.
+  const scaledTrail = advancePlan({
+    direction: "long", plan: plan(), price: 2060, priceAgeMinutes: 5,
+    memory: target.memory, structure: { trailStop: 2030, flipped: false },
+  });
+  check("structure trailing still manages the scaled remainder",
+    scaledTrail.memory.activeStop === 2030 &&
+    scaledTrail.events.some((e) => e.kind === "stop_moved"), scaledTrail.memory);
+  // The same tick cannot fill an entry AND scale out — fill logic (a long
+  // fills at-or-below entry) makes entry+target in one tick contradictory.
+  const fillAndTarget = step(1999, INITIAL_MEMORY);
+  check("one tick cannot enter and scale out together",
+    fillAndTarget.memory.state === "entered", fillAndTarget.memory.state);
 
   // Both hit in one delayed candle: report the stop. We can't know the intrabar
   // order, so the pessimistic reading is the only honest one.
