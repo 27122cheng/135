@@ -81,14 +81,12 @@ export default function SymbolsPage() {
 
   const [syncNote, setSyncNote] = useState<string | null>(null);
 
-  const persist = useCallback((next: CustomSymbol[]) => {
-    setList(next);
-    saveCustomSymbols(next);
-    // 同步到伺服器 — the browser copy alone made these symbols invisible to
-    // everything scheduled: the board read built-ins, the hourly sweep and
-    // the monitor scanned built-ins, so a freshly added BTCUSD produced one
-    // on-demand card and then ceased to exist. Same mechanism as the alert
-    // settings; a failed sync is shown, not swallowed.
+  // 同步到伺服器 — the browser copy alone made these symbols invisible to
+  // everything scheduled: the board read built-ins, the hourly sweep and
+  // the monitor scanned built-ins, so a freshly added BTCUSD produced one
+  // on-demand card and then ceased to exist. Same mechanism as the alert
+  // settings; a failed sync is shown, not swallowed.
+  const syncToServer = useCallback((next: CustomSymbol[]) => {
     void (async () => {
       try {
         const res = await fetch("/api/notify/config", {
@@ -107,6 +105,20 @@ export default function SymbolsPage() {
       }
     })();
   }, []);
+
+  // Symbols added before the server-side roster existed live only in this
+  // browser; opening the page once uploads them, so nobody has to re-add
+  // anything to make yesterday's BTCUSD appear on the board.
+  useEffect(() => {
+    const existing = loadCustomSymbols();
+    if (existing.length > 0) syncToServer(existing);
+  }, [syncToServer]);
+
+  const persist = useCallback((next: CustomSymbol[]) => {
+    setList(next);
+    saveCustomSymbols(next);
+    syncToServer(next);
+  }, [syncToServer]);
 
   function choose(s: Suggestion) {
     setPicked({
