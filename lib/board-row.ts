@@ -131,6 +131,14 @@ export interface BoardRow {
   trendEfficiency: number | null;
   /** True when both the daily structure and the weekly anchor agree. */
   weeklyAligned: boolean;
+  /**
+   * 實測證據 — the managed backtest behind the chosen plan, so a recommendation
+   * on the board carries its evidence instead of asking to be trusted. A
+   * senior reader's first question about any entry is "measured on what?";
+   * the detail card answers it three taps away, which is two too many.
+   * Null on rows written before the backtest existed or when nothing resolved.
+   */
+  planEvidence: { hitRate: number | null; expectancyR: number | null; resolved: number } | null;
 }
 
 /**
@@ -185,6 +193,7 @@ export function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | 
       trendPhase: null,
       trendEfficiency: null,
       weeklyAligned: false,
+      planEvidence: null,
     };
   }
 
@@ -213,6 +222,14 @@ export function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | 
     referenceNote: Array.isArray(row.data_gaps)
       ? ((row.data_gaps as string[]).find((g) => g.startsWith("本次不提供參考價位")) ?? null)
       : null,
+    planEvidence:
+      row.plan_backtest && typeof row.plan_backtest.resolved === "number" && row.plan_backtest.resolved > 0
+        ? {
+            hitRate: row.plan_backtest.hitRate ?? null,
+            expectancyR: row.plan_backtest.expectancyR ?? null,
+            resolved: row.plan_backtest.resolved,
+          }
+        : null,
     generatedAt: row.generated_at,
     gapCount: Array.isArray(row.data_gaps)
       ? // The board chip counts what someone could act on — behaviour notes and

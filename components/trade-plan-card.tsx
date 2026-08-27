@@ -50,6 +50,67 @@ function AddOns({ levels }: { levels: AddOnLevel[] }) {
   );
 }
 
+/**
+ * 進場後的管理劇本 — what happens AFTER the fill, spelled out before it.
+ *
+ * The three prices above answer "where"; nobody was answering "then what".
+ * The monitor runs a fixed set of management rules, and the backtest that
+ * approved this plan measured exactly those rules — so the reader deserves
+ * the whole lifecycle up front: a trade is a plan for every branch, not a
+ * price and a prayer. Prices are computed from this plan's own geometry so
+ * each rule reads as an instruction, not a principle.
+ */
+function ManagementPlaybook({ plan }: { plan: TradePlan }) {
+  if (plan.entry === null || plan.stop_loss === null) return null;
+  const long = plan.take_profit === null ? plan.stop_loss < plan.entry : plan.take_profit > plan.entry;
+  const risk = Math.abs(plan.entry - plan.stop_loss);
+  const oneR = long ? plan.entry + risk : plan.entry - risk;
+  const steps: Array<{ when: string; act: string }> = [];
+  if (plan.take_profit !== null) {
+    steps.push({
+      when: `價格觸及停利 ${formatPrice(plan.take_profit)}`,
+      act: `先平一半落袋，剩餘半倉停損移到至少進場價 ${formatPrice(plan.entry)}，改由結構管理 —— 最差打平，最好跑出趨勢`,
+    });
+  }
+  steps.push(
+    {
+      when: `走出 1R（價格到 ${formatPrice(oneR)}）`,
+      act: `停損移至進場價 ${formatPrice(plan.entry)}（保本）—— 代價是回檔到成本會被洗出場，這是規則接受的成本`,
+    },
+    {
+      when: "日線確認新的 swing 結構",
+      act: "停損跟進到結構外 0.5×ATR，只朝安全方向移動，永不放寬",
+    },
+    {
+      when: "日線出現反向 CHoCH（結構翻轉）",
+      act: "以市價出場，不等停損 —— 進場理由消失時離場是規則的一部分",
+    },
+    {
+      when: "NFP／FOMC 公布前 2 小時內",
+      act: "不建立新倉（系統強制）；已持倉會收到減倉或收緊停損的提醒，不加倉",
+    },
+  );
+  return (
+    <div className="mt-3 border-t border-neutral-800 pt-3">
+      <p className="mb-1.5 text-xs text-neutral-400">
+        進場後的管理劇本
+        <span className="ml-2 text-[10px] text-neutral-600">
+          5 分鐘監控自動執行；回測量的就是這套規則
+        </span>
+      </p>
+      <ol className="flex flex-col gap-1.5">
+        {steps.map((s) => (
+          <li key={s.when} className="text-[11px] leading-relaxed">
+            <span className="text-neutral-300">{s.when}</span>
+            <span className="text-neutral-600"> → </span>
+            <span className="text-neutral-500">{s.act}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 function Leg({
   label,
   price,
@@ -142,6 +203,8 @@ export function TradePlanCard({
       <p className="mt-3 border-t border-neutral-800 pt-3 text-sm leading-relaxed text-neutral-300">
         {plan.summary}
       </p>
+
+      <ManagementPlaybook plan={plan} />
 
       {plan.add_ons.length > 0 && <AddOns levels={plan.add_ons} />}
 

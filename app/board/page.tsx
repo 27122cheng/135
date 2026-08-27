@@ -221,6 +221,72 @@ function ReferenceLevels({ row }: { row: BoardRow }) {
   );
 }
 
+/**
+ * 持倉一眼 — the board answers "有什麼新交易", but a reader managing money
+ * opens it with a prior question: "我現在抱著什麼". Until now the answer
+ * lived on a different page, so a held position was invisible from the very
+ * screen where new entries are decided — and the correlation between a new
+ * entry and an existing position is exactly what a desk checks first.
+ */
+interface HeldStripRow {
+  symbol: string;
+  state: string;
+  direction: "long" | "short" | null;
+  openR: number | null;
+  paper: boolean;
+}
+
+function HeldStrip() {
+  const [held, setHeld] = useState<HeldStripRow[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/positions", { cache: "no-store" });
+        if (!res.ok) return;
+        const body = (await res.json()) as { open?: HeldStripRow[] };
+        if (!cancelled) setHeld((body.open ?? []).filter((p) => !p.paper));
+      } catch {
+        // The board must render whether or not the positions read works.
+      }
+    };
+    void load();
+    const timer = setInterval(load, 5 * 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  if (!held || held.length === 0) return null;
+  return (
+    <Link
+      href="/positions"
+      className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-emerald-500/30 bg-emerald-500/[0.04] px-3 py-2 text-xs hover:bg-emerald-500/[0.08]"
+    >
+      <span className="font-medium text-emerald-300">持倉中 {held.length} 筆</span>
+      {held.map((h) => (
+        <span key={h.symbol} className="flex items-center gap-1 text-neutral-300">
+          {h.symbol}
+          <span className={h.direction === "long" ? "text-emerald-400" : "text-red-400"}>
+            {h.direction === "long" ? "▲" : "▼"}
+          </span>
+          {h.state === "scaled" && <span className="text-[10px] text-emerald-500">半倉</span>}
+          {h.openR !== null && (
+            <span
+              className={`font-mono text-[11px] ${h.openR > 0 ? "text-emerald-400" : h.openR < 0 ? "text-red-400" : "text-neutral-500"}`}
+            >
+              {h.openR > 0 ? "+" : ""}
+              {h.openR}R
+            </span>
+          )}
+        </span>
+      ))}
+      <span className="ml-auto text-neutral-500">管理 →</span>
+    </Link>
+  );
+}
+
 export default function BoardPage() {
   const [data, setData] = useState<BoardResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -535,6 +601,8 @@ export default function BoardPage() {
         </label>
       </div>
 
+      <HeldStrip />
+
       <EconomicCountdown />
 
       {error && (
@@ -685,11 +753,29 @@ export default function BoardPage() {
                         </div>
                       </dl>
 
-                      {row.riskReward !== null && (
-                        <p className="mt-1.5 text-[11px] text-neutral-500">
-                          風報比 1:{row.riskReward}
-                        </p>
-                      )}
+                      <p className="mt-1.5 flex flex-wrap gap-x-3 text-[11px] text-neutral-500">
+                        {row.riskReward !== null && <span>風報比 1:{row.riskReward}</span>}
+                        {/* The evidence next to the advice: the managed
+                            backtest that let this plan pass the floors. A
+                            recommendation without its sample size asks to be
+                            trusted; this one shows its work. */}
+                        {row.planEvidence && (
+                          <span
+                            className={
+                              (row.planEvidence.expectancyR ?? 0) > 0
+                                ? "text-emerald-500/80"
+                                : "text-neutral-500"
+                            }
+                          >
+                            實測{" "}
+                            {row.planEvidence.expectancyR !== null &&
+                              `期望值 ${row.planEvidence.expectancyR > 0 ? "+" : ""}${row.planEvidence.expectancyR}R`}
+                            {row.planEvidence.hitRate !== null &&
+                              `・勝率 ${Math.round(row.planEvidence.hitRate * 100)}%`}
+                            ・{row.planEvidence.resolved} 筆樣本
+                          </span>
+                        )}
+                      </p>
 
                       {row.addOns.length > 0 ? (
                         <div className="mt-2.5 border-t border-neutral-800/60 pt-2">

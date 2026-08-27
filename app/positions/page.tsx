@@ -117,7 +117,9 @@ function PositionCard({ row }: { row: PositionRow }) {
           </dd>
         </div>
         <div>
-          <dt className="text-[10px] text-neutral-600">停利</dt>
+          <dt className="text-[10px] text-neutral-600">
+            停利{row.state === "scaled" && <span className="ml-1 text-emerald-500">已平一半</span>}
+          </dt>
           <dd className="font-mono text-xs text-emerald-400">{fmt(row.takeProfit)}</dd>
         </div>
       </dl>
@@ -130,6 +132,80 @@ function PositionCard({ row }: { row: PositionRow }) {
         </Link>
       </div>
     </div>
+  );
+}
+
+/**
+ * 組合風險 — the number a desk reads before any individual position: 如果每一筆
+ * 現在的停損全部打到，一共虧多少？ Measured in R against each trade's original
+ * risk, from levels the monitor already stamped — no new fetches, no sizing
+ * assumptions. A position whose stop has crossed its entry contributes zero
+ * or positive R at stop: it is already risk-free, and counting how many are
+ * is the honest way to say how protected the book is.
+ */
+function PortfolioRisk({ rows }: { rows: PositionRow[] }) {
+  let atStopSum = 0;
+  let openSum = 0;
+  let measurable = 0;
+  let riskFree = 0;
+  let scaled = 0;
+  for (const r of rows) {
+    if (r.state === "scaled") scaled++;
+    if (r.openR !== null) openSum += r.openR;
+    if (r.entry === null || r.stopLoss === null || r.activeStop === null || r.direction === null)
+      continue;
+    const risk0 = Math.abs(r.entry - r.stopLoss);
+    if (!(risk0 > 0)) continue;
+    measurable++;
+    const move = r.direction === "long" ? r.activeStop - r.entry : r.entry - r.activeStop;
+    // 分批止盈後只剩半倉在市場上，最壞情況也只有半份。
+    const fraction = r.state === "scaled" ? 0.5 : 1;
+    const rAtStop = (move / risk0) * fraction;
+    atStopSum += rAtStop;
+    if (rAtStop >= 0) riskFree++;
+  }
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const worst = r2(atStopSum);
+  return (
+    <section className="mb-3 rounded-xl border border-neutral-800 bg-neutral-900/40 p-3">
+      <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+        <div>
+          <p className="text-[10px] text-neutral-600">若全部停損打到</p>
+          <p
+            className={`font-mono text-sm ${worst >= 0 ? "text-emerald-400" : "text-red-400"}`}
+          >
+            {worst > 0 ? "+" : ""}
+            {worst}R
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] text-neutral-600">浮動盈虧合計</p>
+          <p
+            className={`font-mono text-sm ${openSum > 0 ? "text-emerald-400" : openSum < 0 ? "text-red-400" : "text-neutral-300"}`}
+          >
+            {openSum > 0 ? "+" : ""}
+            {r2(openSum)}R
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] text-neutral-600">已無風險（停損 ≥ 成本）</p>
+          <p className="font-mono text-sm text-neutral-200">
+            {riskFree}/{measurable} 筆
+          </p>
+        </div>
+        {scaled > 0 && (
+          <div>
+            <p className="text-[10px] text-neutral-600">已分批止盈</p>
+            <p className="font-mono text-sm text-emerald-400">{scaled} 筆</p>
+          </div>
+        )}
+      </div>
+      <p className="mt-2 text-[10px] leading-relaxed text-neutral-600">
+        以每筆交易自身的原始風險為 1R 計算，用的是監控目前生效的停損（含保本與結構移停），
+        不假設倉位大小。「若全部停損打到」是這個組合此刻的最壞情況 ——
+        負值是還在冒的險，0 或正值代表整本帳已經由市場買單。
+      </p>
+    </section>
   );
 }
 
@@ -183,6 +259,8 @@ export default function PositionsPage() {
           </p>
         </div>
       )}
+
+      {real.length > 0 && <PortfolioRisk rows={real} />}
 
       <section className="mb-4">
         <h2 className="mb-2 text-sm font-medium text-neutral-300">
@@ -252,7 +330,8 @@ export default function PositionsPage() {
 
       <p className="text-[11px] leading-relaxed text-neutral-600">
         這頁讀的是 5 分鐘監控自己的紀錄，不重新抓價 —— 顯示的「現價」是監控最後一次觀察到的價格。
-        停損移動規則：獲利達 1R 移到成本，2R 之後跟隨結構。結算後自動寫入
+        管理規則：觸及停利先平一半（剩餘保本追蹤）、獲利達 1R 停損移到成本、
+        新 swing 確認就跟進結構、反向 CHoCH 以市價出場。結算後自動寫入
         <Link href="/review" className="underline hover:text-neutral-400">
           交易總結
         </Link>

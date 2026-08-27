@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fomcTimes, nfpTimeFor } from "@/lib/analysis/timing";
+import { EVENT_BLACKOUT_MS, fomcTimes, nfpTimeFor } from "@/lib/analysis/timing";
 import { formatCountdown } from "@/lib/analysis/sessions";
 
 /**
@@ -69,8 +69,27 @@ export function EconomicCountdown() {
   const events = nextEvents(now);
   if (events.length === 0) return null;
 
+  // 禁入窗生效中 — the same window the signal builder enforces server-side
+  // (EVENT_BLACKOUT_MS), said here in red where the person deciding sees it.
+  // Inside it, new entries are refused by rule, not by mood; the reader with
+  // a position open gets the standard playbook instead of a surprise.
+  const nearest = events[0];
+  const nearestMinutes = Math.round((nearest.at.getTime() - now.getTime()) / 60_000);
+  const inBlackout = nearest.at.getTime() - now.getTime() <= EVENT_BLACKOUT_MS;
+
   return (
-    <section className="mb-3 rounded-xl border border-neutral-800 bg-neutral-900/40 p-3">
+    <section
+      className={`mb-3 rounded-xl border p-3 ${
+        inBlackout ? "border-red-500/40 bg-red-500/[0.05]" : "border-neutral-800 bg-neutral-900/40"
+      }`}
+    >
+      {inBlackout && (
+        <p className="mb-2 rounded-lg bg-red-500/10 px-2.5 py-2 text-xs leading-relaxed text-red-300">
+          <span className="font-medium">⛔ 數據前禁入窗生效中</span> —— {nearest.label}將於{" "}
+          {formatCountdown(nearestMinutes)}後公布。公布前 2 小時內系統不建立新倉
+          （新訊號一律轉為觀望並註明原因）；已持倉者考慮減半部位或把停損收緊到保本，不要加倉。
+        </p>
+      )}
       <h2 className="mb-2 text-xs font-medium text-neutral-400">經濟數據倒數</h2>
       <ul className="flex flex-col gap-2">
         {events.map((e) => {
@@ -97,7 +116,8 @@ export function EconomicCountdown() {
       </ul>
       <p className="mt-2 text-[10px] leading-relaxed text-neutral-600">
         只列時間可推算的兩項：NFP（每月第一個週五）與 FOMC（聯準會提前一年公布）。
-        CPI 的日期每月浮動，寧可不列也不猜錯。數據前後 24 小時內，訊號評等會自動降一級。
+        CPI 的日期每月浮動，寧可不列也不猜錯。數據前後 24 小時內訊號評等自動降一級；
+        公布前 2 小時內是硬規則 —— 不建立新倉。
       </p>
     </section>
   );

@@ -40,6 +40,8 @@ export function PositionSizing({
 }) {
   const [config, setConfig] = useState(() => loadSizingConfig());
   const [correlatedHeld, setCorrelatedHeld] = useState<string[]>([]);
+  /** 歷史最長連敗 — from the system's own settled trades, for the survival line. */
+  const [lossStreak, setLossStreak] = useState<number | null>(null);
 
   useEffect(() => {
     setConfig(loadSizingConfig());
@@ -49,6 +51,15 @@ export function PositionSizing({
     let cancelled = false;
     void (async () => {
       try {
+        // The review read is best-effort like the other two: it only feeds
+        // the streak-survival line, and sizing must render without it.
+        void fetch("/api/review", { cache: "no-store" })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((body: { equityCurve?: { longestLossStreak?: number } } | null) => {
+            const n = body?.equityCurve?.longestLossStreak;
+            if (!cancelled && typeof n === "number" && n > 0) setLossStreak(n);
+          })
+          .catch(() => undefined);
         const [posRes, corrRes] = await Promise.all([
           fetch("/api/positions", { cache: "no-store" }),
           fetch("/api/correlation", { cache: "no-store" }),
@@ -143,6 +154,21 @@ export function PositionSizing({
           · {n}
         </p>
       ))}
+      {/* 撐得過連敗才輪得到期望值 — the sizing lesson every book buries in
+          chapter nine, computed from this account's own % and this system's
+          own worst streak. Approximate on purpose (assumes ~1R per loss,
+          no compounding) and says so. */}
+      {lossStreak !== null && lossStreak >= 2 && (
+        <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-500">
+          · 本系統實測的最長連敗是 <span className="text-neutral-300">{lossStreak} 筆</span>。
+          以單筆風險 {config.riskPct}% 計，重演一次約回撤{" "}
+          <span className="text-neutral-300">
+            {Math.round(lossStreak * config.riskPct * 10) / 10}%
+          </span>
+          （約 {Math.round(lossStreak * (config.riskPct / 100) * config.accountSize).toLocaleString()}）
+          —— 單筆風險 % 的上限應以「這段回撤發生時你還能照計畫下一單」為準，不是以最大獲利為準。
+        </p>
+      )}
     </div>
   );
 }

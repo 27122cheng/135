@@ -224,6 +224,28 @@ async function suite() {
   check("a missing confidence column is not fatal", built.confidence === null);
   check("a missing direction_tie column reads false", built.directionTie === false);
 
+  // 實測證據 on the row: a plan's managed backtest travels with it to the
+  // board, and a legacy row without one (or with nothing resolved) reads null
+  // rather than a zero that looks like a measurement.
+  check("a row without a backtest carries no evidence", built.planEvidence === null);
+  const evidenced = toBoardRow(meta, {
+    ...historyRow,
+    plan_backtest: { resolved: 124, wins: 70, losses: 54, timeouts: 0,
+      hitRate: 0.565, expectancyR: 0.69, horizonBars: 20, lookbackBars: 500,
+      hadAmbiguousBars: false },
+  } as unknown as SignalRow);
+  check("a backtested plan carries its evidence to the board",
+    evidenced.planEvidence?.resolved === 124 &&
+      evidenced.planEvidence?.expectancyR === 0.69 &&
+      evidenced.planEvidence?.hitRate === 0.565,
+    evidenced.planEvidence);
+  check("zero resolved trades is no evidence, not evidence of zero",
+    toBoardRow(meta, {
+      ...historyRow,
+      plan_backtest: { resolved: 0, wins: 0, losses: 0, timeouts: 0, hitRate: null,
+        expectancyR: null, horizonBars: 20, lookbackBars: 0, hadAmbiguousBars: false },
+    } as unknown as SignalRow).planEvidence === null);
+
   // A symbol never scanned has nothing to show and must say so with null
   // rather than an empty-looking box of zeroes.
   check("an unscanned symbol has no reference", toBoardRow(meta, undefined).reference === null);
