@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { check, report, stubFetch } from "./_harness";
 import { __resetCacheForTests } from "@/lib/data-sources/cache";
 import { __resetQuotaForTests } from "@/lib/data-sources/quota";
@@ -157,6 +159,32 @@ async function main() {
     check("stamped with the bar's open, not the local clock",
       q !== null && Math.abs(new Date(q.at).getTime() - barOpen) < 1000, q?.at);
     check("labelled as its own source", q?.source === "binance", q?.source);
+  }
+
+  // ── every route resolves symbols against the full roster ────────
+  //
+  // Structural, like the driver pins in db.test: BTCUSD could be scanned,
+  // monitored and boarded, and still 404 from the lab, because five routes
+  // each kept their own `COMMODITIES.find`. And registration must not depend
+  // on the /symbols page being revisited after a deploy — scanning a custom
+  // symbol registers it server-side as a side effect.
+  {
+    const read = (p: string) => readFileSync(join(__dirname, "..", p), "utf8");
+    for (const route of [
+      "app/api/lab/route.ts",
+      "app/api/lab/adopt/route.ts",
+      "app/api/signal/[symbol]/route.ts",
+    ]) {
+      check(`${route} resolves via the roster`, read(route).includes("findInstrument"), route);
+    }
+    check("the forward route sweeps the full roster",
+      read("app/api/lab/forward/route.ts").includes("allInstruments"));
+    check("scanning a custom symbol registers it server-side",
+      read("app/api/signal/custom/route.ts").includes("registerCustomSymbol"));
+    check("the lab falls back to the ordinary candle chain before giving up",
+      read("app/api/lab/route.ts").includes("fetchOHLCV(meta, timeframe"));
+    check("deep H4 tries smaller ranges before declaring failure",
+      read("lib/data-sources/deep-history.ts").includes('"365d"'));
   }
 
   report("加密貨幣");

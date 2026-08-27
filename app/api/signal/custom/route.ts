@@ -1,5 +1,6 @@
 import { buildSignalFor } from "@/lib/signal-builder";
 import { storeScan } from "@/lib/scan";
+import { registerCustomSymbol } from "@/lib/server-symbols";
 import { isCryptoYahooTicker } from "@/lib/custom-symbols";
 import { defaultFundamentals } from "@/config/fundamentals";
 import type { CommodityMeta } from "@/types/signal";
@@ -86,6 +87,22 @@ export async function POST(request: Request) {
 
   const userKeys = parseUserKeyHeader(request.headers.get("x-user-keys"));
   try {
+    // 掃描即註冊 — scanning a custom symbol registers it server-side as a
+    // side effect. The browser-sync path (the /symbols page uploading its
+    // list) still exists, but it depends on the user visiting one page after
+    // one deploy, and on the settings endpoint's auth mood; this route runs
+    // every time the user actually looks at the symbol. Registration is what
+    // puts it on the board, in the hourly sweep, under the monitor, and in
+    // the lab. Best-effort and non-fatal: the scan is the job.
+    await registerCustomSymbol({
+      symbol,
+      label,
+      yahooSymbol,
+      stooqSymbol,
+      cotContractCode,
+      gdeltQuery,
+    }).catch(() => undefined);
+
     // Header first, stored second — see the note in /api/signal/[symbol].
     const merged = { ...(await storedApiKeys().catch(() => ({}))), ...userKeys };
     const signal = await withUserKeys(merged, () => buildSignalFor(meta, config));

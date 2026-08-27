@@ -1,5 +1,6 @@
-import { COMMODITIES } from "@/types/signal";
+import { findInstrument } from "@/lib/server-symbols";
 import { fetchDeepD1, fetchDeepH4 } from "@/lib/data-sources/deep-history";
+import { fetchOHLCV } from "@/lib/data-sources/ohlcv";
 import { runLab, VERIFY_FLOOR } from "@/lib/analysis/lab";
 import { applyStoredTradingCosts } from "@/lib/settings";
 import { json } from "@/lib/json-response";
@@ -20,7 +21,7 @@ export async function GET(request: Request) {
   const symbol = url.searchParams.get("symbol")?.toUpperCase() ?? "XAUUSD";
   const direction = url.searchParams.get("direction") === "short" ? "short" : "long";
   const timeframe = url.searchParams.get("timeframe") === "H4" ? "H4" : "D1";
-  const meta = COMMODITIES.find((c) => c.symbol === symbol);
+  const meta = await findInstrument(symbol);
   if (!meta) return json({ error: `Unknown symbol ${symbol}` }, { status: 404 });
 
   const gaps: string[] = [];
@@ -32,7 +33,35 @@ export async function GET(request: Request) {
     // measurement — see lib/data-sources/deep-history.ts. H4's two-year cap
     // still resamples to a sample on par with a decade of daily bars, and it
     // accumulates six times faster.
-    const deep = timeframe === "H4" ? await fetchDeepH4(meta, gaps) : await fetchDeepD1(meta, gaps);
+    let deep = timeframe === "H4" ? await fetchDeepH4(meta, gaps) : await fetchDeepD1(meta, gaps);
+    if (!deep?.candles?.length) {
+      // Last resort: the ordinary analysis chain (3 months of H4 / 1 year of
+      // D1, six sources deep, week-long stale window). A smaller sample with
+      // honest notes beats 取不到 K 棒，無法進行實驗 — the sample floors
+      // still gate what may be *believed*; this only changes whether the
+      // measurement can run at all.
+      const ordinary = await fetchOHLCV(meta, timeframe, gaps).catch(() => null);
+      if (ordinary?.candles?.length) {
+        gaps.push(
+          `深度歷史來源全數失敗，本次改用一般分析用的 ${timeframe} K 棒（${ordinary.candles.length} 根）——` +
+            `樣本較小，能通過驗證門檻的組合會更少，這是資料現實而非規則改變`,
+        );
+        deep = {
+          candles: ordinary.candles,
+          source: ordinary.source === "stooq" ? "stooq" : "yfinance-proxy",
+          years:
+            ordinary.candles.length > 1
+              ? Math.round(
+                  ((new Date(ordinary.candles.at(-1)!.time).getTime() -
+                    new Date(ordinary.candles[0].time).getTime()) /
+                    (365.25 * 86_400_000)) *
+                    10,
+                ) / 10
+              : 0,
+          stale: ordinary.stale,
+        };
+      }
+    }
     if (!deep?.candles?.length) {
       return json({ error: "取不到 K 棒，無法進行實驗", gaps }, { status: 502 });
     }

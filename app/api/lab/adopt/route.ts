@@ -1,4 +1,4 @@
-import { COMMODITIES } from "@/types/signal";
+import { findInstrument } from "@/lib/server-symbols";
 import { fetchDeepD1, fetchDeepH4 } from "@/lib/data-sources/deep-history";
 import { VERIFY_FLOOR, runLab } from "@/lib/analysis/lab";
 import {
@@ -130,7 +130,7 @@ export async function POST(request: Request) {
   const symbol = typeof body.symbol === "string" ? body.symbol.toUpperCase() : "";
   const direction = body.direction === "short" ? "short" : "long";
   const timeframe = body.timeframe === "H4" ? "H4" : "D1";
-  const meta = COMMODITIES.find((c) => c.symbol === symbol);
+  const meta = await findInstrument(symbol);
   if (!meta) return json({ error: `未知的商品 ${symbol}` }, { status: 400 });
   if (!Array.isArray(body.ids) || body.ids.length === 0) {
     return json({ error: "沒有指定條件" }, { status: 400 });

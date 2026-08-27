@@ -1,7 +1,14 @@
 import { COMMODITIES, type CommodityMeta } from "@/types/signal";
 import { defaultFundamentals, type FundamentalsConfig } from "@/config/fundamentals";
-import { parseCustomSymbols, toCommodityMeta } from "./custom-symbols";
-import { getSetting } from "./settings";
+import {
+  MAX_CUSTOM_SYMBOLS,
+  parseCustomSymbols,
+  toCommodityMeta,
+  validateCustomSymbol,
+  type CustomSymbol,
+} from "./custom-symbols";
+import { getSignalStore } from "./db";
+import { clearSettingsCache, getSetting } from "./settings";
 
 /**
  * 自訂標的的伺服器端名冊 — what makes a user-added symbol a first-class one.
@@ -46,4 +53,50 @@ export async function loadServerCustomSymbols(): Promise<ServerCustomSymbol[]> {
 export async function allInstruments(): Promise<CommodityMeta[]> {
   const customs = await loadServerCustomSymbols();
   return [...COMMODITIES, ...customs.map((c) => c.meta)];
+}
+
+/**
+ * Resolves one symbol against the full roster. Every route that used to do
+ * `COMMODITIES.find(...)` goes through here instead — that lookup is exactly
+ * how BTCUSD could be scanned, monitored, and boarded, and still get a 404
+ * from the lab: five routes each kept their own idea of what a symbol is.
+ */
+export async function findInstrument(symbol: string): Promise<CommodityMeta | null> {
+  const wanted = symbol.toUpperCase();
+  return (await allInstruments()).find((c) => c.symbol === wanted) ?? null;
+}
+
+/**
+ * Registers (or refreshes) one custom symbol in the server-side roster.
+ *
+ * Called by the custom scan route, so scanning a symbol once is enough to
+ * make it first-class — no dependence on the /symbols page being revisited
+ * after a deploy. Upsert by symbol id; built-in ids are refused for the same
+ * shadowing reason as above; the parser's cap applies, oldest kept.
+ */
+export async function registerCustomSymbol(candidate: CustomSymbol): Promise<void> {
+  const cleaned: CustomSymbol = {
+    symbol: candidate.symbol.trim().toUpperCase(),
+    label: candidate.label.trim(),
+    yahooSymbol: candidate.yahooSymbol.trim(),
+    stooqSymbol: candidate.stooqSymbol.trim(),
+    cotContractCode: candidate.cotContractCode.trim(),
+    gdeltQuery: candidate.gdeltQuery.trim(),
+  };
+  if (validateCustomSymbol(cleaned) !== null) return;
+  if (COMMODITIES.some((c) => c.symbol === cleaned.symbol)) return;
+
+  const store = getSignalStore();
+  if (!store) return;
+  const current = parseCustomSymbols(await getSetting("CUSTOM_SYMBOLS").catch(() => null));
+  const existing = current.find((s) => s.symbol === cleaned.symbol);
+  // Idempotent when nothing changed — this runs on every custom scan, and a
+  // settings write plus cache clear per page view would be pure churn.
+  if (existing && JSON.stringify(existing) === JSON.stringify(cleaned)) return;
+  const next = [...current.filter((s) => s.symbol !== cleaned.symbol), cleaned].slice(
+    0,
+    MAX_CUSTOM_SYMBOLS,
+  );
+  await store.saveSetting("CUSTOM_SYMBOLS", JSON.stringify(next));
+  clearSettingsCache();
 }

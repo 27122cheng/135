@@ -1,4 +1,5 @@
 import { COMMODITIES } from "@/types/signal";
+import { allInstruments } from "@/lib/server-symbols";
 import { summariseForward } from "@/lib/analysis/lab-forward";
 import { advanceLedger, LEDGER_LIMIT } from "@/lib/lab-forward-runner";
 import { getSignalStore } from "@/lib/db";
@@ -64,7 +65,8 @@ export async function POST(request: Request) {
   if (!store) return json({ error: "未設定資料庫，前進實驗無法記錄" }, { status: 501 });
 
   const requested = new URL(request.url).searchParams.get("symbol")?.toUpperCase();
-  const targets = requested ? COMMODITIES.filter((c) => c.symbol === requested) : COMMODITIES;
+  const roster = await allInstruments().catch(() => [...COMMODITIES]);
+  const targets = requested ? roster.filter((c) => c.symbol === requested) : roster;
   if (targets.length === 0) return json({ error: `Unknown symbol ${requested}` }, { status: 404 });
 
   const gaps: string[] = [];

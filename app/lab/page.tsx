@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { COMMODITIES } from "@/types/signal";
+import { loadCustomSymbols } from "@/lib/custom-symbols";
 import type { LabFinding, LabReport } from "@/lib/analysis/lab";
 import type { LabAdoption } from "@/lib/analysis/lab-adoption";
 import type { ForwardStat } from "@/lib/analysis/lab-forward";
@@ -199,6 +200,21 @@ export default function LabPage() {
   const [symbol, setSymbol] = useState("XAUUSD");
   const [direction, setDirection] = useState<"long" | "short">("long");
   const [timeframe, setTimeframe] = useState<"D1" | "H4">("D1");
+  // Built-ins plus this browser's custom symbols — the lab runs on customs
+  // too (crypto especially: Binance deep history is the best-covered series
+  // in the whole system), and a picker that only lists built-ins hid that.
+  const [instruments, setInstruments] = useState<{ symbol: string; label: string }[]>(
+    COMMODITIES.map((c) => ({ symbol: c.symbol, label: c.label })),
+  );
+  useEffect(() => {
+    const customs = loadCustomSymbols();
+    if (customs.length > 0) {
+      setInstruments([
+        ...COMMODITIES.map((c) => ({ symbol: c.symbol, label: c.label })),
+        ...customs.map((c) => ({ symbol: c.symbol, label: c.label })),
+      ]);
+    }
+  }, []);
   const [data, setData] = useState<LabResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [adopt, setAdopt] = useState<AdoptResponse | null>(null);
@@ -342,7 +358,7 @@ export default function LabPage() {
           onChange={(e) => setSymbol(e.target.value)}
           className="rounded-lg border border-neutral-700 bg-neutral-950 px-2.5 py-1 text-xs text-neutral-100"
         >
-          {COMMODITIES.map((c) => (
+          {instruments.map((c) => (
             <option key={c.symbol} value={c.symbol}>
               {c.label}
             </option>

@@ -192,8 +192,17 @@ export async function fetchDeepH4(
     }
   }
 
+  // Progressive ranges: the full 730-day hourly request is ~17,000 raw bars
+  // in one Yahoo response, and it is precisely the request most likely to
+  // time out or be refused when the upstream is grumpy — which then read as
+  // 取不到 K 棒 while a smaller request would have succeeded. 365d ≈ 1,500
+  // and 180d ≈ 780 four-hour bars, both still above the sample floor.
   const proxyGaps: string[] = [];
-  const proxied = await fetchViaProxy(meta.yfinanceSymbol, "H4", proxyGaps, "730d");
+  let proxied: Awaited<ReturnType<typeof fetchViaProxy>> = null;
+  for (const range of ["730d", "365d", "180d"]) {
+    proxied = await fetchViaProxy(meta.yfinanceSymbol, "H4", proxyGaps, range);
+    if (proxied?.candles?.length) break;
+  }
   const fromProxy = proxied?.candles ?? null;
   if (fromProxy && fromProxy.length >= SHORT_SERIES) {
     for (const g of proxyGaps) if (g.includes("stale")) gaps.push(g);

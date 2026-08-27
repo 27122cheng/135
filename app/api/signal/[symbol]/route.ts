@@ -1,4 +1,4 @@
-import { COMMODITIES } from "@/types/signal";
+import { findInstrument } from "@/lib/server-symbols";
 import { buildTradeSignal } from "@/lib/signal-builder";
 import { parseUserKeyHeader, withUserKeys } from "@/lib/api-keys";
 import { storedApiKeys } from "@/lib/settings";
@@ -11,7 +11,7 @@ export const maxDuration = 60;
 
 export async function GET(request: Request, { params }: { params: { symbol: string } }) {
   const symbol = params.symbol.toUpperCase();
-  const meta = COMMODITIES.find((c) => c.symbol === symbol);
+  const meta = await findInstrument(symbol);
   if (!meta) {
     return json({ error: `Unknown symbol ${params.symbol}` }, { status: 404 });
   }
