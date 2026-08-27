@@ -97,6 +97,19 @@ jobs:
             echo "Skipped (not configured):$skipped"
           fi
 
+          # 自訂標的 — the server-registered customs (BTC/ETH and friends),
+          # swept in one call after the built-ins. The route reads the list
+          # from app_settings, so this step needs no symbol names here; a
+          # deployment with none registered returns 200 with an empty list.
+          echo "::group::custom symbols"
+          curl --silent --show-error --location --max-time 90 \
+            --retry 2 --retry-delay 10 --retry-all-errors \
+            --header "Authorization: Bearer ${CRON_SECRET:-}" \
+            "$APP_URL/api/refresh?custom=1" | head -c 4000 \
+            || echo "::warning::custom-symbol sweep failed (non-fatal)"
+          echo ""
+          echo "::endgroup::"
+
           # Read the board back after the sweep. The sweep above can report
           # every write as stored and still have persisted nothing anywhere a
           # reader looks — that exact failure ran for a full day. The board

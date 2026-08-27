@@ -28,6 +28,7 @@ import {
 } from "./analysis/trade-plan";
 import { buildAddOns } from "./analysis/add-on";
 import {
+  adoptionEvidence,
   describeGate,
   evaluateAdoption,
   findAdoption,
@@ -420,6 +421,15 @@ async function buildSignalForSymbol(
   // Weight-0 readings from the clock alone; they inform, never vote.
   const timing = analyzeTiming(new Date());
 
+  // 實驗室實測證據 — an adopted, out-of-sample-verified combination firing on
+  // the current bar votes on direction with the weight of a measured fact.
+  // See adoptionEvidence for the boundaries; the subtract-only gate still
+  // runs at the end of the build, unchanged.
+  const labEvidence = adoptionEvidence(adoptions, {
+    D1: d1?.candles,
+    H4: h4?.candles,
+  });
+
   const rawBiasItems: BiasItem[] = [
     ...technical.biasItems,
     ...patternParts.biasItems,
@@ -429,6 +439,7 @@ async function buildSignalForSymbol(
     ...fundFlowItems,
     ...openInterestItems,
     ...timing.items,
+    ...labEvidence,
   ];
 
   // 一個事實，一票。基本面與資金流都在讀同一個 VIX/DXY，兩邊各記一票，

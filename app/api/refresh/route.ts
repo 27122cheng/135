@@ -1,4 +1,5 @@
 import { COMMODITIES } from "@/types/signal";
+import { loadServerCustomSymbols } from "@/lib/server-symbols";
 import { groupDataGaps } from "@/lib/data-gaps";
 import { describeStore, getSignalStore } from "@/lib/db";
 import { notifyAll } from "@/lib/notify";
@@ -44,12 +45,27 @@ export async function GET(request: Request) {
     );
   }
 
-  const requested = new URL(request.url).searchParams.get("symbol")?.toUpperCase();
-  const targets = requested
-    ? COMMODITIES.filter((c) => c.symbol === requested)
-    : COMMODITIES;
+  const params = new URL(request.url).searchParams;
+  const requested = params.get("symbol")?.toUpperCase();
+  // 自訂標的 — server-registered, so the schedule can scan them at all.
+  // `?custom=1` sweeps just the customs (the workflow calls it once after the
+  // built-in loop); `?symbol=` resolves against both rosters so a custom can
+  // also be refreshed individually.
+  const customs = await loadServerCustomSymbols().catch(() => []);
+  const customConfig = new Map(customs.map((c) => [c.meta.symbol, c.config]));
+  const roster = [...COMMODITIES, ...customs.map((c) => c.meta)];
+  const targets = params.get("custom")
+    ? customs.map((c) => c.meta)
+    : requested
+      ? roster.filter((c) => c.symbol === requested)
+      : COMMODITIES;
   if (targets.length === 0) {
-    return json({ error: `Unknown symbol ${requested}` }, { status: 404 });
+    return json(
+      params.get("custom")
+        ? { ranAt: new Date().toISOString(), results: [], note: "沒有已登錄的自訂標的" }
+        : { error: `Unknown symbol ${requested}` },
+      { status: params.get("custom") ? 200 : 404 },
+    );
   }
 
   const minGrade = await configuredMinGrade();
@@ -73,8 +89,9 @@ export async function GET(request: Request) {
 
       // The same scan the browser runs — same keys, same release ingestion,
       // same storage. Divergence here is what let Telegram announce a trade the
-      // website did not have.
-      const scan = await runScan(meta);
+      // website did not have. A custom symbol scans with its own stored
+      // config, or the CFTC code and news query the user typed would be lost.
+      const scan = await runScan(meta, { config: customConfig.get(meta.symbol) });
       const signal = scan.signal;
       releases.push(...scan.releases);
       releaseNotes.push(...scan.releaseNotes);

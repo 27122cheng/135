@@ -1,5 +1,6 @@
 import type { SignalStore } from "@/lib/db";
 import { COMMODITIES } from "@/types/signal";
+import { allInstruments } from "@/lib/server-symbols";
 import type { JournalEntry } from "@/types/journal";
 import { computeTrackRecord, type TrackBucket } from "@/lib/journal/stats";
 import { notifyAll } from "@/lib/notify";
@@ -140,9 +141,11 @@ export async function maybeSendWeeklyDigest(
 
   // Real positions still in flight — read from the monitor's own state, the
   // same rows the 5-minute sweep manages. Paper trackers live under
-  // `${symbol}:ref` keys and are deliberately not counted here.
+  // `${symbol}:ref` keys and are deliberately not counted here. Customs
+  // included: the monitor watches them, so the digest must count them.
   const open: OpenPositionSummary[] = [];
-  for (const meta of COMMODITIES) {
+  const roster = await allInstruments().catch(() => [...COMMODITIES]);
+  for (const meta of roster) {
     const row = await store.getMonitorState(meta.symbol).catch(() => null);
     if (row && (row.state === "entered" || row.state === "added") && row.tracked?.plan) {
       open.push({

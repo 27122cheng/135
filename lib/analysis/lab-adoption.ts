@@ -1,5 +1,5 @@
 import type { Candle } from "../data-sources/ohlcv";
-import type { LabGate } from "@/types/signal";
+import type { BiasItem, LabGate } from "@/types/signal";
 import { CONDITIONS, WARMUP, buildContext, type LabFinding, type LabTimeframe } from "./lab";
 import { readInternalSetting } from "../settings";
 
@@ -249,6 +249,51 @@ export function evaluateAdoption(adoption: LabAdoption, candles: Candle[] | unde
   });
 
   return { ...base, checks, met: checks.every((c) => c.met) };
+}
+
+/**
+ * 實測證據 — adopted conditions feeding the score, not only the gate.
+ *
+ * The gate can only subtract: an adopted combination that is NOT met blocks
+ * an entry. But when it IS met, the system was throwing that information
+ * away — a combination that demonstrated its hit rate on 100+ in-sample
+ * trades, survived out-of-sample verification, and was deliberately adopted
+ * by the operator, firing on the current bar, is *evidence about direction*,
+ * and stronger evidence than most of the hand-weighted heuristics already
+ * voting. This turns it into a bias item.
+ *
+ * The boundaries that keep this honest:
+ *  - **Adopted only.** The lab's raw findings never vote — a beam search's
+ *    survivors reaching the score without a human pressing 採用 would be the
+ *    over-fitting-to-production pipeline this file's header warns about.
+ *  - **Both directions.** A short adoption firing while the analysis leans
+ *    long votes against it — measured evidence has no obligation to agree.
+ *  - **Capped at weight 2**, the same ceiling every other single fact has;
+ *    passing verification does not make it more than one fact.
+ *  - The gate still runs afterwards and can still only subtract.
+ */
+export function adoptionEvidence(
+  adoptions: LabAdoption[],
+  candles: { D1?: Candle[]; H4?: Candle[] },
+): BiasItem[] {
+  const items: BiasItem[] = [];
+  for (const adoption of adoptions) {
+    const gate = evaluateAdoption(adoption, candles[adoption.timeframe]);
+    if (!gate.met) continue;
+    const oosPct = Math.round(adoption.outOfSample.hitRate * 100);
+    items.push({
+      dimension: "技術面",
+      direction: adoption.direction,
+      weight: 2,
+      factor: `實驗室已驗證條件於 ${adoption.timeframe} 成立：${adoption.labels.join("＋")}`,
+      evidence:
+        `樣本外 ${adoption.outOfSample.trades} 筆勝率 ${oosPct}%、` +
+        `樣本內 ${adoption.inSample.trades} 筆通過驗證，當前 K 棒全數條件成立`,
+      source: `實驗室採用紀錄（${adoption.adoptedAt.slice(0, 10)} 採用）`,
+      key: `lab-adopted:${adoption.direction}:${[...adoption.ids].sort().join("+")}`,
+    });
+  }
+  return items;
 }
 
 /** Every adoption, from the shared per-invocation settings cache. */

@@ -7,7 +7,12 @@ import {
   fetchBinanceQuote,
   isCryptoTicker,
 } from "@/lib/data-sources/binance-crypto";
-import { isCryptoYahooTicker, toCommodityMeta } from "@/lib/custom-symbols";
+import {
+  MAX_CUSTOM_SYMBOLS,
+  isCryptoYahooTicker,
+  parseCustomSymbols,
+  toCommodityMeta,
+} from "@/lib/custom-symbols";
 import { marketStatus } from "@/lib/market-hours";
 import { defaultTradingCostFor } from "@/config/trading-costs";
 
@@ -38,6 +43,33 @@ async function main() {
     check("the browser-side detector agrees",
       isCryptoYahooTicker("BTC-USD") && !isCryptoYahooTicker("EURUSD=X") &&
       !isCryptoYahooTicker("^N225"));
+  }
+
+  // ── the server-side custom-symbol roster parses defensively ─────
+  //
+  // Custom symbols now live in app_settings so the board, the hourly sweep
+  // and the monitor can see them without a browser. The stored JSON is
+  // whatever the settings endpoint accepted, so parsing drops anything
+  // invalid and caps the count — the customs share one 60-second sweep
+  // invocation, and an unbounded list would starve the later ones hourly.
+  {
+    const good = { symbol: "BTCUSD", label: "比特幣", yahooSymbol: "BTC-USD",
+      stooqSymbol: "", cotContractCode: "", gdeltQuery: "bitcoin" };
+    const parsed = parseCustomSymbols(JSON.stringify([
+      good,
+      { ...good, symbol: "bad symbol!" }, // invalid id → dropped
+      { ...good, symbol: "ETHUSD", yahooSymbol: "ETH-USD" },
+    ]));
+    check("valid entries survive, invalid ones are dropped individually",
+      parsed.length === 2 && parsed[0].symbol === "BTCUSD" && parsed[1].symbol === "ETHUSD",
+      parsed.map((s) => s.symbol));
+    check("garbage parses to an empty roster, never a crash",
+      parseCustomSymbols("not json").length === 0 &&
+      parseCustomSymbols(JSON.stringify({ a: 1 })).length === 0 &&
+      parseCustomSymbols(null).length === 0);
+    const many = Array.from({ length: 10 }, (_, i) => ({ ...good, symbol: `C${i}` }));
+    check(`the roster caps at ${MAX_CUSTOM_SYMBOLS}`,
+      parseCustomSymbols(JSON.stringify(many)).length === MAX_CUSTOM_SYMBOLS);
   }
 
   // ── a user-added crypto symbol gets the crypto category ─────────

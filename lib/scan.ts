@@ -1,5 +1,5 @@
 import type { CommodityMeta, SupportedSymbol, TradeSignal } from "@/types/signal";
-import { FUNDAMENTALS_CONFIG, type FundamentalsConfig } from "@/config/fundamentals";
+import { FUNDAMENTALS_CONFIG, defaultFundamentals, type FundamentalsConfig } from "@/config/fundamentals";
 import { buildSignalFor } from "./signal-builder";
 import { ingestReleases, type IngestedRelease } from "./analysis/data-release";
 import { withUserKeys } from "./api-keys";
@@ -66,6 +66,13 @@ export interface ScanOptions {
    * behaves identically whether or not a browser is involved.
    */
   extraKeys?: Record<string, string>;
+  /**
+   * The fundamentals config to scan with. Built-ins resolve their own from
+   * FUNDAMENTALS_CONFIG; server-registered custom symbols pass theirs here so
+   * the CFTC code and news query the user typed actually get used — without
+   * it they would scan on the neutral default and lose their own settings.
+   */
+  config?: FundamentalsConfig;
 }
 
 export interface ScanResult {
@@ -79,9 +86,17 @@ export interface ScanResult {
 }
 
 function configFor(meta: CommodityMeta): FundamentalsConfig {
+  // A user-added symbol must never inherit another instrument's config: the
+  // SPX500 fallback here meant a custom BTCUSD would have been scored with
+  // the S&P's CFTC contract code and news query — wrong evidence presented
+  // with full confidence. Unknown symbols get a neutral default instead.
   return (
     FUNDAMENTALS_CONFIG[meta.symbol as SupportedSymbol] ??
-    FUNDAMENTALS_CONFIG.SPX500
+    defaultFundamentals(meta.symbol, {
+      cotContractCode: null,
+      gdeltQuery: `"${meta.label}"`,
+      newsKeywords: [meta.label.toLowerCase()],
+    })
   );
 }
 
@@ -128,7 +143,7 @@ export async function runScan(
       fresh: [] as IngestedRelease[],
       gaps: [`數據公布偵測失敗：${err instanceof Error ? err.message : String(err)}`],
     }));
-    const signal = await buildSignalFor(meta, configFor(meta));
+    const signal = await buildSignalFor(meta, options.config ?? configFor(meta));
     return { signal, ingest };
   };
   const result = await withUserKeys(keys, () =>

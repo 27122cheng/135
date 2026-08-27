@@ -34,8 +34,17 @@ const ALERT_KEYS = [
  * own spread/holding-cost figures as JSON — validated field-by-field in
  * config/trading-costs.ts before anything believes it, so a typo degrades to
  * the defaults rather than to a free-spread backtest.
+ *
+ * CUSTOM_SYMBOLS carries the user-added instruments as JSON. They started as
+ * localStorage-only, which made them invisible to everything that runs
+ * without a browser — the board read COMMODITIES, the hourly sweep scanned
+ * COMMODITIES, the monitor watched COMMODITIES, so a freshly added BTCUSD
+ * produced one on-demand card and then ceased to exist. Stored server-side,
+ * every scheduled path can include them. Validated by the same
+ * parseCustomSymbols the browser uses, so the two copies cannot disagree
+ * about what a well-formed symbol is.
  */
-const CONFIG_KEYS = ["TRADING_COSTS_OVERRIDE"] as const;
+const CONFIG_KEYS = ["TRADING_COSTS_OVERRIDE", "CUSTOM_SYMBOLS"] as const;
 
 /**
  * The AI keys are settable here *as well as* per-request, and the two serve

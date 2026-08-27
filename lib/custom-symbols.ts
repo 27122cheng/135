@@ -40,14 +40,36 @@ export function validateCustomSymbol(s: CustomSymbol): string | null {
   return null;
 }
 
+/**
+ * The most custom symbols one deployment scans. A cap because the scheduled
+ * sweep gives customs one shared 60-second invocation: four full pipelines
+ * fit; an unbounded list would silently starve the later ones every hour.
+ */
+export const MAX_CUSTOM_SYMBOLS = 6;
+
+/**
+ * Parses a stored JSON list, dropping anything invalid — shared by the
+ * browser's localStorage copy and the server's app_settings copy, so the two
+ * cannot disagree about what a well-formed custom symbol is.
+ */
+export function parseCustomSymbols(raw: string | null): CustomSymbol[] {
+  if (!raw || !raw.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((s): s is CustomSymbol => !!s && typeof s === "object" && validateCustomSymbol(s as CustomSymbol) === null)
+    .slice(0, MAX_CUSTOM_SYMBOLS);
+}
+
 export function loadCustomSymbols(): CustomSymbol[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((s): s is CustomSymbol => validateCustomSymbol(s) === null);
+    return parseCustomSymbols(window.localStorage.getItem(STORAGE_KEY));
   } catch {
     return [];
   }

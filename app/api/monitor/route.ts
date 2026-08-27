@@ -1,4 +1,5 @@
 import { COMMODITIES } from "@/types/signal";
+import { allInstruments } from "@/lib/server-symbols";
 import { getSignalStore, type MonitorRow, type TrackedPlan } from "@/lib/db";
 import { readLatest } from "@/lib/latest-signals";
 import { fetchLatestPrice } from "@/lib/data-sources/yfinance";
@@ -133,7 +134,11 @@ export async function GET(request: Request) {
 
   const appUrl = process.env.APP_URL?.trim() || new URL(request.url).origin;
   const requested = new URL(request.url).searchParams.get("symbol")?.toUpperCase();
-  const targets = requested ? COMMODITIES.filter((c) => c.symbol === requested) : COMMODITIES;
+  // Built-ins plus server-registered customs: a position on a user-added
+  // BTCUSD deserves the same stop/target/breakeven watch as gold's, and a
+  // quote check per symbol is cheap enough that the roster can just grow.
+  const roster = await allInstruments().catch(() => COMMODITIES);
+  const targets = requested ? roster.filter((c) => c.symbol === requested) : roster;
 
   // One read for all nine, not one per symbol: this is the same query the board
   // makes, and it answers for every instrument at once.

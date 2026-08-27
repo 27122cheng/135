@@ -1,4 +1,5 @@
 import { buildSignalFor } from "@/lib/signal-builder";
+import { storeScan } from "@/lib/scan";
 import { isCryptoYahooTicker } from "@/lib/custom-symbols";
 import { defaultFundamentals } from "@/config/fundamentals";
 import type { CommodityMeta } from "@/types/signal";
@@ -88,7 +89,15 @@ export async function POST(request: Request) {
     // Header first, stored second — see the note in /api/signal/[symbol].
     const merged = { ...(await storedApiKeys().catch(() => ({}))), ...userKeys };
     const signal = await withUserKeys(merged, () => buildSignalFor(meta, config));
-    return json(signal);
+    // Stored like every scheduled scan, so the board, the monitor and the
+    // history see custom symbols too. Best-effort: a deployment without a
+    // database still gets its on-demand card.
+    const stored = await storeScan(signal).catch(
+      (err: unknown): { storeError: string | null } => ({
+        storeError: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return json({ ...signal, store_error: stored.storeError ?? undefined });
   } catch (err) {
     return json(
       { error: err instanceof Error ? err.message : `無法產生 ${symbol} 訊號` },

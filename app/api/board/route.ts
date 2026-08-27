@@ -1,6 +1,6 @@
-import { COMMODITIES } from "@/types/signal";
 import { describeStore, getSignalStore } from "@/lib/db";
 import { readLatest } from "@/lib/latest-signals";
+import { allInstruments } from "@/lib/server-symbols";
 import { toBoardRow } from "@/lib/board-row";
 import { json } from "@/lib/json-response";
 
@@ -48,10 +48,12 @@ export async function GET(request: Request) {
       const row = bySymbol.get(wanted);
       return json({ signal: row ?? null }, { status: row ? 200 : 404 });
     }
-    // Driven by COMMODITIES, not by what the query returned, so a symbol that
-    // has never been scanned appears as an empty row instead of vanishing —
-    // "no data yet" and "no trade" are different answers.
-    const rows = COMMODITIES.map((meta) => toBoardRow(meta, bySymbol.get(meta.symbol)));
+    // Driven by the instrument roster, not by what the query returned, so a
+    // symbol that has never been scanned appears as an empty row instead of
+    // vanishing — "no data yet" and "no trade" are different answers. The
+    // roster is built-ins plus the server-registered customs: 新增標的沒有
+    // 加入總覽 was exactly this line reading COMMODITIES alone.
+    const rows = (await allInstruments()).map((meta) => toBoardRow(meta, bySymbol.get(meta.symbol)));
 
     // Metadata before `rows`, deliberately: the refresh workflow logs the
     // first few hundred bytes of this response every sweep, and the fields

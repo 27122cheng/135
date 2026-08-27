@@ -1,5 +1,6 @@
 import { check, report } from "./_harness";
 import {
+  adoptionEvidence,
   adoptionFromFinding,
   evaluateAdoption,
   findAdoption,
@@ -216,6 +217,40 @@ const adoption = (over: Partial<LabAdoption> = {}): LabAdoption => ({
       gate.ids.join("+") === verified.ids.join("+"), { gate: gate.ids, verified: verified.ids });
     check("and the gate holds on the same data that verified it", gate.met, gate.checks);
   }
+}
+
+// ── 實測證據 — a met adoption votes on direction, an unmet one is silent ──
+//
+// The gate can only subtract; this is the other half. An adopted,
+// out-of-sample-verified combination firing on the current bar is measured
+// evidence about direction, and the score now hears it. The boundaries
+// pinned here: adopted-and-met is exactly one weight-2 vote, unmet or
+// unevaluable is zero votes (never a negative — the gate handles blocking),
+// and an opposite-direction adoption votes the other way.
+{
+  const up = bars((i) => 100 + i, WARMUP + 40); // close above EMA50 → long met
+  const down = bars((i) => 300 - i, WARMUP + 40); // close below EMA50 → short met
+  const longAdoption = adoption(); // ema50-side, long, D1
+
+  const items = adoptionEvidence([longAdoption], { D1: up });
+  check("a met adoption becomes one weighted vote",
+    items.length === 1 && items[0].weight === 2 && items[0].direction === "long", items);
+  check("with the measured out-of-sample numbers as its evidence",
+    items[0].evidence.includes("81%") && items[0].evidence.includes("51"), items[0].evidence);
+  check("named as lab-verified, on its timeframe",
+    items[0].factor.includes("實驗室") && items[0].factor.includes("D1"), items[0].factor);
+  check("carrying a dedupe key so it can only ever be one fact",
+    items[0].key === "lab-adopted:long:ema50-side", items[0].key);
+
+  check("an unmet adoption is silent — the gate does the blocking, not a negative vote",
+    adoptionEvidence([longAdoption], { D1: down }).length === 0);
+  check("missing candles are unevaluable, never a vote",
+    adoptionEvidence([longAdoption], {}).length === 0);
+
+  const shortAdoption = adoption({ direction: "short" });
+  const opposing = adoptionEvidence([longAdoption, shortAdoption], { D1: down });
+  check("an opposite-direction adoption votes the other way",
+    opposing.length === 1 && opposing[0].direction === "short", opposing);
 }
 
 report("實驗室採用");

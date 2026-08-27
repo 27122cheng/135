@@ -79,9 +79,33 @@ export default function SymbolsPage() {
     };
   }, [query]);
 
+  const [syncNote, setSyncNote] = useState<string | null>(null);
+
   const persist = useCallback((next: CustomSymbol[]) => {
     setList(next);
     saveCustomSymbols(next);
+    // 同步到伺服器 — the browser copy alone made these symbols invisible to
+    // everything scheduled: the board read built-ins, the hourly sweep and
+    // the monitor scanned built-ins, so a freshly added BTCUSD produced one
+    // on-demand card and then ceased to exist. Same mechanism as the alert
+    // settings; a failed sync is shown, not swallowed.
+    void (async () => {
+      try {
+        const res = await fetch("/api/notify/config", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ CUSTOM_SYMBOLS: JSON.stringify(next) }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          setSyncNote(`伺服器同步失敗（排程掃描會看不到這些標的）：${body?.error ?? `HTTP ${res.status}`}`);
+        } else {
+          setSyncNote("已同步到伺服器 —— 總覽、每小時掃描與監控都會包含這些標的");
+        }
+      } catch (err) {
+        setSyncNote(`伺服器同步失敗：${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
   }, []);
 
   function choose(s: Suggestion) {
@@ -193,6 +217,11 @@ export default function SymbolsPage() {
           </div>
 
           {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+          {syncNote && (
+            <p className={`mt-2 text-[11px] ${syncNote.includes("失敗") ? "text-amber-400" : "text-emerald-400"}`}>
+              {syncNote}
+            </p>
+          )}
 
           <div className="mt-3 flex items-center gap-3">
             <button
