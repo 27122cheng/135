@@ -92,7 +92,11 @@ function stored(s: TradeSignal): SignalRow {
   check("a fresh actionable signal alerts", shouldAlert(signal(), null).alert);
   check("觀望 never alerts",
     !shouldAlert(signal({ trade_plan: { ...signal().trade_plan, stance: "wait" } }), null).alert);
-  check("below the grade floor stays quiet", !shouldAlert(signal({ grade: "B" }), null).alert);
+  // The default floor now matches the entry floor: a B the rules would trade
+  // is a B the phone mentions. Below B stays quiet, and ALERT_MIN_GRADE can
+  // tighten the default back up.
+  check("a tradeable B alerts by default", shouldAlert(signal({ grade: "B" }), null).alert);
+  check("below the grade floor stays quiet", !shouldAlert(signal({ grade: "C" }), null).alert);
   check("C stays quiet", !shouldAlert(signal({ grade: "C" }), null).alert);
   check("A+ alerts", shouldAlert(signal({ grade: "A+" }), null).alert);
   check("the floor is configurable",

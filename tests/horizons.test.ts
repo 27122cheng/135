@@ -3,6 +3,7 @@ import {
   DAY_PROFILE,
   SWING_PROFILE,
   REFERENCE_PROFILE,
+  TRADE_MIN_EXPECTANCY_R,
   effectiveDayProfile,
   meetsProfileFloor,
   profileHitFloor,
@@ -66,10 +67,16 @@ async function main() {
     check("the day horizon reaches less far",
       DAY_PROFILE.maxTargetAtr < SWING_PROFILE.maxTargetAtr,
       { DAY_PROFILE, SWING_PROFILE });
-    check("both horizons carry the same RR-aware floor",
-      DAY_PROFILE.minExpectancyR === 0.75 && SWING_PROFILE.minExpectancyR === 0.75 &&
+    check("both horizons carry the same expectancy floor",
+      DAY_PROFILE.minExpectancyR === TRADE_MIN_EXPECTANCY_R &&
+      SWING_PROFILE.minExpectancyR === TRADE_MIN_EXPECTANCY_R &&
       DAY_PROFILE.minHitRate === 0.55 && SWING_PROFILE.minHitRate === 0.55,
       { DAY_PROFILE, SWING_PROFILE });
+    // The bar itself: the economic floor, not the aspiration. 0.75R produced
+    // one trade a month and refused an A+ measured at +0.69R over 124
+    // samples — a rejection inside its own sampling error.
+    check("the floor is the economic one", TRADE_MIN_EXPECTANCY_R === 0.35,
+      TRADE_MIN_EXPECTANCY_R);
   }
 
   // ── the floor measures the managed trade directly ───────────────
@@ -82,10 +89,10 @@ async function main() {
   {
     check("the 58%/+1.04R that Telegram never saw now clears",
       meetsProfileFloor(DAY_PROFILE, { hitRate: 0.58, expectancyR: 1.04 }));
-    check("the old 70%-at-1:1.5 bar still clears (it is +0.75R)",
-      meetsProfileFloor(DAY_PROFILE, { hitRate: 0.7, expectancyR: 0.75 }));
-    check("expectancy below +0.75R is refused whatever the hit rate",
-      !meetsProfileFloor(DAY_PROFILE, { hitRate: 0.9, expectancyR: 0.5 }));
+    check("the A+ at +0.69R that got refused now clears",
+      meetsProfileFloor(DAY_PROFILE, { hitRate: 0.6, expectancyR: 0.69 }));
+    check("expectancy below the floor is refused whatever the hit rate",
+      !meetsProfileFloor(DAY_PROFILE, { hitRate: 0.9, expectancyR: 0.2 }));
     check("a hit rate below 55% is refused whatever it pays",
       !meetsProfileFloor(DAY_PROFILE, { hitRate: 0.4, expectancyR: 2 }));
     check("an unmeasured combo is refused, not excused",
@@ -126,7 +133,8 @@ async function main() {
     check("it reaches the target the day plan excluded",
       Math.abs((swing?.take_profit ?? 0) - (LAST + 2400)) < 0.01, swing?.take_profit);
     check("it carries its own hit rate", swing?.hit_rate != null, swing);
-    check("and names the expectancy floor", swing?.summary.includes("0.75R") === true, swing?.summary);
+    check("and names the expectancy floor",
+      swing?.summary.includes(`${TRADE_MIN_EXPECTANCY_R}R`) === true, swing?.summary);
   }
 
   // ── the alert carries both, and says which one is tracked ───────

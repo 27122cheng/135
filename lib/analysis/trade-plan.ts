@@ -1,4 +1,5 @@
 import { completeAI, jsonSchema, type AiUnavailable } from "@/lib/ai";
+import { TRADE_MIN_EXPECTANCY_R } from "./floors";
 import type { BiasItem, Grade, SwingVariant, TradePlan, TradeSignal } from "@/types/signal";
 import { MIN_ENTRY_GRADE, gradeAllowsEntry } from "@/lib/scoring";
 import { backtestPlanGeometry } from "./backtest";
@@ -257,26 +258,30 @@ export interface HorizonProfile {
  * trade, and the floor refused a demonstrated 58% at 1:2.51 (+1.04R) — more
  * edge, fewer wins.
  *
- * So the floor demands what the 70% rule actually meant — the expectancy,
- * +0.75R per unit of risk. And since the backtest simulates the *managed*
- * trade (breakeven at 1R, structure trailing, opposite-CHoCH exit — the same
- * rules the monitor runs on the live position), the expectancy is measured
- * directly instead of being derived from the payoff ratio. The hit-rate leg
+ * So the floor demands expectancy directly. And since the backtest simulates
+ * the *managed* trade (breakeven at 1R, structure trailing, opposite-CHoCH
+ * exit — the same rules the monitor runs on the live position), the
+ * expectancy is measured directly instead of being derived from the payoff
+ * ratio. The hit-rate leg
  * stays as an absolute followability floor: below 55% the losses come too
  * often to sit through, whatever the arithmetic pays. A floor that cannot be
  * *demonstrated* — too little history to backtest — still reads as unmet: an
  * unverifiable rate is not a rate.
  */
-export const TRADE_MIN_EXPECTANCY_R = 0.75;
+// The floor constant lives in ./floors (a leaf module the client bundle can
+// print without dragging the AI/data-source graph in); re-exported here so
+// server code keeps its import path. The full rationale for its value — why
+// 0.75R produced one trade a month and 0.35R is the economic floor — is on
+// the constant itself.
+export { TRADE_MIN_EXPECTANCY_R };
 export const DAY_PROFILE: HorizonProfile = {
   label: "當沖",
   maxTargetAtr: 2,
   minHitRate: 0.55,
   minExpectancyR: TRADE_MIN_EXPECTANCY_R,
 };
-// Same floor at the larger horizon — 「當沖及大時間框架的交易勝率都要70」 was
-// set when the floor was flat; the expectancy form keeps that bar's meaning
-// (+0.75R) for both horizons.
+// Same floor at the larger horizon: one bar for "is this edge worth taking",
+// whichever horizon the target sits in.
 export const SWING_PROFILE: HorizonProfile = {
   label: "波段",
   maxTargetAtr: 5,

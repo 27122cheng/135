@@ -22,8 +22,16 @@ function rank(grade: string): number {
   return i < 0 ? 0 : i;
 }
 
-/** Default floor. Below A the signal isn't worth a push notification. */
-export const DEFAULT_MIN_GRADE: Grade = "A";
+/**
+ * Default push floor. Was "A" — a bar above the trading bar itself, which
+ * produced the complaint that defined a month: the site holds B-grade
+ * entries the scoring system explicitly declares tradeable, and the phone
+ * never mentions any of them, so "one trade a month" was partly trades that
+ * happened where nobody was told to look. The push floor now matches the
+ * entry floor: if the rules would take it, the phone hears about it.
+ * ALERT_MIN_GRADE in settings tightens it back for anyone who prefers quiet.
+ */
+export const DEFAULT_MIN_GRADE: Grade = "B";
 
 /**
  * Async because the value can come from `app_settings` as well as the
@@ -63,12 +71,16 @@ export interface AlertDecision {
 /**
  * How many dimensions must point the signal's way before it interrupts a phone.
  *
- * Three of six. One dimension alone is an indicator, not a case; two can be a
- * single macro story told twice. Three independent kinds of evidence agreeing
- * is where a setup stops being a reading and starts being a confluence — and
- * confluence is what a push notification should mean.
+ * Was three of six — a bar set assuming six dimensions actually vote. In
+ * practice several are dark on any given scan (no CFTC code on a custom
+ * symbol, GDELT rate-limited, the calendar source down), so "three of six"
+ * was routinely three-of-three-that-answered: unanimity dressed as
+ * confluence, and one more reason the phone stayed silent for a month. Two
+ * independent kinds of evidence is still a case rather than an indicator —
+ * one dimension alone remains not enough — and the grade floor above already
+ * did the quality gating this was doubling up on.
  */
-export const MIN_CONSENSUS_DIMENSIONS = 3;
+export const MIN_CONSENSUS_DIMENSIONS = 2;
 
 export function shouldAlert(
   current: TradeSignal,

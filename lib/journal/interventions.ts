@@ -188,7 +188,7 @@ export function computeInterventions(history: JournalEntry[]): InterventionEffec
   }
 
   // ── 實績校準 ─────────────────────────────────────────────────────
-  // Every real entry passed the managed-backtest floor (expectancy ≥ +0.75R,
+  // Every real entry passed the managed-backtest floor (expectancy and
   // hit rate ≥ 55%) — so the realized win rate of those same entries is a
   // direct audit of the backtest's honesty. When enough have resolved and
   // the audit fails, new
@@ -212,7 +212,7 @@ export function computeInterventions(history: JournalEntry[]): InterventionEffec
         effect: `當沖回測勝率下限 +${Math.round(bump * 100)} 個百分點（55% → ${Math.round((0.55 + bump) * 100)}%）`,
         evidence:
           `實績校準：最近 ${real.length} 筆正式進場實際勝率僅 ${Math.round(realized * 100)}%，` +
-          `遠低於回測門檻要求的水準（期望值 ≥ +0.75R、勝率 ≥55%）—— 回測偏樂觀時，新進場需要更高的安全邊際`,
+          `遠低於回測門檻要求的水準 —— 回測偏樂觀時，新進場需要更高的安全邊際`,
         triggered_by: real.slice(0, 5).map((e) => e.closed_at.slice(0, 10)),
       });
     }

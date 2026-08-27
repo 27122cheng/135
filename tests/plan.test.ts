@@ -29,7 +29,7 @@ async function main() {
   );
   console.log("1 stance:", p1.stance, "|", p1.summary.slice(0, 60));
   check("1 an unverifiable floor waits", p1.stance === "wait" && p1.entry === null, p1.summary);
-  check("1 and names the expectancy floor", p1.summary.includes("0.75R"), p1.summary);
+  check("1 and names the expectancy floor", p1.summary.includes("0.35R"), p1.summary);
 
   // 2. no-trade grade -> must be wait, with a wait_for.
   const p2 = await buildTradePlan(

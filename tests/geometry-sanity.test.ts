@@ -79,7 +79,7 @@ async function main() {
     check("and a target beyond the horizon too", screened.take_profit !== 54744,
       screened.take_profit);
     check("the refusal names the expectancy floor",
-      screened.stance === "wait" && screened.summary.includes("0.75R"), screened.summary);
+      screened.stance === "wait" && screened.summary.includes("0.35R"), screened.summary);
     check("the summary says what was excluded",
       screened.summary.includes("已排除"), screened.summary);
     check("naming the ATR screens",

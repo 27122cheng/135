@@ -1,4 +1,5 @@
 import type { AddOnLevel, PlanBacktest, TradePlan } from "@/types/signal";
+import { TRADE_MIN_EXPECTANCY_R } from "@/lib/analysis/floors";
 import { formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -159,7 +160,7 @@ export function TradePlanCard({
           </summary>
           <p className="mt-2 text-[11px] leading-relaxed text-neutral-600">
             上方主計畫是當沖（目標 ≤2×ATR）；這裡是同一套分析放到波段的選擇
-            —— 目標可到 5×ATR，門檻同樣是實測期望值 ≥ +0.75R 且勝率 ≥55%，且只在 D1 趨勢與方向同向時提供。
+            —— 目標可到 5×ATR，門檻同樣是實測期望值 ≥ +{TRADE_MIN_EXPECTANCY_R}R 且勝率 ≥55%，且只在 D1 趨勢與方向同向時提供。
             監控與自動復盤只追蹤主計畫，一次一單。
           </p>
           <div className="mt-2 flex gap-3">

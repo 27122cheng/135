@@ -93,7 +93,7 @@ export const VERIFY_FLOOR = 0.55;
  * 期望值門檻 —— the operator's old bar, restated in the unit that survives
  * variable geometry. The previous floor was 80% at a fixed 1:1.5, which *is*
  * +1.0R per trade; the number carries over exactly. Deliberately above the
- * live trade floor's +0.75R: a condition promoted to a hard gate over every
+ * live trade floor's TRADE_MIN_EXPECTANCY_R: a condition promoted to a hard gate over every
  * live entry has to show more edge than the minimum a single plan needs.
  */
 export const LAB_MIN_EXPECTANCY_R = 1.0;
