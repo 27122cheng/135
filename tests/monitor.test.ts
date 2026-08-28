@@ -235,7 +235,7 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   check("a sub-1R target exits in full, terminally",
     nearShelf.memory.state === "target_hit", nearShelf.memory.state);
   check("and says why the split did not apply",
-    nearShelf.events.some((e) => e.kind === "target_hit" && e.detail.includes("不足 1R")),
+    nearShelf.events.some((e) => e.kind === "target_hit" && e.detail.includes("不足 2R")),
     nearShelf.events);
 
   const target = step(2085, entered.memory);

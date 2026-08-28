@@ -1,4 +1,5 @@
 import { breadthOf } from "@/lib/analysis/evidence";
+import { SCALE_OUT_MIN_R } from "@/lib/analysis/lab-manage";
 import type { Grade, SignalRow, TradeSignal } from "@/types/signal";
 import { getSetting } from "@/lib/settings";
 
@@ -345,8 +346,18 @@ export function formatAlert(
         }${signal.plan_backtest.resolved} 筆（含交易管理與成本）`
       : null,
     // And the lifecycle, so the reader enters knowing every branch — the
-    // same five rules the monitor executes and the backtest measured.
-    `進場後：觸及停利先平一半保本追蹤｜1R 保本｜新 swing 移停｜反向 CHoCH 出場（監控自動提醒）`,
+    // same rules the monitor executes and the backtest measured. Which
+    // target branch applies depends on this plan's own geometry.
+    `進場後：${
+      plan.entry !== null &&
+      plan.stop_loss !== null &&
+      plan.take_profit !== null &&
+      Math.abs(plan.entry - plan.stop_loss) > 0 &&
+      Math.abs(plan.take_profit - plan.entry) / Math.abs(plan.entry - plan.stop_loss) >=
+        SCALE_OUT_MIN_R
+        ? "觸及停利先平一半保本追蹤"
+        : "觸及停利整筆出場"
+    }｜1R 保本｜新 swing 移停｜反向 CHoCH 出場（監控自動提醒）`,
     // The swing variant rides along as levels, never as a second monitored
     // trade — one position at a time is the monitor's rule, so the message
     // says which plan the tracking follows.

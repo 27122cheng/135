@@ -115,11 +115,21 @@ export const SCALE_OUT_FRACTION = 0.5;
  * combination collapsed to ≈0R expectancy (SPX500 +0.04R, EURUSD −0.13R) and
  * the floors correctly refused everything — zero trades, zero reference
  * plans, eleven symbols. The textbook partial-exit rule carries this exact
- * precondition: scale out only when the first target pays at least the risk.
- * Nearer shelves exit in full — taking the whole shelf beats banking half a
- * crumb and donating the rest to a breakeven wash.
+ * precondition: scale out only when the first target pays well more than the
+ * risk. Nearer targets exit in full — taking the whole shelf beats banking
+ * half a crumb and donating the rest to a breakeven wash.
+ *
+ * Two, not one, and the second live sweep is why. At 1R the gate never
+ * bound: the geometry search's candidates all carry RR ≥ 1.5 by the floor's
+ * own rule, so every candidate still scaled, every winner still paid
+ * ~0.5×tpR plus a remainder that mostly washed, and the post-fix sweep came
+ * back 0-for-11 again (ETHUSD's picked combination: 4% decisive hit rate,
+ * −0.61R). The regime that historically measured +0.69R on 124 trades was
+ * full exit at the target. At 2R the typical day plan (target 1.5–2R) exits
+ * whole again — the measured-good shape — while genuinely far targets keep
+ * the banked-half runner.
  */
-export const SCALE_OUT_MIN_R = 1.0;
+export const SCALE_OUT_MIN_R = 2.0;
 
 /**
  * 打平帶 — |net R| at or below this is a scratch, not a loss (or a win).

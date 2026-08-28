@@ -178,9 +178,10 @@ export function advancePlan(input: MonitorInput): MonitorResult {
   // every big winner capped at the nearest pressure while losers still cost
   // a full R. But scaling out of a sub-1R shelf is the opposite mistake —
   // banking half a crumb and donating the rest to a breakeven wash. So the
-  // split carries the textbook precondition: only a target that pays ≥ 1R
-  // earns it. Same rule the exit engine backtests, so the number that chose
-  // this plan describes the trade actually being run.
+  // split carries the textbook precondition: only a target that pays at
+  // least SCALE_OUT_MIN_R earns it (see lab-manage.ts for the live evidence
+  // that set the number). Same rule the exit engine backtests, so the number
+  // that chose this plan describes the trade actually being run.
   if (
     state !== "scaled" &&
     plan.take_profit !== null &&
@@ -197,8 +198,8 @@ export function advancePlan(input: MonitorInput): MonitorResult {
             kind: "target_hit",
             headline: "停利觸及，全部出場",
             detail:
-              `價格 ${fmt(price)} 觸及停利 ${fmt(plan.take_profit)}。此目標不足 1R，` +
-              `依規則整筆出場（分批只在目標 ≥1R 時啟用）。本次交易結束，請到 /review 記錄。`,
+              `價格 ${fmt(price)} 觸及停利 ${fmt(plan.take_profit)}。此目標不足 ${SCALE_OUT_MIN_R}R，` +
+              `依規則整筆出場（分批只在目標 ≥${SCALE_OUT_MIN_R}R 時啟用）。本次交易結束，請到 /review 記錄。`,
             newStop: null,
           },
         ],

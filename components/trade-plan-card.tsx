@@ -1,4 +1,5 @@
 import type { AddOnLevel, PlanBacktest, TradePlan } from "@/types/signal";
+import { SCALE_OUT_MIN_R } from "@/lib/analysis/lab-manage";
 import { TRADE_MIN_EXPECTANCY_R } from "@/lib/analysis/floors";
 import { formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -67,10 +68,20 @@ function ManagementPlaybook({ plan }: { plan: TradePlan }) {
   const oneR = long ? plan.entry + risk : plan.entry - risk;
   const steps: Array<{ when: string; act: string }> = [];
   if (plan.take_profit !== null) {
-    steps.push({
-      when: `價格觸及停利 ${formatPrice(plan.take_profit)}`,
-      act: `先平一半落袋，剩餘半倉停損移到至少進場價 ${formatPrice(plan.entry)}，改由結構管理 —— 最差打平，最好跑出趨勢`,
-    });
+    // The split needs a target worth ≥ SCALE_OUT_MIN_R; this plan's own
+    // geometry decides which branch the monitor will actually take.
+    const tpR = risk > 0 ? Math.abs(plan.take_profit - plan.entry) / risk : 0;
+    steps.push(
+      tpR >= SCALE_OUT_MIN_R
+        ? {
+            when: `價格觸及停利 ${formatPrice(plan.take_profit)}（約 ${Math.round(tpR * 10) / 10}R）`,
+            act: `先平一半落袋，剩餘半倉停損移到至少進場價 ${formatPrice(plan.entry)}，改由結構管理 —— 最差打平，最好跑出趨勢`,
+          }
+        : {
+            when: `價格觸及停利 ${formatPrice(plan.take_profit)}（約 ${Math.round(tpR * 10) / 10}R）`,
+            act: `整筆出場落袋 —— 分批只在目標 ≥${SCALE_OUT_MIN_R}R 時啟用，較近的目標全出比分批更划算（實測決定的規則）`,
+          },
+    );
   }
   steps.push(
     {
