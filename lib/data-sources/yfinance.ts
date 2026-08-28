@@ -1,6 +1,7 @@
 import type { Timeframe } from "@/types/signal";
 import { fetchBackupPrice } from "./backup-price";
 import { fetchBinanceQuote, isCryptoTicker } from "./binance-crypto";
+import { fetchKrakenQuote } from "./kraken-crypto";
 import { CANDLE_STALE_MS } from "./cache";
 import { fetchFree } from "./free-source";
 import { fetchJson } from "./http";
@@ -172,6 +173,7 @@ export interface LatestPrice {
     | "twelvedata"
     | "fmp"
     | "binance"
+    | "kraken"
     | "tradingview"
     | "proxy-bar"
     | "fred"
@@ -205,6 +207,10 @@ export async function fetchLatestPrice(
   if (isCryptoTicker(ticker)) {
     const fromBinance = await fetchBinanceQuote({ symbol: symbol ?? ticker, yfinanceSymbol: ticker }, gaps);
     if (fromBinance && fromBinance.ageMinutes <= 15) return fromBinance;
+    // Binance geo-blocks US IPs (451), which is where this deployment's
+    // functions run — Kraken is the venue leg that actually answers there.
+    const fromKraken = await fetchKrakenQuote({ symbol: symbol ?? ticker, yfinanceSymbol: ticker }, gaps);
+    if (fromKraken && fromKraken.ageMinutes <= 15) return fromKraken;
   }
 
   const result = await fetchFree<{ price: number; at: string }>({

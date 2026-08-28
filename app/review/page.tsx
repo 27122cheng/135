@@ -38,9 +38,22 @@ interface ForwardCondition {
   taken: number;
 }
 
+interface LearningEntry {
+  symbol: string;
+  direction: "long" | "short";
+  grade: string;
+  result: string;
+  pnlPct: number;
+  closedAt: string;
+  tag: string | null;
+  severity: number | null;
+  note: string | null;
+}
+
 interface ReviewResponse extends ReviewStats {
   trackRecord?: TrackRecord;
   equityCurve?: EquityCurve;
+  recentEntries?: LearningEntry[];
   blockers?: { census: BlockerRow[]; scanned: number; windowDays?: number };
   forward?: {
     conditions: ForwardCondition[];
@@ -151,6 +164,17 @@ export default function ReviewPage() {
           {stats.equityCurve && stats.equityCurve.points.length >= 2 && (
             <Section title="權益曲線與最大回撤（實際交易，含自動結算與人工記錄）">
               <EquityCurveChart curve={stats.equityCurve} />
+            </Section>
+          )}
+
+          {/* 止損止盈學習紀錄 — the reviewed entries the aggregates are made
+              of. Every resolved trade lands here with its classified reason;
+              the S-tags then tighten future signals via the intervention
+              engine. This was all happening invisibly — a feedback loop the
+              reader cannot see might as well not exist. */}
+          {stats.recentEntries && stats.recentEntries.length > 0 && (
+            <Section title="止損／止盈學習紀錄（每筆結算的復盤與原因）">
+              <LearningLog entries={stats.recentEntries} />
             </Section>
           )}
 
@@ -523,6 +547,64 @@ function EquityCurveChart({ curve }: { curve: EquityCurve }) {
         最大回撤和最長連敗是倉位大小必須撐得過的兩個數字 —— 風控頁的單筆風險 % 乘上最長連敗，
         就是這套系統歷史上會讓你經歷的最痛一段。
         {last ? ` 最近一筆：${last.symbol} ${last.pnlPct > 0 ? "+" : ""}${last.pnlPct}%。` : ""}
+      </p>
+    </div>
+  );
+}
+
+const RESULT_LABEL: Record<string, { text: string; tone: string }> = {
+  win: { text: "獲利", tone: "text-emerald-400" },
+  loss: { text: "虧損", tone: "text-red-400" },
+  breakeven: { text: "打平", tone: "text-neutral-400" },
+};
+
+/**
+ * 學習紀錄 — one card per resolved trade: what happened, how it was
+ * classified, and the reason written at classification time. The S-tag on a
+ * loss is what the intervention engine reads to tighten future signals, so
+ * each tagged entry names that consequence instead of leaving 「有在學」as
+ * an unverifiable claim.
+ */
+function LearningLog({ entries }: { entries: LearningEntry[] }) {
+  return (
+    <div className="flex flex-col gap-2">
+      {entries.map((e, i) => {
+        const r = RESULT_LABEL[e.result] ?? { text: e.result, tone: "text-neutral-400" };
+        return (
+          <div key={`${e.symbol}-${e.closedAt}-${i}`} className="rounded-lg border border-neutral-800 bg-neutral-950/50 px-3 py-2">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs">
+              <span className="text-neutral-500">{e.closedAt.slice(0, 10)}</span>
+              <span className="font-medium text-neutral-200">{e.symbol}</span>
+              <span className={e.direction === "long" ? "text-emerald-400/80" : "text-red-400/80"}>
+                {e.direction === "long" ? "多" : "空"}
+              </span>
+              <span className="rounded bg-neutral-800 px-1 py-0.5 text-[10px] text-neutral-400">{e.grade}</span>
+              <span className={`font-medium ${r.tone}`}>{r.text}</span>
+              <span className={`font-mono ${e.pnlPct > 0 ? "text-emerald-400" : e.pnlPct < 0 ? "text-red-400" : "text-neutral-400"}`}>
+                {e.pnlPct > 0 ? "+" : ""}
+                {e.pnlPct}%
+              </span>
+              {e.tag && (
+                <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-400">
+                  {e.tag} {STOP_REASON_LABELS[e.tag as keyof typeof STOP_REASON_LABELS] ?? ""}
+                </span>
+              )}
+              {e.severity !== null && (
+                <span className="text-[10px] text-neutral-600">嚴重度 {e.severity}</span>
+              )}
+            </div>
+            {e.note && (
+              <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">{e.note}</p>
+            )}
+          </div>
+        );
+      })}
+      <p className="text-[10px] leading-relaxed text-neutral-600">
+        這就是「學習」實際發生的地方：每筆自動結算的交易寫入一則復盤（[自動追蹤] 開頭），
+        停損由規則或 AI 分類成 S1–S8 並寫下原因；被分類的原因會透過干涉引擎
+        <span className="text-neutral-400">收緊之後的訊號</span>（上方「目前生效的干涉」區）。
+        打平（保本／移停洗出）不列入停損分類 —— 那是管理規則運作的結果，不是要修的錯。
+        獲利單只記錄不復盤：S1–S8 是虧損的分類法。
       </p>
     </div>
   );

@@ -66,6 +66,21 @@ export async function GET(request: Request) {
     const active = triggeredTags(tagStats);
     return json({
       ...stats,
+      // 學習紀錄 — the raw reviewed entries behind every aggregate above.
+      // The stats existed for months while the entries themselves (the S-tag,
+      // the reason written at classification time, the severity) were visible
+      // nowhere, so "系統有在學" was a claim the reader could not check.
+      recentEntries: entries.slice(0, 15).map((e) => ({
+        symbol: e.symbol,
+        direction: e.direction,
+        grade: e.grade,
+        result: e.result,
+        pnlPct: e.pnl_pct,
+        closedAt: e.closed_at,
+        tag: e.stop_reason_tag,
+        severity: e.severity,
+        note: e.review_note,
+      })),
       trackRecord: computeTrackRecord(entries),
       // 權益曲線 — real trades only (auto-tracked or hand-logged), excluding
       // the paper 參考價位 stream: mixing perfect-fill paper trades into the

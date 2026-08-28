@@ -9,6 +9,8 @@ import {
   fetchBinanceQuote,
   isCryptoTicker,
 } from "@/lib/data-sources/binance-crypto";
+import { fetchKrakenOHLCV, krakenPairFor } from "@/lib/data-sources/kraken-crypto";
+import { fetchEconomicCalendar } from "@/lib/data-sources/finnhub";
 import {
   MAX_CUSTOM_SYMBOLS,
   isCryptoYahooTicker,
@@ -185,6 +187,75 @@ async function main() {
       read("app/api/lab/route.ts").includes("fetchOHLCV(meta, timeframe"));
     check("deep H4 tries smaller ranges before declaring failure",
       read("lib/data-sources/deep-history.ts").includes('"365d"'));
+  }
+
+  // ── 免費方案現況：Kraken 替補與 Finnhub 付費端點 ────────────────
+  //
+  // Two live facts about the free stack, pinned so they stay handled:
+  // api.binance.com geo-blocks US IPs (451) and this deployment's functions
+  // run in the US — Kraken is the venue leg that actually answers there.
+  // Finnhub's /calendar/economic is a *paid* endpoint: a free key gets 403
+  // forever, which must read as a plan limitation, never as an outage.
+  {
+    check("BTC-USD maps to Kraken's XBT book", krakenPairFor("BTC-USD") === "XBTUSD");
+    check("ETH-USD maps to a real-USD pair", krakenPairFor("ETH-USD") === "ETHUSD");
+    check("exchange-form tickers drop the stablecoin quote", krakenPairFor("SOLUSDT") === "SOLUSD");
+    check("FX is not crypto on Kraken either", krakenPairFor("EURUSD=X") === null);
+
+    reset();
+    const t0 = Math.floor(Date.UTC(2026, 7, 20) / 1000);
+    stubFetch(() => ({
+      status: 200,
+      json: {
+        error: [],
+        result: {
+          XXBTZUSD: [
+            [t0, "60000", "61000", "59500", "60500", "60200", "12.5", 100],
+            [t0 + 86_400, "60500", "62000", "60400", "61800", "61000", "9.1", 80],
+          ],
+          last: t0 + 86_400,
+        },
+      },
+    }));
+    const kc = await fetchKrakenOHLCV(
+      { symbol: "BTCUSD", yfinanceSymbol: "BTC-USD" }, "D1", [], { ttlMs: 60_000 },
+    );
+    check("Kraken OHLC rows parse under the aliased pair key",
+      kc?.length === 2 && kc[0].close === 60500 && kc[1].close === 61800, kc);
+    check("Kraken volume is carried", kc?.[1].volume === 9.1, kc?.[1].volume);
+
+    reset();
+    stubFetch(() => ({ status: 200, json: { error: ["EQuery:Unknown asset pair"] } }));
+    check("a Kraken error envelope is a failure, not a series",
+      (await fetchKrakenOHLCV(
+        { symbol: "X", yfinanceSymbol: "NOPE-USD" }, "D1", [], { ttlMs: 60_000 },
+      )) === null);
+
+    const read = (p: string) => readFileSync(join(__dirname, "..", p), "utf8");
+    check("the candle chain tries Kraken after Binance",
+      read("lib/data-sources/ohlcv.ts").includes("fetchKrakenOHLCV"));
+    check("the deep fetch has the Kraken leg",
+      read("lib/data-sources/deep-history.ts").includes("fetchKrakenDeep"));
+    check("the quote chain has the Kraken leg",
+      read("lib/data-sources/yfinance.ts").includes("fetchKrakenQuote"));
+
+    // Finnhub economic calendar on a free key: 403 → empty calendar + one
+    // honest note, cached as a success so it cannot spam 取得失敗 hourly.
+    reset();
+    process.env.FINNHUB_API_KEY = "free-key";
+    try {
+      stubFetch(() => ({ status: 403, json: { error: "premium" } }));
+      const calGaps: string[] = [];
+      const cal = await fetchEconomicCalendar(calGaps);
+      check("a 403 calendar reads as an empty calendar, not a failure",
+        Array.isArray(cal) && cal.length === 0, cal);
+      check("and the note names the plan limitation",
+        calGaps.some((g) => g.includes("付費端點") && g.includes("方案限制")), calGaps);
+      check("without the 取得失敗 wording",
+        !calGaps.some((g) => g.includes("取得失敗")), calGaps);
+    } finally {
+      delete process.env.FINNHUB_API_KEY;
+    }
   }
 
   report("加密貨幣");

@@ -577,6 +577,11 @@ export default function LabPage() {
             </p>
           )
         )}
+        <p className="mt-2 text-[10px] leading-relaxed text-neutral-700">
+          帳本按商品分開 —— 這裡顯示的是「{symbol} {direction === "long" ? "做多" : "做空"}」
+          的紀錄；換上方的商品／方向即可看其他標的（每次排程掃描時全部商品都在各自開倉結算）。
+          全商品合計的前進成績在 /review 的前進實驗區。
+        </p>
         {forward?.recent && forward.recent.length > 0 && (
           <details className="mt-2">
             <summary className="cursor-pointer text-[10px] text-neutral-600">
@@ -616,7 +621,23 @@ export default function LabPage() {
 
       {data?.error && (
         <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-400">
-          {data.error}
+          <p>{data.error}</p>
+          {/* 「取不到 K 棒」不是診斷 — the per-source failure lines are the
+              diagnosis, and hiding them made every outage look identical.
+              Which legs were tried and how each one failed decides whether
+              the fix is a key to paste, a blocked venue, or patience. */}
+          {(data.gaps ?? []).length > 0 && (
+            <ul className="mt-2 flex flex-col gap-1 border-t border-amber-500/20 pt-2 text-[11px] text-amber-400/80">
+              {(data.gaps ?? []).map((g, i) => (
+                <li key={i}>· {g}</li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-2 border-t border-amber-500/20 pt-2 text-[11px] leading-relaxed text-amber-400/70">
+            免費來源的現實：行情代理（Yahoo）會間歇拒絕機房 IP、Binance 對美國機房固定回 451
+            （已加入 Kraken 替補）、Twelve Data 需要在設定頁貼上免費金鑰（每日 800 次，
+            是深度歷史最可靠的一腿）。貼上 TWELVEDATA 金鑰通常就能讓實驗跑起來。
+          </p>
         </div>
       )}
 

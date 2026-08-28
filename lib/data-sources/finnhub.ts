@@ -52,7 +52,24 @@ export async function fetchEconomicCalendar(gaps: string[]): Promise<EconomicEve
     gaps,
     fn: async () => {
       const url = `https://finnhub.io/api/v1/calendar/economic?from=${from}&to=${to}&token=${apiKey}`;
-      const data = await fetchJson<FinnhubCalendarResponse>(url);
+      // Finnhub moved /calendar/economic to its paid tiers: a free key gets
+      // HTTP 403 on every call, forever. That is an answer, not an outage —
+      // logging it as 取得失敗 made a permanent plan limitation read as a
+      // recurring incident in every sweep. A denied key returns an EMPTY
+      // calendar (a valid value, so it caches and the failure machinery stays
+      // quiet) plus one honest note; the clock-derived NFP/FOMC schedule and
+      // the FRED release table are the calendar this deployment actually has.
+      let denied = false;
+      const data = await fetchJson<FinnhubCalendarResponse>(url, undefined, 6000, (f) => {
+        if (f.kind === "http" && (f.status === 403 || f.status === 401)) denied = true;
+      });
+      if (denied) {
+        gaps.push(
+          "Finnhub 財經日曆為付費端點（HTTP 403）——免費金鑰無法使用，此來源已停用；" +
+            "改用內建的 NFP／FOMC 時刻推算與 FRED 實際數據表，屬方案限制而非故障",
+        );
+        return [];
+      }
       if (!data || !Array.isArray(data.economicCalendar)) return null;
       return data.economicCalendar.map((e) => ({
         event: e.event,

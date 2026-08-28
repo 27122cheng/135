@@ -1,6 +1,7 @@
 import { getKey } from "../api-keys";
 import type { CommodityMeta, Timeframe } from "@/types/signal";
 import { fetchBinanceOHLCV } from "./binance-crypto";
+import { fetchKrakenOHLCV } from "./kraken-crypto";
 import { CANDLE_STALE_MS } from "./cache";
 import { fetchFmpOHLCV } from "./fmp";
 import { fetchFree } from "./free-source";
@@ -15,7 +16,7 @@ export interface OHLCVResult {
   symbol: string;
   timeframe: Timeframe;
   candles: Candle[];
-  source: "yfinance-proxy" | "finnhub" | "stooq" | "twelvedata" | "fmp" | "binance";
+  source: "yfinance-proxy" | "finnhub" | "stooq" | "twelvedata" | "fmp" | "binance" | "kraken";
   /** True when the candles came from cache past its TTL. Never hidden from the user. */
   stale: boolean;
 }
@@ -197,7 +198,19 @@ export async function fetchOHLCV(
       promoteStale(binanceGaps);
       return { symbol: meta.symbol, timeframe, candles: binance, source: "binance", stale: false };
     }
-    attempts.push(...binanceGaps, "Binance 無回應");
+    attempts.push(...binanceGaps, "Binance 無回應（美國機房 IP 會被 451 地區封鎖——部署在 Vercel 時屬預期）");
+    // Second venue: Kraken serves the US region Binance refuses, keyless,
+    // native 4h/1d/1w, real USD books. This is the leg that makes crypto
+    // data actually exist in production.
+    const krakenGaps: string[] = [];
+    const kraken = await fetchKrakenOHLCV(meta, timeframe, krakenGaps, {
+      ttlMs: OHLCV_TTL_MS,
+    });
+    if (kraken) {
+      promoteStale(krakenGaps);
+      return { symbol: meta.symbol, timeframe, candles: kraken, source: "kraken", stale: false };
+    }
+    attempts.push(...krakenGaps, "Kraken 無回應");
   }
 
   const proxyGaps: string[] = [];

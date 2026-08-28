@@ -1,5 +1,6 @@
 import type { CommodityMeta } from "@/types/signal";
 import { fetchBinanceDeep } from "./binance-crypto";
+import { fetchKrakenDeep } from "./kraken-crypto";
 import { CANDLE_STALE_MS } from "./cache";
 import { fetchFree } from "./free-source";
 import { fetchStooqText } from "./stooq-fetch";
@@ -47,7 +48,7 @@ const TTL_MS = 12 * 60 * 60 * 1000;
 
 export interface DeepHistory {
   candles: Candle[];
-  source: "yfinance-proxy" | "stooq" | "twelvedata" | "binance";
+  source: "yfinance-proxy" | "stooq" | "twelvedata" | "binance" | "kraken";
   /** Span of the series in years, one decimal. */
   years: number;
   stale: boolean;
@@ -107,11 +108,18 @@ export async function fetchDeepD1(
   gaps: string[],
 ): Promise<DeepHistory | null> {
   // Crypto: the venue's own paged klines (up to 3,000 daily bars ≈ 8 years),
-  // keyless and realtime — the mirrors below stay as fallbacks.
+  // keyless and realtime — the mirrors below stay as fallbacks. Binance
+  // geo-blocks the US region this deployment runs in, so Kraken (newest 720
+  // daily bars ≈ 2 years, still clearing SHORT_SERIES) is the venue leg that
+  // actually answers there.
   if (meta.category === "crypto") {
     const binance = await fetchBinanceDeep(meta, "D1", gaps);
     if (binance && binance.length >= SHORT_SERIES) {
       return { candles: binance, source: "binance", years: span(binance), stale: false };
+    }
+    const kraken = await fetchKrakenDeep(meta, "D1", gaps);
+    if (kraken && kraken.length >= SHORT_SERIES) {
+      return { candles: kraken, source: "kraken", years: span(kraken), stale: false };
     }
   }
 
@@ -185,10 +193,24 @@ export async function fetchDeepH4(
   gaps: string[],
 ): Promise<DeepHistory | null> {
   // Crypto: 3,000 native 4h bars ≈ 16 months, straight from the venue.
+  // Kraken's 720-bar cap (~4 months of 4h) sits below SHORT_SERIES, so it is
+  // held as a candidate rather than an immediate return: a short real series
+  // still beats 取不到 K 棒 when everything longer failed.
   if (meta.category === "crypto") {
     const binance = await fetchBinanceDeep(meta, "H4", gaps);
     if (binance && binance.length >= SHORT_SERIES) {
       return { candles: binance, source: "binance", years: span(binance), stale: false };
+    }
+    const kraken = await fetchKrakenDeep(meta, "H4", gaps);
+    if (kraken && kraken.length >= SHORT_SERIES) {
+      return { candles: kraken, source: "kraken", years: span(kraken), stale: false };
+    }
+    if (kraken && kraken.length > 0) {
+      gaps.push(
+        `${meta.symbol} 深度 H4 只從 Kraken 取得 ${kraken.length} 根（該所單次上限 720 根），` +
+          `樣本數可能不足以通過驗證門檻`,
+      );
+      return { candles: kraken, source: "kraken", years: span(kraken), stale: false };
     }
   }
 
