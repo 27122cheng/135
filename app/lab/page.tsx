@@ -349,7 +349,7 @@ export default function LabPage() {
         每一筆實驗交易都用和 live 相同的結構管理：停損掛在已確認 swing 外、停利掛在最近壓力、
         觸及停利先平一半落袋（剩餘半倉保本追蹤）、走出 1R 保本移停、新 swing 確認就墊高停損、
         結構翻轉（反向 CHoCH）就出場 —— 不是固定 R，盈虧以兩半各計一半的混合 R 結算。
-        採用標準：<span className="text-neutral-300">樣本數 ≥100 筆、期望值 ≥ +1R、勝率 ≥55%</span>，
+        採用標準：<span className="text-neutral-300">樣本數 ≥100 筆、期望值 ≥ +1R、勝率 ≥55%（不含 |R|≤0.1 的打平）</span>，
         而且只用最舊的 70% 歷史搜尋 —— 最新的 30% 完全不參與搜尋，只用來驗證，兩邊都要達標。
       </p>
 
@@ -554,6 +554,9 @@ export default function LabPage() {
                     </td>
                     <td className="py-1.5 text-right font-mono text-[11px] text-neutral-500">
                       {s.wins}／{s.losses}
+                      {s.scratches > 0 && (
+                        <span className="text-neutral-700">／平{s.scratches}</span>
+                      )}
                     </td>
                     <td className="py-1.5 text-right font-mono text-[11px] text-neutral-600">
                       {s.expired}

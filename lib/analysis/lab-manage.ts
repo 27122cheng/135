@@ -104,6 +104,44 @@ export function registerLevels(
 /** Fraction of the position banked when the first target is touched. */
 export const SCALE_OUT_FRACTION = 0.5;
 
+/**
+ * 分批止盈的前提：第一目標至少要值一個 R。
+ *
+ * The first cut scaled out at *every* registered target. But targets sit at
+ * the nearest overhead pressure, which can be as close as 0.5×ATR — against
+ * a 0.6–2.5×ATR stop that is often 0.2–0.8R — and banking half of a sub-1R
+ * move while the remainder scratches at breakeven pockets a fraction of an
+ * already-small win. The live sweep then measured it: every symbol's best
+ * combination collapsed to ≈0R expectancy (SPX500 +0.04R, EURUSD −0.13R) and
+ * the floors correctly refused everything — zero trades, zero reference
+ * plans, eleven symbols. The textbook partial-exit rule carries this exact
+ * precondition: scale out only when the first target pays at least the risk.
+ * Nearer shelves exit in full — taking the whole shelf beats banking half a
+ * crumb and donating the rest to a breakeven wash.
+ */
+export const SCALE_OUT_MIN_R = 1.0;
+
+/**
+ * 打平帶 — |net R| at or below this is a scratch, not a loss (or a win).
+ *
+ * The managed rules *manufacture* near-zero exits by design: breakeven at 1R
+ * turns pullbacks into ±0R washes, trailing stops step out with small change.
+ * Counting those as losses collapsed raw hit rates to 19–38% on the live
+ * sweep while expectancy barely moved — and the 55% followability floor then
+ * refused every plan for a reason the number no longer expressed. Wins and
+ * losses are what the rate is *for*: whether the real losses come too often
+ * to sit through. Scratches stay in expectancy (they cost the spread) and are
+ * reported in their own bucket, never hidden.
+ */
+export const SCRATCH_R = 0.1;
+
+/** Classify a net R the way every counter in this system now counts. */
+export function classifyR(r: number): "win" | "loss" | "scratch" {
+  if (r > SCRATCH_R) return "win";
+  if (r < -SCRATCH_R) return "loss";
+  return "scratch";
+}
+
 export interface ManagedExit {
   exitIndex: number;
   exitPrice: number;
@@ -193,8 +231,12 @@ export function walkManaged(input: WalkInput): ManagedExit | null {
     if (target !== null) {
       const hitTarget = long ? ctx.high[j] >= target : ctx.low[j] <= target;
       if (hitTarget) {
-        // Bank half, arm the remainder: stop to at least breakeven, no
-        // second fixed target — structure decides the rest.
+        // A target worth less than SCALE_OUT_MIN_R exits in full — see the
+        // constant above. Only a target that pays at least the risk earns
+        // the split: bank half, stop to at least breakeven, no second fixed
+        // target — structure decides the rest.
+        const tpR = (long ? target - entry : entry - target) / risk0;
+        if (tpR < SCALE_OUT_MIN_R) return finish(j, target, "target");
         scaleOut = { index: j, price: target };
         target = null;
         stop = long ? Math.max(stop, entry) : Math.min(stop, entry);

@@ -280,7 +280,14 @@ export interface PlanBacktest {
   resolved: number;
   wins: number;
   losses: number;
+  /**
+   * |net R| ≤ 0.1 washes — the managed rules manufacture these (breakeven
+   * pullbacks, trailing steps). In expectancy, out of the hit rate.
+   * Optional: rows written before scratch accounting lack it.
+   */
+  scratches?: number;
   timeouts: number;
+  /** wins / (wins + losses), scratches excluded. */
   hitRate: number | null;
   expectancyR: number | null;
   horizonBars: number;

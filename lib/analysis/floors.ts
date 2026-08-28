@@ -26,5 +26,15 @@
  * promised, the hit-rate bump tightens new entries automatically. Start
  * permissive and let measured reality tighten, rather than starting at a
  * height reality can never reach.
+ *
+ * A second live collapse taught the companion lesson: the floor is only as
+ * meaningful as the measurement under it. When scale-out was first applied
+ * to *every* target (including sub-1R shelves) and breakeven washes counted
+ * as losses, every symbol's best combination read ≈0R at 19–38% "勝率" and
+ * this floor refused all eleven symbols at once. The fixes live in the
+ * engine and the accounting (SCALE_OUT_MIN_R and SCRATCH_R in
+ * lab-manage.ts), not in this number: the hit-rate floors elsewhere are now
+ * scratch-excluded, and the 55% they demand is the rate among trades that
+ * actually decided something.
  */
 export const TRADE_MIN_EXPECTANCY_R = 0.35;

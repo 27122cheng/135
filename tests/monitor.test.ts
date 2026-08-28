@@ -220,7 +220,24 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   check("1994 would not have hit the original 1980",
     step(1994, entered.memory).memory.state === "entered");
 
-  // ── 分批止盈 — the target banks half, it no longer terminates ──
+  // ── 分批止盈 — a ≥1R target banks half; a sub-1R target exits in full ──
+  // The default plan's target is 4R away (risk 20, tp +80), so it scales.
+  // A shelf at 0.5R exits the whole position — banking half a crumb while
+  // the rest washes at breakeven is the shape that zeroed every measured
+  // expectancy on the live sweep.
+  const nearShelf = advancePlan({
+    direction: "long",
+    plan: plan({ take_profit: 2010 }),
+    price: 2012,
+    priceAgeMinutes: 5,
+    memory: { state: "entered", addOnsFilled: 0, activeStop: 1980 },
+  });
+  check("a sub-1R target exits in full, terminally",
+    nearShelf.memory.state === "target_hit", nearShelf.memory.state);
+  check("and says why the split did not apply",
+    nearShelf.events.some((e) => e.kind === "target_hit" && e.detail.includes("不足 1R")),
+    nearShelf.events);
+
   const target = step(2085, entered.memory);
   check("the target scales out instead of terminating", target.memory.state === "scaled", target.memory.state);
   check("the scale-out is announced", target.events.some((e) => e.kind === "scale_out"), target.events);

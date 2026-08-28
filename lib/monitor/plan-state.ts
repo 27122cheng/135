@@ -1,4 +1,5 @@
 import type { AddOnLevel, TradePlan } from "@/types/signal";
+import { SCALE_OUT_MIN_R } from "@/lib/analysis/lab-manage";
 
 /**
  * What the price has done to an active plan.
@@ -170,19 +171,39 @@ export function advancePlan(input: MonitorInput): MonitorResult {
     };
   }
 
-  // 分批止盈 — the first target banks half, not the whole position.
+  // 分批止盈 — a target worth at least SCALE_OUT_MIN_R banks half; a nearer
+  // one exits in full.
   //
-  // Full exit at the first shelf was the amateur shape: every winner capped
-  // at the nearest pressure while losers still cost a full R. Touching the
-  // target now closes half, moves the remainder's stop to at least the entry
-  // (the banked half has paid for the trade), and hands the rest to the
-  // trailing/flip rules. Same rule the exit engine backtests, so the number
-  // that chose this plan describes the trade actually being run.
+  // Full exit at the first shelf was the amateur shape for *far* targets:
+  // every big winner capped at the nearest pressure while losers still cost
+  // a full R. But scaling out of a sub-1R shelf is the opposite mistake —
+  // banking half a crumb and donating the rest to a breakeven wash. So the
+  // split carries the textbook precondition: only a target that pays ≥ 1R
+  // earns it. Same rule the exit engine backtests, so the number that chose
+  // this plan describes the trade actually being run.
   if (
     state !== "scaled" &&
     plan.take_profit !== null &&
     reached(direction, price, plan.take_profit)
   ) {
+    const risk = Math.abs(plan.entry - plan.stop_loss);
+    const tpR = risk > 0 ? Math.abs(plan.take_profit - plan.entry) / risk : 0;
+    if (tpR < SCALE_OUT_MIN_R) {
+      return {
+        memory: { state: "target_hit", addOnsFilled, activeStop },
+        events: [
+          ...events,
+          {
+            kind: "target_hit",
+            headline: "停利觸及，全部出場",
+            detail:
+              `價格 ${fmt(price)} 觸及停利 ${fmt(plan.take_profit)}。此目標不足 1R，` +
+              `依規則整筆出場（分批只在目標 ≥1R 時啟用）。本次交易結束，請到 /review 記錄。`,
+            newStop: null,
+          },
+        ],
+      };
+    }
     state = "scaled";
     const banked = plan.take_profit;
     const toward =

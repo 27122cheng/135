@@ -2,7 +2,13 @@ import type { Candle } from "../data-sources/ohlcv";
 import { COMMODITIES, type CommodityMeta } from "@/types/signal";
 import type { LabTradeRow, LabTradeStatus } from "../db";
 import { CONDITIONS, WARMUP, buildContext, type LabContext } from "./lab";
-import { MANAGE_HORIZON, SCALE_OUT_FRACTION, registerLevels, walkManaged } from "./lab-manage";
+import {
+  MANAGE_HORIZON,
+  SCALE_OUT_FRACTION,
+  classifyR,
+  registerLevels,
+  walkManaged,
+} from "./lab-manage";
 import { totalCostFraction, tradingCostFor } from "@/config/trading-costs";
 
 /**
@@ -201,10 +207,13 @@ export interface ForwardStat {
   open: number;
   wins: number;
   losses: number;
+  /** |net R| ≤ SCRATCH_R washes — in expectancy, out of the hit rate. */
+  scratches: number;
   /** Legacy rows resolved as 到期 under the old fixed geometry. */
   expired: number;
-  /** Resolved trades — wins + losses. Legacy expiries are excluded. */
+  /** Resolved trades — wins + losses + scratches. Legacy expiries excluded. */
   resolved: number;
+  /** wins / (wins + losses), scratches excluded. */
   hitRate: number | null;
   /** Mean R per resolved trade, net of costs — the number that decides. */
   expectancyR: number | null;
@@ -239,6 +248,7 @@ export function summariseForward(rows: LabTradeRow[]): ForwardStat[] {
         open: 0,
         wins: 0,
         losses: 0,
+        scratches: 0,
         expired: 0,
         resolved: 0,
         hitRate: null,
@@ -251,21 +261,29 @@ export function summariseForward(rows: LabTradeRow[]): ForwardStat[] {
     }
     stat.taken++;
     if (r.status === "open") stat.open++;
-    else if (r.status === "win") stat.wins++;
-    else if (r.status === "loss") stat.losses++;
-    else stat.expired++;
-    if (r.status === "win" || r.status === "loss") {
+    else if (r.status === "win" || r.status === "loss") {
+      // The stored status is the sign of the blended R; the scratch bucket
+      // is classified here from the reconstructed net R so old rows are
+      // re-read under the same accounting as new ones — |R| ≤ SCRATCH_R is
+      // a wash the management manufactured, not a loss to hold against the
+      // condition (nor a win to credit it).
       const netR = rowR(r);
       if (netR !== null) {
+        const kind = classifyR(netR);
+        if (kind === "win") stat.wins++;
+        else if (kind === "loss") stat.losses++;
+        else stat.scratches++;
         stat.rSum += netR;
         stat.rCount++;
-      }
-    }
+      } else if (r.status === "win") stat.wins++;
+      else stat.losses++;
+    } else stat.expired++;
   }
   const stats = [...byKey.values()];
   for (const s of stats) {
-    s.resolved = s.wins + s.losses;
-    s.hitRate = s.resolved > 0 ? Math.round((s.wins / s.resolved) * 1000) / 1000 : null;
+    s.resolved = s.wins + s.losses + s.scratches;
+    const decisive = s.wins + s.losses;
+    s.hitRate = decisive > 0 ? Math.round((s.wins / decisive) * 1000) / 1000 : null;
     s.expectancyR = s.rCount > 0 ? Math.round((s.rSum / s.rCount) * 100) / 100 : null;
   }
   return stats

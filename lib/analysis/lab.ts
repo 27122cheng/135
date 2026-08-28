@@ -1,6 +1,6 @@
 import type { Candle } from "../data-sources/ohlcv";
 import { CONDITIONS, buildContext, type LabContext } from "./lab-conditions";
-import { MANAGE_HORIZON, registerLevels, walkManaged } from "./lab-manage";
+import { MANAGE_HORIZON, classifyR, registerLevels, walkManaged } from "./lab-manage";
 import { totalCostFraction, tradingCostFor } from "@/config/trading-costs";
 import type { CommodityMeta } from "@/types/signal";
 
@@ -109,10 +109,13 @@ export const WARMUP = 60;
 const IN_SAMPLE_SHARE = 0.7;
 
 export interface ConditionResult {
-  /** Resolved trades — the denominator of `hitRate` and `expectancyR`. */
+  /** Resolved trades — the denominator of `expectancyR`. */
   trades: number;
-  /** Trades whose net R was positive. */
+  /** Trades whose net R cleared +SCRATCH_R. */
   wins: number;
+  /** |net R| ≤ SCRATCH_R breakeven washes — in expectancy, out of the rate. */
+  scratches: number;
+  /** wins / (wins + losses), scratches excluded. */
   hitRate: number | null;
   /** Mean R per resolved trade, net of costs — the number that decides. */
   expectancyR: number | null;
@@ -147,6 +150,7 @@ function run(
   costFraction: number,
 ): ConditionResult {
   let wins = 0;
+  let scratches = 0;
   let trades = 0;
   let entries = 0;
   let sumR = 0;
@@ -178,13 +182,20 @@ function run(
     if (!exit) continue;
     trades++;
     sumR += exit.r;
-    if (exit.r > 0) wins++;
+    const kind = classifyR(exit.r);
+    if (kind === "win") wins++;
+    else if (kind === "scratch") scratches++;
   }
 
-  const hitRate = trades > 0 ? wins / trades : null;
+  // Scratch-aware, like every counter in this system: breakeven washes the
+  // management manufactures stay in expectancy and out of the rate — see
+  // SCRATCH_R in lab-manage.ts for the live evidence that forced this.
+  const decisive = trades - scratches;
+  const hitRate = decisive > 0 ? wins / decisive : null;
   return {
     trades,
     wins,
+    scratches,
     hitRate: hitRate === null ? null : Math.round(hitRate * 1000) / 1000,
     expectancyR: trades > 0 ? Math.round((sumR / trades) * 100) / 100 : null,
     entries,

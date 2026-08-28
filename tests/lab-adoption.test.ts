@@ -59,8 +59,8 @@ const adoption = (over: Partial<LabAdoption> = {}): LabAdoption => ({
   const base: LabFinding = {
     ids: ["ema50-side"],
     labels: ["站在 EMA50 正確側"],
-    inSample: { trades: 120, wins: 100, hitRate: 0.83, expectancyR: 0.5, entries: 180, unresolved: 60 },
-    outOfSample: { trades: 51, wins: 41, hitRate: 0.81, expectancyR: 0.5, entries: 74, unresolved: 23 },
+    inSample: { trades: 120, wins: 100, scratches: 0, hitRate: 0.83, expectancyR: 0.5, entries: 180, unresolved: 60 },
+    outOfSample: { trades: 51, wins: 41, scratches: 0, hitRate: 0.81, expectancyR: 0.5, entries: 74, unresolved: 23 },
     verified: false,
     lift: 12,
   };
@@ -99,7 +99,7 @@ const adoption = (over: Partial<LabAdoption> = {}): LabAdoption => ({
     adoptionFromFinding("XAUUSD", "long", {
       ...base,
       verified: true,
-      inSample: { trades: 0, wins: 0, hitRate: null, expectancyR: null, entries: 0, unresolved: 0 },
+      inSample: { trades: 0, wins: 0, scratches: 0, hitRate: null, expectancyR: null, entries: 0, unresolved: 0 },
     }, 0.8, 400);
   } catch {
     threwNull = true;

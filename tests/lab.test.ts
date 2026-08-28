@@ -250,6 +250,7 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
   const result = (trades: number, hitRate: number, expectancyR = 1.2) => ({
     trades,
     wins: Math.round(trades * hitRate),
+    scratches: 0,
     hitRate,
     expectancyR,
     entries: trades,

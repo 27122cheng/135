@@ -8,6 +8,7 @@ import {
   FORWARD_HORIZON,
 } from "@/lib/analysis/lab-forward";
 import { WARMUP } from "@/lib/analysis/lab";
+import { classifyR } from "@/lib/analysis/lab-manage";
 import type { Candle } from "@/lib/data-sources/ohlcv";
 import type { LabTradeRow } from "@/lib/db";
 
@@ -122,10 +123,21 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
     open: 100, high, low, close: (high + low) / 2, volume: 1,
   });
 
-  // 分批止盈: the target banks half and the trade *stays open* — the
-  // remainder trails at ≥ breakeven until a stop, a flip or the horizon.
+  // 分批止盈 needs a target worth ≥1R: base's target sits 1.5R away, so the
+  // touch banks half and the trade *stays open* — the remainder trails at
+  // ≥ breakeven until a stop, a flip or the horizon.
   const scaledOpen = resolveForwardTrade(base, [at(0, 101, 99), at(1, 101, 99), at(2, 104, 100)]);
-  check("a target touch alone no longer closes the trade", scaledOpen === null);
+  check("a ≥1R target touch alone no longer closes the trade", scaledOpen === null);
+
+  // A sub-1R shelf exits in full — banking half of a crumb and handing the
+  // rest to a breakeven wash is the shape that collapsed every measured
+  // expectancy to ≈0 on the live sweep. Target 101 on a 2-point risk = 0.5R.
+  const nearShelf = resolveForwardTrade(
+    { ...base, target: 101 },
+    [at(0, 101.5, 99.5)],
+  )!;
+  check("a sub-1R target exits the whole position at the shelf",
+    nearShelf.status === "win" && nearShelf.exitPrice === 101, nearShelf);
   const won = resolveForwardTrade(base, [
     at(0, 101, 99), at(1, 101, 99), at(2, 104, 100), at(3, 101, 100),
   ])!;
@@ -165,8 +177,15 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
   check("bars before the entry cannot resolve a trade",
     resolveForwardTrade(base, before) === null);
 
+  // Scratch accounting: the exits the management manufactures at ≈0R are
+  // 平, not 敗 — in expectancy, out of the hit rate.
+  check("net R classification has a scratch band",
+    classifyR(0.5) === "win" && classifyR(-0.5) === "loss" &&
+    classifyR(0.05) === "scratch" && classifyR(-0.1) === "scratch" &&
+    classifyR(0.11) === "win");
+
   const short = { ...base, direction: "short" as const, stop: 102, target: 97 };
-  check("a short's target touch scales out and stays open",
+  check("a short's ≥1R target touch scales out and stays open",
     resolveForwardTrade(short, [at(0, 101, 96)]) === null);
   check("a short resolves the other way up",
     resolveForwardTrade(short, [at(0, 101, 96), at(1, 101, 99)])!.status === "win");
@@ -215,12 +234,15 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
     openedAt: "2020-01-01T00:00:00.000Z", closedAt: null,
     ...over,
   });
+  // Buckets are re-derived from each row's reconstructed net R (scratch
+  // accounting), so the fixtures carry exit prices that mean what their
+  // status says: 103 = target (+1.5R), 98 = stop (−1R), 100 = breakeven.
   const stats = summariseForward([
     row({ status: "win" }), row({ status: "win" }), row({ status: "win" }),
-    row({ status: "loss" }),
+    row({ status: "loss", exitPrice: 98 }),
     row({ status: "expired" }),
     row({ status: "open" }),
-    row({ status: "win", direction: "short" }),
+    row({ status: "win", direction: "short", stop: 102, target: 97, exitPrice: 97 }),
   ]);
   const long = stats.find((s) => s.direction === "long")!;
   check("wins, losses, legacy expiries and open trades are counted separately",
@@ -232,6 +254,19 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
   check("directions are kept apart", stats.length === 2, stats.map((s) => s.direction));
   check("a condition with nothing resolved reports no hit rate",
     summariseForward([row({ status: "open" })])[0].hitRate === null);
+
+  // A breakeven wash (exit at the entry) is a scratch: counted, shown, and
+  // excluded from the rate — a 敗 at ±0R was how live hit rates read 19%.
+  const withScratch = summariseForward([
+    row({ status: "win" }),
+    row({ status: "loss", exitPrice: 98 }),
+    row({ status: "loss", exitPrice: 100 }),
+  ])[0];
+  check("a breakeven exit lands in the scratch bucket",
+    withScratch.scratches === 1 && withScratch.wins === 1 && withScratch.losses === 1,
+    withScratch);
+  check("and the hit rate is over decisive trades only",
+    withScratch.hitRate === 0.5 && withScratch.resolved === 3, withScratch);
 }
 
 report("前進實驗");

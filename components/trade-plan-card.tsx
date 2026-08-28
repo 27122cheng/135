@@ -264,7 +264,10 @@ export function TradePlanCard({
           </summary>
           <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
             以相同的停損／停利「相對距離」逐根回測（最多持有 {backtest.horizonBars} 根）：
-            {backtest.wins} 勝 / {backtest.losses} 敗 / {backtest.timeouts} 次未觸及。
+            {backtest.wins} 勝 / {backtest.losses} 敗
+            {typeof backtest.scratches === "number" && backtest.scratches > 0
+              ? ` / ${backtest.scratches} 平（|R|≤0.1 的保本洗出，計入期望值、不計入勝率）`
+              : ""}。
             {backtest.basis ? `樣本取法：${backtest.basis}。` : null}
           </p>
           {typeof backtest.costPct === "number" && backtest.costPct > 0 && (

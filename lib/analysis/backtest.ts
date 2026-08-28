@@ -3,7 +3,7 @@ import { COMMODITIES } from "@/types/signal";
 import { totalCostFraction, tradingCostFor } from "@/config/trading-costs";
 import { ema, macd, rsi } from "./indicators";
 import { buildContext, type LabContext } from "./lab-conditions";
-import { walkManaged } from "./lab-manage";
+import { SCRATCH_R, classifyR, walkManaged } from "./lab-manage";
 
 /**
  * Empirical check on a plan's stop/target geometry, computed locally from the
@@ -65,12 +65,15 @@ import { walkManaged } from "./lab-manage";
 export interface PlanBacktest {
   /** Sampled trades that ran to an exit (managed trades always do). */
   resolved: number;
-  /** Trades whose net R was positive. */
+  /** Trades whose net R cleared +SCRATCH_R. */
   wins: number;
+  /** Trades whose net R fell below −SCRATCH_R. */
   losses: number;
+  /** |net R| ≤ SCRATCH_R — breakeven washes the management manufactures. */
+  scratches: number;
   /** Always 0 under managed exits (the horizon closes at the market). */
   timeouts: number;
-  /** wins / resolved, 0..1. Null when nothing resolved. */
+  /** wins / (wins + losses) — scratches excluded. Null when nothing decisive. */
   hitRate: number | null;
   /**
    * Mean R per trade, net of trading cost, measured on the managed walk —
@@ -257,6 +260,7 @@ function walk(
   const ctx = labCtxOf(candles);
   let wins = 0;
   let losses = 0;
+  let scratches = 0;
   let sumR = 0;
   let hadAmbiguousBars = false;
   let sampled = 0;
@@ -309,17 +313,26 @@ function walk(
       hadAmbiguousBars = true;
     }
     sumR += exit.r;
-    if (exit.r > 0) wins++;
-    else losses++;
+    // Scratch-aware: the managed rules manufacture ±0R washes by design
+    // (breakeven pullbacks, trailing steps), and counting them as losses
+    // collapsed raw hit rates to 19–38% while expectancy barely moved —
+    // see SCRATCH_R in lab-manage.ts. Scratches stay in the expectancy
+    // (they cost the spread) and out of the rate.
+    const kind = classifyR(exit.r);
+    if (kind === "win") wins++;
+    else if (kind === "loss") losses++;
+    else scratches++;
   }
 
-  const resolved = wins + losses;
-  const hitRate = resolved > 0 ? wins / resolved : null;
+  const resolved = wins + losses + scratches;
+  const decisive = wins + losses;
+  const hitRate = decisive > 0 ? wins / decisive : null;
 
   return {
     resolved,
     wins,
     losses,
+    scratches,
     // Managed trades always exit — at a level, on a flip, or at the market
     // when the horizon runs out — so nothing can time out any more.
     timeouts: 0,
@@ -332,7 +345,7 @@ function walk(
     costPct: Math.round(costFraction * 100 * 1000) / 1000,
     basis:
       `只取「${tier.label}」的 ${sampled} 根 K 棒為進場點，依實際執行的管理規則模擬` +
-      `（觸及停利先平一半、剩餘保本追蹤、1R 保本、結構移停、反向 CHoCH 出場、逾時以市價結束），` +
-      `已扣除來回交易成本 ${(costFraction * 100).toFixed(3)}%`,
+      `（停利 ≥1R 先平一半、不足 1R 全出、1R 保本、結構移停、反向 CHoCH 出場、逾時以市價結束），` +
+      `勝率不含 |R|≤${SCRATCH_R} 的打平，已扣除來回交易成本 ${(costFraction * 100).toFixed(3)}%`,
   };
 }

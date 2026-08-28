@@ -4,6 +4,7 @@ import type { JournalEntry, TradeResult } from "@/types/journal";
 import { computeSeverity } from "./severity";
 import { describeConsequence, reviewStop, type StopContext } from "./stop-review";
 import { fetchOHLCV } from "@/lib/data-sources/ohlcv";
+import { classifyR } from "@/lib/analysis/lab-manage";
 import type { CommodityMeta } from "@/types/signal";
 
 /**
@@ -102,17 +103,15 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
   // move comes from the scale-out price, half from the final exit.
   const move = scaled !== null ? 0.5 * dirMove(scaled) + 0.5 * dirMove(exitPrice) : dirMove(exitPrice);
   const pnlPct = entry > 0 ? Math.round((move / entry) * 10000) / 100 : 0;
-  // A structure exit (or a scaled trade's final exit) closed at the market or
-  // at a stop that may sit at breakeven: the result is whatever the blended
-  // price says, not what the exit kind implies.
+  // Scratch-aware, like the backtest that approved the plan: the breakeven
+  // and trailing rules *manufacture* near-zero exits, and booking a stop-out
+  // at the entry as a "loss" both poisons the realized win rate and hands
+  // the S1–S8 review a trade that was never a real loss. |move| within
+  // SCRATCH_R of the original risk is a breakeven wash — the journal's own
+  // vocabulary already has the word.
+  const moveR = risk > 0 ? move / risk : 0;
   const result: TradeResult =
-    outcome === "target_hit"
-      ? "win"
-      : scaled !== null || outcome === "structure_exit"
-        ? move > 0
-          ? "win"
-          : "loss"
-        : "loss";
+    classifyR(moveR) === "scratch" ? "breakeven" : moveR > 0 ? "win" : "loss";
 
   const markers = paper ? `${AUTO_MARKER}${PAPER_MARKER}` : AUTO_MARKER;
 
@@ -141,7 +140,7 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
             (outcome === "stop_hit"
               ? `於停損 ${exitPrice} 出場`
               : `因結構翻轉以市價 ${exitPrice} 出場`) +
-            `（兩半各計一半，合計${result === "win" ? "獲利" : "虧損"} ${pnlPct}%）。` +
+            `（兩半各計一半，合計${result === "win" ? "獲利" : result === "breakeven" ? "打平" : "虧損"} ${pnlPct}%）。` +
             (paper ? "此為參考價位的紙上追蹤，假設在價位上成交、無滑價與點差。" : ""),
         },
         null,
@@ -176,7 +175,7 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
           closed_at: new Date().toISOString(),
           stop_reason_tag: null,
           review_note:
-            `${markers} 結構翻轉出場 ${exitPrice}（${result === "win" ? "獲利" : "虧損"} ${pnlPct}%），` +
+            `${markers} 結構翻轉出場 ${exitPrice}（${result === "win" ? "獲利" : result === "breakeven" ? "打平" : "虧損"} ${pnlPct}%），` +
             `未觸及停損停利：日線出現反向 CHoCH，進場理由失效，依管理規則以市價出場。` +
             (paper ? "此為參考價位的紙上追蹤，假設在價位上成交、無滑價與點差。" : ""),
         },
@@ -218,6 +217,43 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
         null,
       );
       return { entry: written, tag: null, decidedBy: null, note: "停利，已記錄" };
+    } catch (err) {
+      return {
+        entry: null,
+        tag: null,
+        decidedBy: null,
+        note: `寫入交易日誌失敗：${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  if (result === "breakeven") {
+    // 保本出場 — the stop was hit *at or near the entry* because the
+    // breakeven/trailing rules had already moved it there. Not a loss: no
+    // S-tag, no severity, and the intervention engine never sees it as one.
+    // Still a row — the realized audit counts washes, and hiding them would
+    // overstate how often the system actually decides.
+    try {
+      const written = await store.insertJournalEntry(
+        {
+          signal_id: signal.id,
+          symbol: signal.symbol,
+          direction: signal.direction,
+          grade: signal.grade,
+          entry_price: entry,
+          exit_price: exitPrice,
+          result,
+          pnl_pct: pnlPct,
+          closed_at: new Date().toISOString(),
+          stop_reason_tag: null,
+          review_note:
+            `${markers} 保本出場 ${exitPrice}（${pnlPct}%）：停損已被保本／移停規則移到成本附近，` +
+            `此為管理規則運作的打平，不列入停損原因分類。` +
+            (paper ? "此為參考價位的紙上追蹤，假設在價位上成交、無滑價與點差。" : ""),
+        },
+        null,
+      );
+      return { entry: written, tag: null, decidedBy: null, note: "保本出場（打平），已記錄" };
     } catch (err) {
       return {
         entry: null,
