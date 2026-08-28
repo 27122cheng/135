@@ -184,6 +184,24 @@ function stored(s: TradeSignal): SignalRow {
   check("mentions the data gap count", text.includes("資料缺口 1 項"));
   check("states the trigger", text.includes("首次出現可執行訊號"));
   check("links back to the site", text.includes("https://example.app"));
+  // The push carries the whole lifecycle: the reader enters knowing what the
+  // monitor will do at every branch, not just where three prices sit.
+  check("spells out the management playbook",
+    text.includes("先平一半") && text.includes("1R 保本") && text.includes("CHoCH"), text);
+
+  // 實測證據 rides with the recommendation when the plan carries a backtest.
+  const backed = signal();
+  backed.plan_backtest = {
+    resolved: 124, wins: 70, losses: 54, timeouts: 0,
+    hitRate: 0.565, expectancyR: 0.69, horizonBars: 20, lookbackBars: 500,
+    hadAmbiguousBars: false,
+  };
+  const backedText = formatAlert(backed, "r");
+  check("the evidence line quotes expectancy, hit rate and sample",
+    backedText.includes("期望值 +0.69R") && backedText.includes("勝率 56%") &&
+      backedText.includes("124 筆"), backedText);
+  check("no backtest means no evidence line, not zeros",
+    !formatAlert(signal(), "r").includes("實測："));
 
   // FX needs more decimals than an index does.
   const fx = signal({ symbol: "EURUSD" });

@@ -2,7 +2,7 @@ import type { SignalStore } from "@/lib/db";
 import { COMMODITIES } from "@/types/signal";
 import { allInstruments } from "@/lib/server-symbols";
 import type { JournalEntry } from "@/types/journal";
-import { computeTrackRecord, type TrackBucket } from "@/lib/journal/stats";
+import { computeEquityCurve, computeTrackRecord, type TrackBucket } from "@/lib/journal/stats";
 import { notifyAll } from "@/lib/notify";
 
 /**
@@ -61,11 +61,18 @@ export interface OpenPositionSummary {
   since: string | null;
 }
 
+export interface AllTimeSummary {
+  totalPct: number;
+  maxDrawdownPct: number;
+  trades: number;
+}
+
 /** Pure formatter, so the message is testable without a store or a clock. */
 export function buildWeeklyDigest(
   entries: JournalEntry[],
   weekLabel: string,
   openPositions: OpenPositionSummary[] = [],
+  allTime: AllTimeSummary | null = null,
 ): string {
   const record = computeTrackRecord(entries);
   const lines: string[] = [`<b>週結摘要 ${weekLabel}</b>`];
@@ -114,6 +121,16 @@ export function buildWeeklyDigest(
     }
   }
 
+  // The running score, not just this week's inning: where the whole book
+  // stands and the deepest drawdown it has been through. A weekly number
+  // without the cumulative one invites overreacting to one week's noise.
+  if (allTime && allTime.trades > 0) {
+    lines.push(
+      `累計（實際交易 ${allTime.trades} 筆）：${allTime.totalPct > 0 ? "+" : ""}${allTime.totalPct}%，` +
+        `最大回撤 ${allTime.maxDrawdownPct}%`,
+    );
+  }
+
   lines.push("", "<i>勝率高於「損益兩平需 x%」才是正期望；詳情見 /review</i>");
   return lines.join("\n");
 }
@@ -135,9 +152,15 @@ export async function maybeSendWeeklyDigest(
   await store.saveSetting(MARKER_KEY, week);
 
   const weekAgo = Date.now() - 7 * 24 * 3600_000;
-  const entries = (await store.listJournal({ limit: 500 }).catch(() => [])).filter(
-    (e) => Date.parse(e.closed_at) >= weekAgo,
-  );
+  const allEntries = await store.listJournal({ limit: 500 }).catch(() => []);
+  const entries = allEntries.filter((e) => Date.parse(e.closed_at) >= weekAgo);
+  // 累計權益 over real trades only — paper 參考價位 rows would flatter it.
+  const realAllTime = allEntries.filter((e) => !e.review_note?.includes("[參考價位紙上追蹤]"));
+  const curve = computeEquityCurve(realAllTime);
+  const allTime =
+    realAllTime.length > 0
+      ? { totalPct: curve.totalPct, maxDrawdownPct: curve.maxDrawdownPct, trades: realAllTime.length }
+      : null;
 
   // Real positions still in flight — read from the monitor's own state, the
   // same rows the 5-minute sweep manages. Paper trackers live under
@@ -161,7 +184,7 @@ export async function maybeSendWeeklyDigest(
     }
   }
 
-  const text = buildWeeklyDigest(entries, week, open) + (appUrl ? `\n${appUrl}/review` : "");
+  const text = buildWeeklyDigest(entries, week, open, allTime) + (appUrl ? `\n${appUrl}/review` : "");
   await notifyAll(text);
   return { sent: true, reason: `已發送（${entries.length} 筆結算、${open.length} 筆持倉中）` };
 }

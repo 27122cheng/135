@@ -330,6 +330,23 @@ export function formatAlert(
     `當沖：進場 <b>${fmt(plan.entry)}</b>`,
     `停損 ${fmt(plan.stop_loss)}　停利 ${fmt(plan.take_profit)}`,
     plan.risk_reward !== null ? `風報比 1:${plan.risk_reward}` : null,
+    // The evidence rides with the recommendation. A push that names three
+    // prices without its sample asks to be trusted; this one shows the
+    // managed backtest that let the plan through the floors.
+    signal.plan_backtest && signal.plan_backtest.resolved > 0
+      ? `實測：${
+          signal.plan_backtest.expectancyR !== null
+            ? `期望值 ${signal.plan_backtest.expectancyR > 0 ? "+" : ""}${signal.plan_backtest.expectancyR}R・`
+            : ""
+        }${
+          signal.plan_backtest.hitRate !== null
+            ? `勝率 ${Math.round(signal.plan_backtest.hitRate * 100)}%・`
+            : ""
+        }${signal.plan_backtest.resolved} 筆（含交易管理與成本）`
+      : null,
+    // And the lifecycle, so the reader enters knowing every branch — the
+    // same five rules the monitor executes and the backtest measured.
+    `進場後：觸及停利先平一半保本追蹤｜1R 保本｜新 swing 移停｜反向 CHoCH 出場（監控自動提醒）`,
     // The swing variant rides along as levels, never as a second monitored
     // trade — one position at a time is the monitor's rule, so the message
     // says which plan the tracking follows.

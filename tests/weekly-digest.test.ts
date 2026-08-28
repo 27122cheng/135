@@ -95,4 +95,22 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
     noneHeld.includes("門檻未放行任何交易"), noneHeld);
 }
 
+// ── the running score rides along ─────────────────────────────────
+//
+// One week's numbers invite overreacting to one week's noise; the digest
+// closes with where the whole book stands and the deepest drawdown it has
+// survived — the same two numbers the /review equity curve headlines.
+{
+  const withTotal = buildWeeklyDigest(
+    [entry({ result: "win", pnl_pct: 1.5 })], "2026-W35", [],
+    { totalPct: 4.2, maxDrawdownPct: -3.1, trades: 17 },
+  );
+  check("the all-time line names total, trades and max drawdown",
+    withTotal.includes("+4.2%") && withTotal.includes("17 筆") &&
+      withTotal.includes("最大回撤 -3.1%"),
+    withTotal);
+  check("no settled history means no all-time line",
+    !buildWeeklyDigest([], "2026-W35", [], null).includes("累計"));
+}
+
 report("weekly digest");
