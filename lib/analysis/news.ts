@@ -205,7 +205,7 @@ function lexiconResult(articles: Article[], gaps: string[]): NewsAnalysisResult 
   };
 }
 
-/** 新聞面：抓近 48h 新聞（GDELT，失敗時退到 Google News RSS，加上 Finnhub），
+/** 新聞面：抓近 48h 新聞（Google News RSS 為主、Finnhub 補充，GDELT 為備援），
  *  交給 AI 評 -1~+1 情緒分並摘要，附來源連結。*/
 export async function analyzeNews(
   gdeltQuery: string,
@@ -214,23 +214,26 @@ export async function analyzeNews(
   /** `symbol:h4BarTime` — see CompleteOptions.cacheKey. */
   aiCacheKey?: string,
 ): Promise<NewsAnalysisResult> {
-  const [gdelt, finnhub] = await Promise.all([
-    fetchGdeltNews(gdeltQuery, gaps),
+  // Google News RSS leads, GDELT is the backup — the reverse of the first
+  // wiring, and the production logs decided it: GDELT failed with 連線失敗
+  // on effectively every sweep from this deployment's egress while the
+  // Google News backup quietly supplied the headlines each time. A primary
+  // that never answers is not a primary; it burned a timeout per symbol and
+  // wrote a gap line per failure for a dimension the backup was already
+  // feeding. GDELT's richer query syntax still earns it the backup slot for
+  // the sweeps where it does answer.
+  const term = gdeltQuery.split(/\s+OR\s+/i)[0].replace(/"/g, "").trim();
+  const [google, finnhub] = await Promise.all([
+    fetchGoogleNews(term, gaps),
     fetchFinnhubMarketNews("general", finnhubKeywords, gaps),
   ]);
   const articles: Article[] = [
-    ...(gdelt ?? []).map((a) => ({ headline: a.headline, source: a.source, url: a.url, datetime: a.datetime })),
+    ...(google ?? []).map((a) => ({ headline: a.headline, source: a.source, url: a.url, datetime: a.datetime })),
     ...(finnhub ?? []).map((a) => ({ headline: a.headline, source: a.source, url: a.url, datetime: a.datetime })),
   ];
 
-  // GDELT down (the live failure: "連線失敗 fetch failed") used to black out
-  // the whole 新聞面 dimension, because it was the only keyless headline
-  // source. Google News RSS is a different company on different
-  // infrastructure — asked only when the primary path came back empty, so a
-  // working GDELT costs nothing extra.
   if (articles.length === 0) {
-    const term = gdeltQuery.split(/\s+OR\s+/i)[0].replace(/"/g, "").trim();
-    const backup = await fetchGoogleNews(term, gaps);
+    const backup = await fetchGdeltNews(gdeltQuery, gaps);
     for (const a of backup ?? []) {
       articles.push({ headline: a.headline, source: a.source, url: a.url, datetime: a.datetime });
     }

@@ -28,7 +28,7 @@ export interface YieldSeries {
   label: string;
   /** Chronological, oldest first. */
   points: YieldPoint[];
-  source: "stooq" | "ecb" | "fred";
+  source: "stooq" | "ecb" | "fred" | "mof";
 }
 
 /** Yields move slowly and are published once a day; 6h per the spec. */
@@ -123,6 +123,70 @@ async function fromEcb(key: string, label: string, gaps: string[]): Promise<Yiel
   return result ? { label, points: result.value, source: "ecb" } : null;
 }
 
+/**
+ * Japan MOF's own JGB yield curve CSV — the issuer publishing its own curve,
+ * daily, keyless: https://www.mof.go.jp/jgbs/reference/interest_rate/jgbcm.csv
+ *
+ * Two parsing realities, both handled without trusting the header row: the
+ * file is Shift-JIS (a UTF-8 decode garbles the 基準日 header, so nothing
+ * here matches on header text), and dates are era-formatted (R6.8.28 =
+ * Reiwa year 6). The column layout has been fixed for decades —
+ * date, then tenors 1..10, 15, 20, 25, 30, 40 years — so tenor columns are
+ * addressed by that fixed order. A data row is recognised by its first cell
+ * parsing as an era date; everything else is skipped.
+ */
+const MOF_TENOR_COLUMNS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 40];
+
+function parseEraDate(s: string): string | null {
+  const m = s.trim().match(/^([SHR])(\d+)\.(\d+)\.(\d+)$/);
+  if (!m) return null;
+  // Shōwa 1 = 1926, Heisei 1 = 1989, Reiwa 1 = 2019 → base = era start − 1.
+  const base = m[1] === "R" ? 2018 : m[1] === "H" ? 1988 : 1925;
+  const y = base + Number(m[2]);
+  const mo = Number(m[3]);
+  const d = Number(m[4]);
+  if (!(y > 1970) || !(mo >= 1 && mo <= 12) || !(d >= 1 && d <= 31)) return null;
+  return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+async function fromMof(
+  tenorYears: number,
+  label: string,
+  gaps: string[],
+): Promise<YieldSeries | null> {
+  const column = MOF_TENOR_COLUMNS.indexOf(tenorYears) + 1;
+  if (column <= 0) return null;
+  const result = await fetchFree<YieldPoint[]>({
+    source: "mof",
+    label: `日本財務省 JGB (${label})`,
+    key: `mof:jgbcm:${tenorYears}`,
+    ttlMs: YIELD_TTL_MS,
+    staleMs: YIELD_STALE_MS,
+    limit: { perMinute: 10, perDay: 200 },
+    gaps,
+    fn: async () => {
+      const csv = await fetchText(
+        "https://www.mof.go.jp/jgbs/reference/interest_rate/jgbcm.csv",
+        undefined,
+        15000,
+      );
+      if (!csv) return null;
+      const points: YieldPoint[] = [];
+      for (const line of csv.split(/\r?\n/)) {
+        const cells = line.split(",");
+        const date = parseEraDate(cells[0] ?? "");
+        if (!date || cells.length <= column) continue;
+        const value = Number(cells[column]);
+        // "-" marks tenors not quoted that day; skipped, never zeroed.
+        if (!Number.isFinite(value)) continue;
+        points.push({ date, value });
+      }
+      return points.length > 0 ? points.sort((a, b) => a.date.localeCompare(b.date)) : null;
+    },
+  });
+  return result ? { label, points: result.value, source: "mof" } : null;
+}
+
 async function fromFred(
   leg: YieldLegSource,
   gaps: string[],
@@ -168,6 +232,13 @@ export async function fetchYieldSeries(
     const local: string[] = [];
     const ecb = await fromEcb(leg.ecbKey, leg.label, local);
     if (ecb) return ecb;
+    attempts.push(...local);
+  }
+
+  if (leg.mofTenorYears) {
+    const local: string[] = [];
+    const mof = await fromMof(leg.mofTenorYears, leg.label, local);
+    if (mof) return mof;
     attempts.push(...local);
   }
 

@@ -52,6 +52,20 @@ interface ScannerQuote {
   lp_time?: number;
 }
 
+/** POST scan response: one row per requested ticker, columns in order. */
+interface ScanResponse {
+  data?: Array<{ s?: string; d?: unknown[] }>;
+}
+
+/** Validates a (price, time) pair into the quote shape, or null. */
+function asQuote(price: unknown, at: unknown): { price: number; at: string } | null {
+  if (typeof price !== "number" || !Number.isFinite(price) || price <= 0) return null;
+  // No timestamp, no quote — an unstamped price would win every freshness
+  // contest by construction, the exact failure the freshness rule catches.
+  if (typeof at !== "number" || !(at > 0)) return null;
+  return { price, at: new Date(at * 1000).toISOString() };
+}
+
 export async function fetchTradingViewQuote(
   meta: Pick<CommodityMeta, "symbol">,
   gaps: string[],
@@ -71,24 +85,41 @@ export async function fetchTradingViewQuote(
     limit: { perMinute: 20 },
     gaps,
     fn: async () => {
+      // The POST scan is the request TradingView's own screener pages make,
+      // which makes it the *least* likely of the unofficial surfaces to
+      // drift — the GET /symbol shortcut this used first went shape-dark in
+      // production (「未回傳有效價格」 on every call) while the site itself
+      // kept quoting, i.e. the scan kept working. Row shape:
+      // {data:[{s:"OANDA:XAUUSD", d:[lp, lp_time]}]}.
+      const scanned = await fetchJson<ScanResponse>(
+        "https://scanner.tradingview.com/global/scan",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            symbols: { tickers: [ticker] },
+            columns: ["lp", "lp_time"],
+          }),
+        },
+        7000,
+      );
+      const row = scanned?.data?.find((r) => r.s === ticker) ?? scanned?.data?.[0];
+      const fromScan = row && Array.isArray(row.d) ? asQuote(row.d[0], row.d[1]) : null;
+      if (fromScan) return fromScan;
+
+      // Old GET surface as the backup, same validation.
       const data = await fetchJson<ScannerQuote>(
         `https://scanner.tradingview.com/symbol?symbol=${encodeURIComponent(ticker)}` +
           `&fields=lp,lp_time&no_404=true`,
         undefined,
         7000,
       );
-      if (!data || typeof data !== "object") return null;
-      const price = data.lp;
-      const at = data.lp_time;
-      if (typeof price !== "number" || !Number.isFinite(price) || price <= 0) {
-        gaps.push(`TradingView (${ticker}) 未回傳有效價格（端點無金鑰且非官方，形狀可能已變）`);
+      const fromGet = data && typeof data === "object" ? asQuote(data.lp, data.lp_time) : null;
+      if (!fromGet) {
+        gaps.push(`TradingView (${ticker}) 未回傳有效價格（scan 與 symbol 兩端點皆然，端點無金鑰且非官方）`);
         return null;
       }
-      // No timestamp, no quote — an unstamped price would win every
-      // freshness contest by construction, the exact failure the freshness
-      // rule exists to catch.
-      if (typeof at !== "number" || !(at > 0)) return null;
-      return { price, at: new Date(at * 1000).toISOString() };
+      return fromGet;
     },
   });
 

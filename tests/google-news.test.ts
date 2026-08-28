@@ -5,10 +5,15 @@ import { parseGoogleNewsRss } from "@/lib/data-sources/google-news";
 import { analyzeNews } from "@/lib/analysis/news";
 
 /**
- * 「新聞層面無法載入」— GDELT was the only keyless headline source, and when
- * it died of "連線失敗 (fetch failed)" the whole 新聞面 dimension went dark.
- * Google News RSS is the backup: different company, different infrastructure,
- * asked only when the primary path returns nothing.
+ * 新聞來源的主從 — decided by the production logs, twice.
+ *
+ * First round: GDELT was the only keyless headline source, and when it died
+ * of "連線失敗 (fetch failed)" the whole 新聞面 dimension went dark; Google
+ * News RSS became the backup. Second round: the logs showed GDELT failing on
+ * effectively every sweep from this deployment's egress while the backup
+ * quietly supplied the headlines each time — a primary that never answers is
+ * not a primary. Google News RSS now leads; GDELT is the backup, asked only
+ * when the primary path returns nothing.
  */
 
 const RSS = `<?xml version="1.0" encoding="UTF-8"?>
@@ -63,22 +68,22 @@ async function main() {
     delete process.env.FINNHUB_API_KEY;
 
     const seen = stubFetch((url) => {
-      // The live failure mode: GDELT unreachable at the connection level.
-      if (url.includes("gdeltproject")) throw new Error("fetch failed");
       if (url.includes("news.google.com")) return { status: 200, body: RSS };
+      // GDELT down — the deployment's normal state — must cost nothing.
+      if (url.includes("gdeltproject")) throw new Error("fetch failed");
       return { status: 500, body: "no" };
     });
 
     const gaps: string[] = [];
     const r = await analyzeNews('"gold price" OR gold', ["gold"], gaps);
-    check("the dimension survives GDELT being down", r.digest !== null, r.digest);
-    check("with the backup's headlines", r.digest?.headline_count === 3,
-      r.digest?.headline_count);
+    check("the dimension runs on Google News as the primary", r.digest !== null, r.digest);
+    check("with its headlines", r.digest?.headline_count === 3, r.digest?.headline_count);
     check("Google News was asked with the bare first term",
       seen.some((u) => u.includes("news.google.com") && u.includes("gold")), seen);
+    check("a working primary keeps GDELT unasked",
+      !seen.some((u) => u.includes("gdeltproject")), seen);
 
-    // A working GDELT must keep the backup unasked — it costs a request and
-    // adds nothing.
+    // Google News down → GDELT is the backup that keeps the dimension alive.
     __resetCacheForTests();
     __resetQuotaForTests();
     const seen2 = stubFetch((url) =>
@@ -93,9 +98,9 @@ async function main() {
           }
         : { status: 500, body: "no" },
     );
-    await analyzeNews('"gold price" OR gold', ["gold"], []);
-    check("a working GDELT keeps the backup unasked",
-      !seen2.some((u) => u.includes("news.google.com")), seen2);
+    const r2 = await analyzeNews('"gold price" OR gold', ["gold"], []);
+    check("GDELT backs the dimension up when the primary is down",
+      r2.digest !== null && seen2.some((u) => u.includes("gdeltproject")), r2.digest);
   }
 
   report("google news backup");

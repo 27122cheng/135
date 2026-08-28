@@ -29,6 +29,13 @@ export interface YieldLegSource {
   ecbKey: string | null;
   /** FRED series — the US legs, already keyless and verified in this project. */
   fredLabel: FredLabel | null;
+  /**
+   * Japan MOF JGB curve tenor, in years — the issuer's own daily CSV
+   * (keyless, official, updated each business day). The fallback that made
+   * 日本 10Y stop reading 所有來源皆取得失敗 whenever Stooq's mirror was
+   * down: the Ministry of Finance publishes the curve itself.
+   */
+  mofTenorYears?: number | null;
 }
 
 export interface RateSpreadConfig {
@@ -87,7 +94,7 @@ export const RATE_SPREADS: Record<string, RateSpreadConfig> = {
     label: "10Y 美日利差",
     tenor: "10Y",
     minuend: US_10Y,
-    subtrahend: { label: "日本 10Y", stooqCode: "10yjpy.b", ecbKey: null, fredLabel: null },
+    subtrahend: { label: "日本 10Y", stooqCode: "10yjpy.b", ecbKey: null, fredLabel: null, mofTenorYears: 10 },
     rationale: "美債殖利率相對日債走高 → 套利偏好美元 → USDJPY 偏多",
   },
 };

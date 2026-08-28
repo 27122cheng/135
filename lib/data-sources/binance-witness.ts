@@ -32,13 +32,22 @@ import { fetchJson } from "./http";
  * They are compared against, and reported on, and that is all.
  */
 
-/** The 24/7 instrument that tracks each symbol, and how far apart they may sit. */
-const PROXY: Partial<Record<SupportedSymbol, { pair: string; label: string; tolerancePct: number }>> = {
+/**
+ * The 24/7 instrument that tracks each symbol, and how far apart they may sit.
+ * `krakenPair` is the same comparison on a venue that serves the US region
+ * this deployment runs in (Binance answers 451 there) — Kraken carries real
+ * fiat EUR/USD and GBP/USD books, an even cleaner basis than the USDT peg.
+ * Gold has no Kraken-listed proxy, so its witness honestly stays dark when
+ * Binance is unreachable.
+ */
+const PROXY: Partial<
+  Record<SupportedSymbol, { pair: string; krakenPair: string | null; label: string; tolerancePct: number }>
+> = {
   // Stablecoin-quoted FX: the basis is the USDT peg, historically ±0.1%.
-  EURUSD: { pair: "EURUSDT", label: "EUR/USDT", tolerancePct: 1 },
-  GBPUSD: { pair: "GBPUSDT", label: "GBP/USDT", tolerancePct: 1 },
+  EURUSD: { pair: "EURUSDT", krakenPair: "EURUSD", label: "EUR/USDT", tolerancePct: 1 },
+  GBPUSD: { pair: "GBPUSDT", krakenPair: "GBPUSD", label: "GBP/USDT", tolerancePct: 1 },
   // Tokenised gold: a real premium/discount to spot, plus the peg.
-  XAUUSD: { pair: "PAXGUSDT", label: "PAXG/USDT（代幣化黃金）", tolerancePct: 2 },
+  XAUUSD: { pair: "PAXGUSDT", krakenPair: null, label: "PAXG/USDT（代幣化黃金）", tolerancePct: 2 },
 };
 
 export function hasWitness(symbol: string): boolean {
@@ -84,11 +93,35 @@ export async function fetchWitness(
         5000,
       );
       const row = Array.isArray(rows) ? rows[0] : null;
-      if (!Array.isArray(row)) return null;
-      const openTime = Number(row[0]);
-      const close = Number(row[4]);
-      if (!Number.isFinite(openTime) || !Number.isFinite(close) || close <= 0) return null;
-      return { price: close, at: new Date(openTime).toISOString() };
+      if (Array.isArray(row)) {
+        const openTime = Number(row[0]);
+        const close = Number(row[4]);
+        if (Number.isFinite(openTime) && Number.isFinite(close) && close > 0) {
+          return { price: close, at: new Date(openTime).toISOString() };
+        }
+      }
+      // Binance unreachable (the US-region 451) — the same comparison from
+      // Kraken's fiat book, with the trade's own print time.
+      if (!proxy.krakenPair) return null;
+      const k = await fetchJson<{
+        error?: string[];
+        result?: Record<string, unknown>;
+      }>(
+        `https://api.kraken.com/0/public/Trades?pair=${proxy.krakenPair}&count=1`,
+        undefined,
+        6000,
+      );
+      if (!k || (Array.isArray(k.error) && k.error.length > 0) || !k.result) return null;
+      for (const [key, v] of Object.entries(k.result)) {
+        if (key === "last" || !Array.isArray(v) || v.length === 0) continue;
+        const trade = v[v.length - 1] as unknown[];
+        const price = Number(trade[0]);
+        const time = Number(trade[2]);
+        if (Number.isFinite(price) && price > 0 && Number.isFinite(time)) {
+          return { price, at: new Date(time * 1000).toISOString() };
+        }
+      }
+      return null;
     },
   });
 
