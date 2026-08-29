@@ -36,5 +36,40 @@
  * lab-manage.ts), not in this number: the hit-rate floors elsewhere are now
  * scratch-excluded, and the 55% they demand is the rate among trades that
  * actually decided something.
+ *
+ * ## The third lesson — role, not value（操作者的架構指令）
+ *
+ * Two measurement repairs later the sweeps were still 0-for-11, and the
+ * operator named the design fault: the statistical check had become the
+ * PRIMARY arbiter while the analysis — six dimensions, structure, trend,
+ * the thing this whole site computes — queued behind it. The geometry
+ * backtest's own card admits it measures "這組距離配置的可行性…不是這個
+ * 訊號的勝率"; a supplementary check with veto power over the primary
+ * judgment is an inverted architecture.
+ *
+ * So the roles are now explicit. The ANALYSIS decides. Statistics VETO only
+ * what is measurably bad (the two constants below), and the 實績校準 audit
+ * keeps tightening the veto when realized results disappoint — win rate as
+ * after-the-fact correction, which is the job it was always suited for.
+ * This constant survives as the "強" tier label: a plan clearing it is
+ * marked strong, but not clearing it no longer stands aside.
  */
 export const TRADE_MIN_EXPECTANCY_R = 0.35;
+
+/**
+ * 統計否決線（期望值腿）— a geometry the managed backtest measures at
+ * BELOW this loses money net of costs on the instrument's own history:
+ * that is a fact worth a veto, whatever the analysis thinks. At or above
+ * zero, the statistic has nothing disqualifying to say and the analysis's
+ * verdict stands.
+ */
+export const TRADE_VETO_EXPECTANCY_R = 0;
+
+/**
+ * 統計否決線（跟單性腿）— scratch-excluded. Below 40% the real losses come
+ * so often that no one follows the system through them (the random-walk
+ * baseline at the 1:1.5 payoff floor sits near this), so the veto keeps its
+ * one legitimate job. The 實績校準 bump adds on top of this line, so a
+ * system whose realized results lag its promises tightens itself.
+ */
+export const TRADE_VETO_HIT_RATE = 0.4;

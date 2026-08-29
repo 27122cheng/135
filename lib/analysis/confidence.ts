@@ -39,21 +39,28 @@ import { breadthOf } from "./evidence";
  * fallback penalty on top. A threshold that is never met is a disabled feature
  * wearing the costume of a strict one.
  *
- * 60 is set so the grade still does the deciding and this stays a veto rather
- * than a second grading system:
+ * Was 60 — B's own clean baseline — which made every ordinary degraded day
+ * a veto: on the live free stack a scan routinely carries 4–6 source gaps
+ * (GDELT dark, Finnhub circuit open, an AI tier exhausted), each costing
+ * points, so a B that the grade table declares tradeable scored 45–55 and
+ * stood aside on nearly every real run (EURUSD: confidence 52, blocked).
+ * That is a second grading system, not a veto — and the operator's
+ * architecture instruction is explicit: confidence is 附加條件, not the
+ * arbiter.
  *
- *  - A+ (80) survives a bad data day and still trades
- *  - A (70) trades unless several sources are down
- *  - B (55) needs the geometry to be genuinely good to get over the line
- *  - C (40) cannot reach it at all, which matches `MIN_ENTRY_GRADE`
+ * 45 aligns the veto with the vocabulary that already exists: `levelFor`
+ * calls scores below 45「低」, and 低 is precisely the state this gate is
+ * for — the evidence behind the signal genuinely did not arrive (the
+ * live case: XAUUSD at confidence 5 with every quote source dead). Between
+ * 45 and 70 the signal trades as「中」with its gaps listed on the card;
+ * the analysis decides, the score annotates.
  *
- * The AI-less penalty is −5 (see planConfidence): enough that a degraded run
- * needs a genuinely strong setup, no longer enough to disable entries on its
- * own — the deterministic path clears the same measured floors the AI path
- * does, so its plans are penalised for the missing judgement, not treated as
- * untrustworthy.
+ *  - A+ (80) / A (70) trade through bad data days
+ *  - B (60) trades unless the run is genuinely degraded (score < 45)
+ *  - C is refused upstream by the grade gate (`MIN_ENTRY_GRADE`); this veto
+ *    no longer doubles that refusal — one gate, one job
  */
-export const CONFIDENT_ENTRY_MIN = 60;
+export const CONFIDENT_ENTRY_MIN = 45;
 
 export type ConfidenceLevel = "high" | "medium" | "low";
 

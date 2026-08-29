@@ -78,8 +78,10 @@ async function main() {
       [screened.stop_loss, screened.risk_reward]);
     check("and a target beyond the horizon too", screened.take_profit !== 54744,
       screened.take_profit);
-    check("the refusal names the expectancy floor",
-      screened.stance === "wait" && screened.summary.includes("0.35R"), screened.summary);
+    check("the refusal is a statistical veto that names its lines",
+      screened.stance === "wait" && screened.summary.includes("統計否決") &&
+        screened.summary.includes("勝率 <40%"),
+      screened.summary);
     check("the summary says what was excluded",
       screened.summary.includes("已排除"), screened.summary);
     check("naming the ATR screens",

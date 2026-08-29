@@ -211,12 +211,15 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
       } as never).score;
     check("a flawless B now reaches the entry bar",
       clean("B") >= CONFIDENT_ENTRY_MIN, clean("B"));
-    check("and a degraded one still does not",
+    // 附加審查架構：a B on an ordinary degraded day (a few sources down)
+    // now trades with its gaps annotated — the veto is reserved for 「低」,
+    // where the evidence genuinely did not arrive.
+    check("a degraded B is annotated, no longer vetoed",
       planConfidence({
         grade: "B", direction: "long", bias_items: [],
         data_gaps: ["來源 A 取得失敗", "來源 B 取得失敗", "來源 C 取得失敗"],
         trade_plan: { risk_reward: null, decided_by: "fallback" }, plan_backtest: null,
-      } as never).score < CONFIDENT_ENTRY_MIN);
+      } as never).score >= CONFIDENT_ENTRY_MIN);
     check("C stays below the bar whatever happens", clean("C") < CONFIDENT_ENTRY_MIN);
     check("the ordering is preserved", clean("A+") > clean("A") && clean("A") > clean("B"));
   }

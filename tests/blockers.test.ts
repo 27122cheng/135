@@ -88,8 +88,10 @@ function signal(over: Partial<TradeSignal> = {}): TradeSignal {
   check("and it is tunable — the bar is ours", g.tunable === true);
   check("with the scores quoted", g.detail.includes("總分 7"), g.detail);
 
+  // Below the 低 boundary (45) — the confidence veto's remaining territory
+  // now that ordinary degraded days (score 45–59) trade with annotations.
   const lowConfidence = signal({
-    confidence: { score: 45, level: "low", factors: ["評等 B（基準 60）", "3 項資料缺口（-9）"] },
+    confidence: { score: 30, level: "low", factors: ["評等 B（基準 60）", "5 項資料缺口（-15）"] },
   });
   const c = classifyBlocker(lowConfidence);
   check("a sub-threshold confidence is the blocker", c.id === "confidence", c);

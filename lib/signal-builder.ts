@@ -703,7 +703,7 @@ async function buildSignalForSymbol(
 
   if (tradePlan.stance !== "enter" && referenceGeometry === null) {
     gaps.push(
-      "本次不提供參考價位：沒有任何組合通過參考價位門檻（回測勝率 ≥55% 且風報比 ≥1:1.5）",
+      "本次不提供參考價位：沒有任何組合通過統計附加審查（實測期望值 <0 或勝率 <40% 即否決，風報比 ≥1:1.5）",
     );
   }
 

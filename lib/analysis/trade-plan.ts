@@ -1,5 +1,5 @@
 import { completeAI, jsonSchema, type AiUnavailable } from "@/lib/ai";
-import { TRADE_MIN_EXPECTANCY_R } from "./floors";
+import { TRADE_MIN_EXPECTANCY_R, TRADE_VETO_EXPECTANCY_R, TRADE_VETO_HIT_RATE } from "./floors";
 import type { BiasItem, Grade, SwingVariant, TradePlan, TradeSignal } from "@/types/signal";
 import { MIN_ENTRY_GRADE, gradeAllowsEntry } from "@/lib/scoring";
 import { backtestPlanGeometry } from "./backtest";
@@ -239,14 +239,18 @@ const MIN_STOP_ATR = 0.6;
 export interface HorizonProfile {
   label: string;
   maxTargetAtr: number;
-  /** Absolute hit-rate floor. No combination below this trades, whatever it pays. */
+  /**
+   * 統計否決線（跟單性腿）— scratch-excluded hit rate BELOW which the
+   * combination is vetoed. A veto floor, not a qualifying bar: the analysis
+   * decides, this only removes what is measurably unfollowable.
+   */
   minHitRate: number;
   /**
-   * When set, a combination must also demonstrate at least this expectancy
-   * per unit risk on the managed backtest. See {@link meetsProfileFloor}.
+   * 統計否決線（期望值腿）— managed expectancy BELOW which the combination
+   * is vetoed (it measurably loses money on this instrument's history).
    */
   minExpectancyR?: number;
-  /** 實績校準 — extra hit rate demanded on top of the hit floor. Only ≥ 0. */
+  /** 實績校準 — extra hit rate demanded on top of the veto line. Only ≥ 0. */
   hitRateBump?: number;
 }
 
@@ -268,34 +272,48 @@ export interface HorizonProfile {
  * *demonstrated* — too little history to backtest — still reads as unmet: an
  * unverifiable rate is not a rate.
  */
-// The floor constant lives in ./floors (a leaf module the client bundle can
-// print without dragging the AI/data-source graph in); re-exported here so
-// server code keeps its import path. The full rationale for its value — why
-// 0.75R produced one trade a month and 0.35R is the economic floor — is on
-// the constant itself.
+// The constants live in ./floors (a leaf module the client bundle can print
+// without dragging the AI/data-source graph in); re-exported here so server
+// code keeps its import path. The architectural history — how the floors
+// went from primary arbiter to supplementary veto on the operator's
+// instruction — is on the constants themselves.
 export { TRADE_MIN_EXPECTANCY_R };
+// 統計附加審查，非主審：the profiles carry VETO lines. A combination is
+// removed when the managed backtest measures it as losing money (expectancy
+// < 0 net of costs) or unfollowable (scratch-excluded hit rate < 40%);
+// everything else is admissible and the ANALYSIS — grade, trend, structure,
+// confluence — makes the call. TRADE_MIN_EXPECTANCY_R (0.35R) and 55% live
+// on as the 「強」 tier label, not as gates. The 實績校準 bump still raises
+// the veto line when realized results lag the promises — win rate doing its
+// real job: after-the-fact correction.
 export const DAY_PROFILE: HorizonProfile = {
   label: "當沖",
   maxTargetAtr: 2,
-  minHitRate: 0.55,
-  minExpectancyR: TRADE_MIN_EXPECTANCY_R,
+  minHitRate: TRADE_VETO_HIT_RATE,
+  minExpectancyR: TRADE_VETO_EXPECTANCY_R,
 };
-// Same floor at the larger horizon: one bar for "is this edge worth taking",
-// whichever horizon the target sits in.
 export const SWING_PROFILE: HorizonProfile = {
   label: "波段",
   maxTargetAtr: 5,
-  minHitRate: 0.55,
-  minExpectancyR: TRADE_MIN_EXPECTANCY_R,
+  minHitRate: TRADE_VETO_HIT_RATE,
+  minExpectancyR: TRADE_VETO_EXPECTANCY_R,
 };
-// The reference tier stays a flat 55%: it exists to show near-tradeable
-// structure, and a payoff-scaled bar below 55% would show plans nobody could
-// sit through even on paper.
+// The reference tier vetoes the same way — it exists to show the structure
+// the analysis found, minus only what measurably loses.
 export const REFERENCE_PROFILE: HorizonProfile = {
   label: "參考價位",
   maxTargetAtr: 2,
-  minHitRate: 0.55,
+  minHitRate: TRADE_VETO_HIT_RATE,
+  minExpectancyR: TRADE_VETO_EXPECTANCY_R,
 };
+
+/** The 「強」 display tier — the old qualifying bar, demoted to a label. */
+export function isStrongBacktest(bt: {
+  hitRate: number | null;
+  expectancyR: number | null;
+}): boolean {
+  return (bt.expectancyR ?? -Infinity) >= TRADE_MIN_EXPECTANCY_R && (bt.hitRate ?? 0) >= 0.55;
+}
 
 /**
  * The hit-rate leg of a profile's floor, with the calibration bump applied.
@@ -310,13 +328,13 @@ export function profileHitFloor(profile: HorizonProfile): number {
 }
 
 /**
- * Whether a measured backtest clears a profile's floor.
+ * Whether a measured backtest survives a profile's VETO lines.
  *
+ * Supplementary review, per the operator's architecture: true means "the
+ * statistic found nothing disqualifying", not "the statistic endorses it".
  * Both legs are read straight off the managed backtest — the walk already
- * applies breakeven, structure trailing and the CHoCH exit, so the expectancy
- * is the trade's real expectancy and needs no derivation from the ratio. The
- * earlier RR-derived hit-rate requirement existed only because the old static
- * walk reported binary ±rr outcomes; managed outcomes carry their own R.
+ * applies scale-out, breakeven, structure trailing and the CHoCH exit, so
+ * the expectancy is the trade's real expectancy.
  */
 export function meetsProfileFloor(
   profile: HorizonProfile,
@@ -329,13 +347,13 @@ export function meetsProfileFloor(
   return true;
 }
 
-/** One sentence describing a profile's floor, shared by every refusal text. */
+/** One sentence describing a profile's veto lines, shared by every refusal text. */
 export function floorText(profile: HorizonProfile): string {
   const hit = Math.round(profileHitFloor(profile) * 100);
   if (profile.minExpectancyR == null) return `回測勝率 ≥${hit}%`;
   return (
-    `每單位風險期望 ≥ +${profile.minExpectancyR}R 且勝率 ≥${hit}%` +
-    `（回測含保本移停、結構移停與反向 CHoCH 出場，量的是實際執行的交易）`
+    `統計否決線：實測期望值 <${profile.minExpectancyR === 0 ? "0（虧錢）" : `+${profile.minExpectancyR}R`}` +
+    `或勝率 <${hit}%（不含打平）即排除 —— 附加審查，只擋明顯不利，不是資格門檻`
   );
 }
 
@@ -484,9 +502,13 @@ function chooseGeometry(
   if (!candles || candles.length < 60) {
     return {
       combo: byRatio,
-      basis: `歷史 K 棒不足以回測各組合，改以風險報酬比最佳者為準（本組 1:${byRatio.rr}）${screen}`,
-      // Unverifiable is unmet: the floor is a claim about measured history.
-      meetsFloor: false,
+      basis:
+        `歷史 K 棒不足以回測各組合，改以風險報酬比最佳者為準（本組 1:${byRatio.rr}）${screen}` +
+        `⚠ 統計附加審查缺席（無可回測的歷史）—— 本計畫僅憑分析成立，倉位酌減。`,
+      // 附加審查缺席不構成否決 — the operator's architecture: statistics
+      // supplement the analysis, and an absent supplement is not a veto.
+      // The absence is stated loudly instead of silently standing aside.
+      meetsFloor: true,
     };
   }
 
@@ -512,22 +534,24 @@ function chooseGeometry(
     return {
       combo: byRatio,
       basis:
-        `各組合的回測樣本都不足 ${MIN_RESOLVED_FOR_RANKING} 筆，不足以比較勝率，` +
-        `改以風險報酬比最佳者為準（本組 1:${byRatio.rr}）${screen}`,
-      meetsFloor: false,
+        `各組合的回測樣本都不足 ${MIN_RESOLVED_FOR_RANKING} 筆，不足以比較，` +
+        `改以風險報酬比最佳者為準（本組 1:${byRatio.rr}）${screen}` +
+        `⚠ 統計附加審查缺席（樣本不足）—— 本計畫僅憑分析成立，倉位酌減。`,
+      // Same rule as above: an absent supplement is stated, never a veto.
+      meetsFloor: true,
     };
   }
 
-  // Followability first, then expectancy. Ranking on expectancy alone is how a
-  // 1:11 at a 15% hit rate wins: the arithmetic is positive and the plan is
-  // one nobody sits through. Both legs are measured on the managed walk —
-  // the same breakeven/trailing/flip rules the monitor runs live — so what
-  // the floor judges is the trade that will actually be taken. Combinations
-  // that clear it are ranked among themselves; only if none does are the rest
-  // considered, and then the summary says so rather than quietly shipping it.
-  const followable = rankable.filter((c) => meetsProfileFloor(profile, c.backtest!));
-  const pool = followable.length > 0 ? followable : rankable;
-  const lowHitRate = followable.length === 0;
+  // 統計附加審查：veto the combinations the backtest measures as bad
+  // (losing money net of costs, or unfollowably low hit rate), then let the
+  // best expectancy among the survivors carry the ANALYSIS's decision. When
+  // every combination is vetoed, that is the one thing the supplement is for
+  // — the wait branch downstream says so. Both legs are measured on the
+  // managed walk (scale-out, breakeven, trailing, flip — the monitor's own
+  // rules), so what the veto judges is the trade that will actually run.
+  const admissible = rankable.filter((c) => meetsProfileFloor(profile, c.backtest!));
+  const allVetoed = admissible.length === 0;
+  const pool = allVetoed ? rankable : admissible;
 
   const bestExpectancy = Math.max(...pool.map((c) => c.backtest!.expectancyR!));
   const tied = pool.filter(
@@ -539,22 +563,27 @@ function chooseGeometry(
 
   const bt = chosen.backtest!;
   const hitPct = Math.round((bt.hitRate ?? 0) * 100);
+  const tier = isStrongBacktest(bt)
+    ? "評級「強」（期望值 ≥ +0.35R 且勝率 ≥55%）"
+    : "評級「合格」（統計未否決；未達「強」標籤的 0.35R／55%）";
   const note =
     chosen === byRatio
       ? ""
-      : `（賠率最高的一組是 1:${byRatio.rr}，但${lowHitRate ? "勝率或" : ""}本地回測期望值較低，未採用）`;
-  const warn = lowHitRate
-    ? `⚠ 沒有任何組合通過門檻（${floorText(profile)}），本組已是可選中最高，` +
-      `會經常停損，部位要放小。` +
-      `（以 ${hitPct}% 勝率計，只要風報比高於 1:${breakevenRr(bt.hitRate ?? 0)} 就是正期望值）`
+      : `（賠率最高的一組是 1:${byRatio.rr}，但本地回測期望值較低，未採用）`;
+  const warn = allVetoed
+    ? `⚠ 全部組合都被統計否決（${floorText(profile)}）—— 附加審查在此行使它唯一的職權：` +
+      `實測明顯不利的交易不放行。`
     : "";
   return {
     combo: chosen,
-    basis:
-      `在 ${combos.length} 組真實結構組合中，先要求實測通過門檻（${floorText(profile)}），` +
-      `再取期望值最高者：${bt.resolved} 次中 ${bt.wins} 勝（勝率 ${hitPct}%），` +
-      `每單位風險期望 ${bt.expectancyR}R，風報比 1:${chosen.rr}${note}${screen}${warn}`,
-    meetsFloor: !lowHitRate,
+    basis: allVetoed
+      ? `在 ${combos.length} 組真實結構組合中無一通過統計附加審查：本組已是最佳，` +
+        `${bt.resolved} 次中 ${bt.wins} 勝（勝率 ${hitPct}%，不含打平），` +
+        `每單位風險期望 ${bt.expectancyR}R${screen}${warn}`
+      : `分析選出的結構組合，統計附加審查未否決（${floorText(profile)}）。` +
+        `實測：${bt.resolved} 次中 ${bt.wins} 勝（勝率 ${hitPct}%，不含打平），` +
+        `每單位風險期望 ${bt.expectancyR}R，風報比 1:${chosen.rr}，${tier}${note}${screen}`,
+    meetsFloor: !allVetoed,
   };
 }
 
@@ -662,26 +691,27 @@ function fallbackPlan(input: TradePlanInput, why: string | null): TradePlan {
     );
   }
 
-  // 未達門檻一律觀望 — the operator's rule, verbatim. A best-available combo
-  // below the demonstrated floor (or one whose floor cannot be verified) is
-  // shown as the reason for waiting, never shipped as a trade. The threshold
-  // quoted is the one this combo's own payoff demanded, and it may sit higher
-  // when the calibration bump is active.
+  // 統計否決 — the supplement's one legitimate power: every available
+  // combination measured as losing money or unfollowably low on this
+  // instrument's own history. The analysis wanted the trade; the measured
+  // record disqualified every way of expressing it, and that is worth a
+  // wait. The line quoted may sit higher when the calibration bump is
+  // active (realized results lagging promises tightens the veto).
   if (!picked.meetsFloor) {
     const hit = picked.combo.backtest?.hitRate;
     const exp = picked.combo.backtest?.expectancyR;
     const bumped =
       (dayProfile.hitRateBump ?? 0) > 0
-        ? `（含實績校準：勝率下限 +${Math.round((dayProfile.hitRateBump ?? 0) * 100)} 個百分點）`
+        ? `（含實績校準：否決線 +${Math.round((dayProfile.hitRateBump ?? 0) * 100)} 個百分點）`
         : "";
     return waitPlan(
-      `最佳組合${
+      `統計否決：最佳組合${
         hit != null
-          ? `實測勝率 ${Math.round(hit * 100)}%、期望值 ${exp != null ? `${exp >= 0 ? "+" : ""}${exp}R` : "未知"}`
-          : "的表現無法以足夠樣本驗證"
-      }，未達${dayProfile.label}門檻${bumped}（${floorText(dayProfile)}）` +
-        ` —— 規則：未達門檻一律觀望。${picked.basis}`,
-      `等待通過門檻的組合出現：${floorText(dayProfile)}，且風報比 ≥1:${MIN_RISK_REWARD}。`,
+          ? `實測勝率 ${Math.round(hit * 100)}%（不含打平）、期望值 ${exp != null ? `${exp >= 0 ? "+" : ""}${exp}R` : "未知"}`
+          : "無法驗證"
+      }，觸及${dayProfile.label}否決線${bumped}（${floorText(dayProfile)}）` +
+        ` —— 分析支持這筆交易，但每一種價位表達在歷史上都實測不利，附加審查不放行。${picked.basis}`,
+      `等待未被統計否決的組合出現（${floorText(dayProfile)}），且風報比 ≥1:${MIN_RISK_REWARD}。`,
       "fallback",
       why,
     );

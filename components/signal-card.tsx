@@ -1240,11 +1240,11 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
               {/* Two floors, named in order — the pair of messages on one card
                   used to quote 70% and 55% without saying they belong to
                   different tiers, which read as the site contradicting itself. */}
-              這個方向上有兩層門檻，都沒有組合通過：
-              <span className="text-neutral-400">交易建議</span>要求實測期望值 ≥ +{TRADE_MIN_EXPECTANCY_R}R 且勝率 ≥55%（不含打平）
-              （回測含分批止盈、保本移停、結構移停與反向 CHoCH 出場，量的是實際會執行的交易）、
-              <span className="text-neutral-400">參考價位</span>（僅供觀察、非建議）門檻為勝率 ≥55%，
-              風報比兩層都要 ≥1:1.5。
+              這個方向上分析找到的每一組價位都被<span className="text-neutral-400">統計附加審查否決</span>：
+              實測期望值 &lt;0（在本商品歷史上量出來會虧錢）或勝率 &lt;40%（不含打平，低到無法跟單）才會否決
+              —— 這是附加審查僅有的職權，不是資格門檻（回測含分批止盈、保本移停、結構移停與反向
+              CHoCH 出場，量的是實際會執行的交易）。風報比另需 ≥1:1.5。
+              期望值 ≥ +{TRADE_MIN_EXPECTANCY_R}R 且勝率 ≥55% 的組合會另掛「強」標籤。
               {(signal.data_gaps ?? []).find((g) => g.startsWith("本次不提供參考價位")) ??
                 "因此不提供任何價位。"}
               分析本身仍在下方 —— 方向、結構、六面向都算完了，只是沒有一組價位值得掛單。

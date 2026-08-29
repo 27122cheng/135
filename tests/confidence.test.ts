@@ -205,9 +205,12 @@ function obstacle(price: number, strength: 1 | 2 | 3): PathObstacle {
 
 // ── the entry bar ─────────────────────────────────────────────────
 {
-  check("the bar is 60", CONFIDENT_ENTRY_MIN === 60);
-  check("60 clears it", clearsEntryBar(60));
-  check("59 does not", !clearsEntryBar(59));
+  // 附加審查，不是主審：the operator's architecture instruction moved the
+  // bar to the 「低」 boundary (levelFor < 45) — confidence vetoes only runs
+  // whose evidence genuinely did not arrive, and annotates everything else.
+  check("the bar is the 低-level boundary", CONFIDENT_ENTRY_MIN === 45);
+  check("45 clears it", clearsEntryBar(45));
+  check("44 does not", !clearsEntryBar(44));
 
   // The bar is high on purpose, and the arithmetic has to actually allow it —
   // a threshold nothing can ever reach is a disabled feature, not a strict one.
@@ -237,13 +240,15 @@ function obstacle(price: number, strength: 1 | 2 | 3): PathObstacle {
     planConfidence(signal({ grade: "A+", trade_plan: { ...signal().trade_plan, risk_reward: 3.5 } }))
       .score - gappyBest.score === 15);
 
-  // C is below MIN_ENTRY_GRADE and must also be unable to reach the bar, so the
-  // two rules can never disagree about the same signal.
+  // C is refused by the GRADE gate (MIN_ENTRY_GRADE) upstream — with the bar
+  // at the 低 boundary, confidence no longer doubles that refusal, and the
+  // division of labour is the point: the grade decides who qualifies, the
+  // confidence veto catches evidence that failed to arrive.
   const cGradeBest = planConfidence(
     signal({ grade: "C", trade_plan: { ...signal().trade_plan, risk_reward: 6 } }),
   );
-  check("a C grade cannot reach the bar even on a perfect payoff",
-    !clearsEntryBar(cGradeBest.score), cGradeBest.score);
+  check("a C grade's refusal belongs to the grade gate, not this one",
+    cGradeBest.score < 60, cGradeBest.score);
 
   // The case that made "no signal, ever" arithmetically guaranteed: the free AI
   // tier is exhausted, so every plan is a fallback, and a normal run has a
@@ -259,14 +264,18 @@ function obstacle(price: number, strength: 1 | 2 | 3): PathObstacle {
 
   check("A+ can still trade with no AI and five gaps", clearsEntryBar(exhausted("A+").score),
     exhausted("A+").score);
-  // A cannot, and that is left standing rather than tuned away. Five gaps is a
-  // third of the inputs missing; the honest reading is "only the very best
-  // setups qualify while the data is in this state", and the fix is the data.
-  // Lowering a constant until it produces the answer you wanted is how a
-  // threshold stops meaning anything.
-  check("A cannot, while five sources are down", !clearsEntryBar(exhausted("A").score),
+  // A and B on a five-gap fallback day now trade too — the exact runs the
+  // live logs showed being vetoed on every ordinary degraded day (EURUSD:
+  // confidence 52, blocked at the old 60). The gaps still cost their points
+  // and are listed on the card; the veto is reserved for 「低」, where the
+  // evidence genuinely did not arrive.
+  check("A trades through five sources being down", clearsEntryBar(exhausted("A").score),
     exhausted("A").score);
-  check("nor can B", !clearsEntryBar(exhausted("B").score), exhausted("B").score);
+  check("so does B — annotated, not vetoed", clearsEntryBar(exhausted("B").score),
+    exhausted("B").score);
+  // The veto still has teeth where it should: a signal whose score lands in
+  // 低 (the live case was XAUUSD at 5 with every quote source dead).
+  check("a 低-level score is still vetoed", !clearsEntryBar(30));
 
   // But on a healthy run A must trade even with no AI at all — otherwise the
   // bar is once again something nothing can clear.

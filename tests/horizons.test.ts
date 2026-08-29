@@ -67,10 +67,13 @@ async function main() {
     check("the day horizon reaches less far",
       DAY_PROFILE.maxTargetAtr < SWING_PROFILE.maxTargetAtr,
       { DAY_PROFILE, SWING_PROFILE });
-    check("both horizons carry the same expectancy floor",
-      DAY_PROFILE.minExpectancyR === TRADE_MIN_EXPECTANCY_R &&
-      SWING_PROFILE.minExpectancyR === TRADE_MIN_EXPECTANCY_R &&
-      DAY_PROFILE.minHitRate === 0.55 && SWING_PROFILE.minHitRate === 0.55,
+    // 附加審查架構：the profiles carry VETO lines (expectancy < 0 or hit
+    // rate < 40% is removed), not qualifying bars — the operator's explicit
+    // instruction after two measurement repairs still left 0-for-11 sweeps.
+    // 0.35R/55% survive as the 「強」 display tier.
+    check("both horizons carry the same veto lines",
+      DAY_PROFILE.minExpectancyR === 0 && SWING_PROFILE.minExpectancyR === 0 &&
+      DAY_PROFILE.minHitRate === 0.4 && SWING_PROFILE.minHitRate === 0.4,
       { DAY_PROFILE, SWING_PROFILE });
     // The bar itself: the economic floor, not the aspiration. 0.75R produced
     // one trade a month and refused an A+ measured at +0.69R over 124
@@ -91,21 +94,25 @@ async function main() {
       meetsProfileFloor(DAY_PROFILE, { hitRate: 0.58, expectancyR: 1.04 }));
     check("the A+ at +0.69R that got refused now clears",
       meetsProfileFloor(DAY_PROFILE, { hitRate: 0.6, expectancyR: 0.69 }));
-    check("expectancy below the floor is refused whatever the hit rate",
-      !meetsProfileFloor(DAY_PROFILE, { hitRate: 0.9, expectancyR: 0.2 }));
-    check("a hit rate below 55% is refused whatever it pays",
-      !meetsProfileFloor(DAY_PROFILE, { hitRate: 0.4, expectancyR: 2 }));
-    check("an unmeasured combo is refused, not excused",
+    check("a measured LOSS is vetoed whatever the hit rate",
+      !meetsProfileFloor(DAY_PROFILE, { hitRate: 0.9, expectancyR: -0.01 }));
+    check("a positive-but-modest expectancy is admissible — the analysis decides",
+      meetsProfileFloor(DAY_PROFILE, { hitRate: 0.5, expectancyR: 0.2 }));
+    check("an unfollowable hit rate is vetoed whatever it pays",
+      !meetsProfileFloor(DAY_PROFILE, { hitRate: 0.39, expectancyR: 2 }));
+    check("40% exactly survives the veto",
+      meetsProfileFloor(DAY_PROFILE, { hitRate: 0.4, expectancyR: 0 }));
+    check("an unmeasured combo fails the check itself (absence is handled upstream)",
       !meetsProfileFloor(DAY_PROFILE, { hitRate: null, expectancyR: null }));
-    check("the reference tier is a flat 55% with no expectancy leg",
-      meetsProfileFloor(REFERENCE_PROFILE, { hitRate: 0.55, expectancyR: -0.2 }) &&
-      !meetsProfileFloor(REFERENCE_PROFILE, { hitRate: 0.54, expectancyR: 2 }),
+    check("the reference tier vetoes the same way",
+      meetsProfileFloor(REFERENCE_PROFILE, { hitRate: 0.45, expectancyR: 0.1 }) &&
+      !meetsProfileFloor(REFERENCE_PROFILE, { hitRate: 0.45, expectancyR: -0.2 }),
       REFERENCE_PROFILE);
     // 實績校準 raises the followability leg; the cap keeps it below certainty.
     const bumped = effectiveDayProfile(0.1);
-    check("the calibration bump raises the hit-rate leg",
-      profileHitFloor(bumped) === 0.65 &&
-      !meetsProfileFloor(bumped, { hitRate: 0.6, expectancyR: 1.5 }),
+    check("the calibration bump raises the veto line",
+      profileHitFloor(bumped) === 0.5 &&
+      !meetsProfileFloor(bumped, { hitRate: 0.45, expectancyR: 1.5 }),
       profileHitFloor(bumped));
     check("and caps below certainty",
       profileHitFloor({ ...DAY_PROFILE, hitRateBump: 0.5 }) === 0.9,

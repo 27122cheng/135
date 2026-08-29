@@ -20,16 +20,18 @@ async function main() {
   const gaps: string[] = [];
   delete process.env.ANTHROPIC_API_KEY;
 
-  // 1. Healthy grade, good payoff — but no candles, so the floor cannot be
-  // demonstrated. 未達門檻一律觀望 applies to "unverifiable" too: an
-  // expectancy that cannot be measured is not an expectancy.
+  // 1. Healthy grade, good payoff — but no candles, so nothing can be
+  // measured. 附加審查架構：an absent supplement is stated loudly, never a
+  // veto — the analysis (grade A here) decides, and the summary must say
+  // the statistic was absent so the reader sizes down.
   const p1 = await buildTradePlan(
     { ...base, grade: "A", bias_score: 6, entry_structure_score: 5, total_score: 11, gradeForcesWait: false },
     gaps,
   );
   console.log("1 stance:", p1.stance, "|", p1.summary.slice(0, 60));
-  check("1 an unverifiable floor waits", p1.stance === "wait" && p1.entry === null, p1.summary);
-  check("1 and names the expectancy floor", p1.summary.includes("0.35R"), p1.summary);
+  check("1 an absent statistic no longer vetoes the analysis",
+    p1.stance === "enter" && p1.entry !== null, p1.summary);
+  check("1 and the absence is stated loudly", p1.summary.includes("統計附加審查缺席"), p1.summary);
 
   // 2. no-trade grade -> must be wait, with a wait_for.
   const p2 = await buildTradePlan(
@@ -113,8 +115,8 @@ async function main() {
     };
 
     const blind = await buildTradePlan(menu, gaps);
-    check("without history the floor is unverifiable, so it waits",
-      blind.stance === "wait", blind.summary);
+    check("without history the plan enters on the analysis, absence stated",
+      blind.stance === "enter" && blind.summary.includes("統計附加審查缺席"), blind.summary);
 
     // With history the oscillation resolves plenty of samples, but nothing
     // near 70% — the menu waits and the summary carries the measured number.

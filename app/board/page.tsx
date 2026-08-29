@@ -8,7 +8,6 @@ import { SiteNav } from "@/components/site-nav";
 import { EconomicCountdown } from "@/components/economic-countdown";
 import { userKeyHeaders } from "@/lib/user-keys-client";
 import { CONFIDENT_ENTRY_MIN } from "@/lib/analysis/confidence";
-import { TRADE_MIN_EXPECTANCY_R } from "@/lib/analysis/floors";
 
 /**
  * 交易總覽 — which instruments have a trade right now, at a glance.
@@ -163,7 +162,8 @@ function ReferenceLevels({ row }: { row: BoardRow }) {
             hit rate ≥55%; 參考價位 is the consolation tier at a flat ≥55%. A
             row with neither failed BOTH — saying only "the 55% floor" made
             the two messages on one row look like they disagreed. */}
-        無交易：交易建議的門檻（實測期望值 ≥ +{TRADE_MIN_EXPECTANCY_R}R 且勝率 ≥55%，回測含實際的交易管理）沒有組合通過，連較低的參考價位門檻（勝率 ≥55%）也沒有 ——
+        無交易：分析找到的每一組價位都被統計附加審查否決（實測期望值 &lt;0 或勝率 &lt;40% 才否決
+        —— 附加審查只擋明顯不利，門檻本身由分析決定）——
         {row.referenceNote ? `${row.referenceNote}。` : "因此不提供任何價位。"}
       </p>
     );
