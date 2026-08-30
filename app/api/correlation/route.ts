@@ -1,4 +1,5 @@
 import { COMMODITIES } from "@/types/signal";
+import { allInstruments } from "@/lib/server-symbols";
 import { fetchOHLCV, type Candle } from "@/lib/data-sources/ohlcv";
 import { correlationReport } from "@/lib/analysis/correlation";
 import { json } from "@/lib/json-response";
@@ -17,8 +18,11 @@ export const maxDuration = 60;
  */
 export async function GET() {
   const gaps: string[] = [];
+  // The roster: a BTC/ETH position correlates with the book like any other,
+  // and the sizing halving that reads this report could not see them.
+  const roster = await allInstruments().catch(() => [...COMMODITIES]);
   const entries = await Promise.all(
-    COMMODITIES.map(async (meta) => {
+    roster.map(async (meta) => {
       const d1 = await fetchOHLCV(meta, "D1", gaps).catch(() => null);
       return [meta.symbol, d1?.candles] as [string, Candle[] | undefined];
     }),

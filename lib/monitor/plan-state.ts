@@ -382,9 +382,24 @@ export function formatMonitorAlert(
   // Which trade this is about. A push that names a level without naming the
   // position it belongs to reads as a recommendation out of nowhere —
   // especially days after the entry, when the reader has lost the thread.
-  if (context.entry != null && Number.isFinite(context.entry)) {
+  //
+  // Except on the fill itself. 「追蹤中的持倉：進場 78080.47（08-30 的訊號）」
+  // followed immediately by 「已觸及進場價」 reads as two events in one
+  // message — the signal and the entry arriving together — when it is one
+  // event described twice: the header introduces a position that the very
+  // next line is announcing the opening of. On the fill the event speaks for
+  // itself and the header is dropped; on everything afterwards (加倉, 移停,
+  // 出場) it is exactly the context that was missing.
+  const isFill = events.some((e) => e.kind === "entered");
+  if (!isFill && context.entry != null && Number.isFinite(context.entry)) {
     const when = context.generatedAt ? `（${context.generatedAt.slice(5, 10)} 的訊號）` : "";
     lines.push(`追蹤中的持倉：進場 ${fmt(context.entry)}${when}`);
+  }
+  if (isFill && context.generatedAt) {
+    // The one fact the fill message genuinely needs: which signal this order
+    // came from, so a fill on a two-day-old plan does not read as a brand-new
+    // recommendation that was placed and filled in the same breath.
+    lines.push(`<i>此單來自 ${context.generatedAt.slice(5, 10)} 的訊號</i>`);
   }
 
   lines.push(...events.flatMap((e) => [`<b>${e.headline}</b>`, e.detail]));

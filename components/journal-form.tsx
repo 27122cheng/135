@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { COMMODITIES } from "@/types/signal";
+import { loadCustomSymbols } from "@/lib/custom-symbols";
 import { STOP_REASON_LABELS, STOP_REASON_TAGS, type StopReasonTag } from "@/types/journal";
 
 /**
@@ -33,6 +34,19 @@ export function JournalForm({
   onSaved: () => void;
 }) {
   const [symbol, setSymbol] = useState(defaultSymbol);
+  // 全部標的，含自訂 —— the picker listed COMMODITIES alone, so a BTC/ETH
+  // row could be scanned, settled and journalled and still be unselectable
+  // here. Read on mount like every other client roster (see app/page.tsx).
+  const [roster, setRoster] = useState<{ symbol: string; label: string }[]>(
+    () => COMMODITIES.map((c) => ({ symbol: c.symbol, label: c.label })),
+  );
+  useEffect(() => {
+    setRoster([
+      ...COMMODITIES.map((c) => ({ symbol: c.symbol, label: c.label })),
+      ...loadCustomSymbols().map((c) => ({ symbol: c.symbol, label: c.label })),
+    ]);
+  }, []);
+
   const [direction, setDirection] = useState<"long" | "short">("long");
   const [grade, setGrade] = useState("B");
   const [entryPrice, setEntryPrice] = useState("");
@@ -102,7 +116,7 @@ export function JournalForm({
             標的
           </label>
           <select id="j-symbol" value={symbol} onChange={(e) => setSymbol(e.target.value)} className={INPUT}>
-            {COMMODITIES.map((c) => (
+            {roster.map((c) => (
               <option key={c.symbol} value={c.symbol}>
                 {c.symbol}
               </option>

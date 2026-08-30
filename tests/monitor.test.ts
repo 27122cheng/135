@@ -361,6 +361,21 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   check("the push names the position it is about", named.includes("追蹤中的持倉：進場 2000"), named);
   check("and when the signal was generated", named.includes("08-21"), named);
 
+  // 進場那一則不重複自我介紹。「追蹤中的持倉：進場 X（訊號）」 followed by
+  // 「已觸及進場價」 reads as the signal and the fill arriving together, when
+  // it is one event described twice — the header introduces a position the
+  // next line is announcing the opening of.
+  const { events: fillEvents } = step(1999, INITIAL_MEMORY);
+  const fill = formatMonitorAlert("XAUUSD", "long", fillEvents, 5, "https://x.app", {
+    entry: 2000,
+    generatedAt: "2026-08-21T09:00:00Z",
+  });
+  check("the fill message drops the redundant position header",
+    fillEvents.some((e) => e.kind === "entered") && !fill.includes("追蹤中的持倉"), fill);
+  check("but still says which signal the order came from",
+    fill.includes("08-21 的訊號"), fill);
+  check("and still announces the fill itself", fill.includes("已觸及進場價"), fill);
+
   const stillSupported = formatMonitorAlert("XAUUSD", "long", addOnEvents, 5, "https://x.app", {
     entry: 2000, generatedAt: "2026-08-21T09:00:00Z", analysisSupports: true,
   });

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { COMMODITIES } from "@/types/signal";
+import { loadCustomSymbols } from "@/lib/custom-symbols";
 import type { Grade, SignalRow } from "@/types/signal";
 import { GradeBadge } from "@/components/grade-badge";
 import { formatTime } from "@/lib/format";
@@ -24,6 +25,19 @@ function disqualifier(row: SignalRow): string | null {
 
 export default function HistoryPage() {
   const [symbol, setSymbol] = useState("");
+  // 全部標的，含自訂 —— the picker listed COMMODITIES alone, so a BTC/ETH
+  // row could be scanned, settled and journalled and still be unselectable
+  // here. Read on mount like every other client roster (see app/page.tsx).
+  const [roster, setRoster] = useState<{ symbol: string; label: string }[]>(
+    () => COMMODITIES.map((c) => ({ symbol: c.symbol, label: c.label })),
+  );
+  useEffect(() => {
+    setRoster([
+      ...COMMODITIES.map((c) => ({ symbol: c.symbol, label: c.label })),
+      ...loadCustomSymbols().map((c) => ({ symbol: c.symbol, label: c.label })),
+    ]);
+  }, []);
+
   const [grade, setGrade] = useState("");
   // Defaults on: the question this page usually answers is "what did it
   // actually recommend", and a scan that stood aside is noise against that.
@@ -85,7 +99,7 @@ export default function HistoryPage() {
             className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1"
           >
             <option value="">全部</option>
-            {COMMODITIES.map((c) => (
+            {roster.map((c) => (
               <option key={c.symbol} value={c.symbol}>
                 {c.label}
               </option>

@@ -1,5 +1,5 @@
 import type { Candle } from "../data-sources/ohlcv";
-import { COMMODITIES } from "@/types/signal";
+import { categoryOf } from "./symbol-category";
 import { totalCostFraction, tradingCostFor } from "@/config/trading-costs";
 import { ema, macd, rsi } from "./indicators";
 import { buildContext, type LabContext } from "./lab-conditions";
@@ -238,8 +238,9 @@ export function backtestPlanGeometry(
    */
   symbol?: string,
 ): PlanBacktest | null {
-  const category =
-    COMMODITIES.find((c) => c.symbol === symbol)?.category ?? "index";
+  // A user-added crypto symbol used to fall through to the index spread,
+  // which is an order of magnitude off what it actually pays.
+  const category = categoryOf(symbol);
   const cost = tradingCostFor(category);
   // The per-bar carry is charged over half the horizon: trades resolve
   // somewhere inside it, and assuming the full horizon would over-charge

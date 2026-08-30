@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { BoardRow } from "@/app/api/board/route";
 import type { CorrelationReport } from "@/lib/analysis/correlation";
 import { COMMODITIES } from "@/types/signal";
+import { loadCustomSymbols } from "@/lib/custom-symbols";
 import { SiteNav } from "@/components/site-nav";
 
 /**
@@ -28,8 +29,15 @@ interface BoardResponse {
   next?: string;
 }
 
+/**
+ * A custom symbol's own label, not its bare id. The board serves BTC/ETH rows
+ * through the roster, but this lookup only knew the nine built-ins, so those
+ * rows rendered as 「BTCUSD」 while every other row showed a real name.
+ */
 function labelOf(symbol: string): string {
-  return COMMODITIES.find((c) => c.symbol === symbol)?.label ?? symbol;
+  const builtin = COMMODITIES.find((c) => c.symbol === symbol);
+  if (builtin) return builtin.label;
+  return loadCustomSymbols().find((c) => c.symbol === symbol)?.label ?? symbol;
 }
 
 const CATEGORIES: { id: string; label: string }[] = [

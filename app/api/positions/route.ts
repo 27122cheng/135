@@ -1,4 +1,5 @@
 import { COMMODITIES } from "@/types/signal";
+import { allInstruments } from "@/lib/server-symbols";
 import { getSignalStore, type MonitorRow } from "@/lib/db";
 import { readLatest } from "@/lib/latest-signals";
 import { usdExposure } from "@/lib/board-row";
@@ -46,7 +47,7 @@ export interface PositionRow {
 }
 
 function toRow(
-  meta: (typeof COMMODITIES)[number],
+  meta: { symbol: string; label: string; category: string },
   row: MonitorRow,
   paper: boolean,
 ): PositionRow | null {
@@ -100,8 +101,15 @@ export async function GET() {
   }
 
   try {
+    // 自訂標的的持倉也是持倉 —— this read was COMMODITIES.map, so a BTCUSD
+    // position the monitor had entered, was managing, and had already pushed
+    // to Telegram was never even queried here: the page reported 「沒有追蹤
+    // 中的部位」 about a trade that was live. The monitor, the refresh sweep
+    // and the digest all resolve through the roster; this was the one that
+    // did not.
+    const roster = await allInstruments().catch(() => [...COMMODITIES]);
     const settled = await Promise.all(
-      COMMODITIES.map(async (meta) => {
+      roster.map(async (meta) => {
         // Real plans and paper (參考價位) plans are tracked under different
         // keys by the monitor; both belong here, labelled apart.
         const [real, paper] = await Promise.all([

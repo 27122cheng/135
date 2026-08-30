@@ -1,4 +1,4 @@
-import { COMMODITIES } from "@/types/signal";
+import { findInstrument } from "@/lib/server-symbols";
 import { parseUserKeyHeader } from "@/lib/api-keys";
 import { describeStore } from "@/lib/db";
 import { runScan, storeScan } from "@/lib/scan";
@@ -43,7 +43,10 @@ export const maxDuration = 60;
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const symbol = url.searchParams.get("symbol")?.toUpperCase();
-  const meta = COMMODITIES.find((c) => c.symbol === symbol);
+  // Roster, not the nine built-ins: the board's 重整 button calls this for
+  // every row it renders, and it renders the customs too — so refreshing a
+  // BTC/ETH row answered 404 while every built-in worked.
+  const meta = symbol ? await findInstrument(symbol) : null;
   if (!meta) {
     return json({ error: `Unknown symbol ${symbol ?? ""}` }, { status: 404 });
   }

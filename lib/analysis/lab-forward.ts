@@ -1,5 +1,6 @@
 import type { Candle } from "../data-sources/ohlcv";
-import { COMMODITIES, type CommodityMeta } from "@/types/signal";
+import { categoryOf } from "./symbol-category";
+import type { CommodityMeta } from "@/types/signal";
 import type { LabTradeRow, LabTradeStatus } from "../db";
 import { CONDITIONS, WARMUP, buildContext, type LabContext } from "./lab";
 import {
@@ -226,10 +227,13 @@ function rowR(r: LabTradeRow): number | null {
   if (r.exitPrice === null) return null;
   const risk0 = Math.abs(r.entry - r.stop);
   if (!(risk0 > 0)) return null;
-  const meta = COMMODITIES.find((c) => c.symbol === r.symbol);
-  const costFraction = meta
-    ? totalCostFraction(tradingCostFor(meta.category), r.horizonBars / 2)
-    : 0;
+  // Never free. This was `meta ? ... : 0`, so every user-added symbol's
+  // forward R was reconstructed with no spread at all — a strategy nobody
+  // can trade, scoring better than the ones that pay costs.
+  const costFraction = totalCostFraction(
+    tradingCostFor(categoryOf(r.symbol)),
+    r.horizonBars / 2,
+  );
   const gross = r.direction === "long" ? r.exitPrice - r.entry : r.entry - r.exitPrice;
   return (gross - r.entry * costFraction) / risk0;
 }

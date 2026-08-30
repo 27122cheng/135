@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { COMMODITIES } from "@/types/signal";
+import { loadCustomSymbols } from "@/lib/custom-symbols";
 import { STOP_REASON_LABELS } from "@/types/journal";
 import type {
   EquityCurve,
@@ -70,6 +71,15 @@ interface ReviewResponse extends ReviewStats {
 
 export default function ReviewPage() {
   const [symbol, setSymbol] = useState<string>("");
+  const [roster, setRoster] = useState<{ symbol: string; label: string }[]>(
+    () => COMMODITIES.map((c) => ({ symbol: c.symbol, label: c.label })),
+  );
+  useEffect(() => {
+    setRoster([
+      ...COMMODITIES.map((c) => ({ symbol: c.symbol, label: c.label })),
+      ...loadCustomSymbols().map((c) => ({ symbol: c.symbol, label: c.label })),
+    ]);
+  }, []);
   const [stats, setStats] = useState<ReviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -106,7 +116,7 @@ export default function ReviewPage() {
         >
           全部
         </button>
-        {COMMODITIES.map((c) => (
+        {roster.map((c) => (
           <button
             key={c.symbol}
             type="button"

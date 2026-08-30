@@ -18,6 +18,7 @@ import {
   toCommodityMeta,
 } from "@/lib/custom-symbols";
 import { marketStatus } from "@/lib/market-hours";
+import { categoryOf } from "@/lib/analysis/symbol-category";
 import { defaultTradingCostFor } from "@/config/trading-costs";
 
 /**
@@ -187,6 +188,43 @@ async function main() {
       read("app/api/lab/route.ts").includes("fetchOHLCV(meta, timeframe"));
     check("deep H4 tries smaller ranges before declaring failure",
       read("lib/data-sources/deep-history.ts").includes('"365d"'));
+
+    // 自訂標的到處都要在 —— the live report was a BTCUSD position the monitor
+    // had entered, was managing and had already pushed to Telegram, while
+    // /positions reported nothing: that read iterated COMMODITIES. Same class
+    // of omission in five more places. Structural pins, like the driver ones
+    // in db.test: each names the file that must resolve through the roster.
+    for (const [route, marker] of [
+      ["app/api/positions/route.ts", "allInstruments"],
+      ["app/api/correlation/route.ts", "allInstruments"],
+      ["app/api/scan/route.ts", "findInstrument"],
+    ] as const) {
+      check(`${route} resolves the full roster`, read(route).includes(marker), route);
+    }
+    check("no server route iterates the nine built-ins for positions",
+      !/COMMODITIES\.map\(async/.test(read("app/api/positions/route.ts")));
+    for (const page of [
+      "app/review/page.tsx",
+      "app/history/page.tsx",
+      "components/journal-form.tsx",
+      "app/ranking/page.tsx",
+    ]) {
+      check(`${page} offers the custom symbols too`,
+        read(page).includes("loadCustomSymbols"), page);
+    }
+
+    // Costs: the two synchronous lookups that used to answer wrong for a
+    // custom symbol — the ledger charged it NOTHING and the backtest charged
+    // crypto an index spread.
+    check("a crypto id resolves to crypto costs", categoryOf("BTCUSD") === "crypto");
+    check("exchange-form ids too", categoryOf("ETHUSDT") === "crypto");
+    check("a built-in keeps its declared category", categoryOf("XAUUSD") === "metal");
+    check("FX majors ending in USD are NOT crypto",
+      categoryOf("EURUSD") === "forex" && categoryOf("GBPUSD") === "forex");
+    check("an unknown symbol falls back to a cost, never to free",
+      categoryOf("WHATEVER") === "index");
+    check("the forward ledger no longer charges custom symbols zero",
+      !read("lib/analysis/lab-forward.ts").includes("r.horizonBars / 2)\n    : 0"));
   }
 
   // ── 免費方案現況：Kraken 替補與 Finnhub 付費端點 ────────────────
