@@ -21,7 +21,7 @@ function AddOns({ levels }: { levels: AddOnLevel[] }) {
       <summary className="cursor-pointer text-xs text-neutral-400 hover:text-neutral-200">
         加倉點（{levels.length} 段，最多 3 段）
       </summary>
-      <p className="mt-2 text-[11px] leading-relaxed text-neutral-600">
+      <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
         只有 A / A+ 才提供加倉點 —— 加倉是押注方向會繼續有效，方向沒信心就不該加。
         每一段都落在強度 ≥2 的結構上（做多有支撐、做空有壓力），不是用 R 倍數推算的價格。
         加倉後停損一律跟著上移。
@@ -38,7 +38,7 @@ function AddOns({ levels }: { levels: AddOnLevel[] }) {
               <span className="text-[11px] text-red-400/80">停損移到</span>
               <span className="font-mono text-xs text-red-400">{formatPrice(level.new_stop_loss)}</span>
             </div>
-            <p className="text-[10px] leading-relaxed text-neutral-600">
+            <p className="text-[11px] leading-relaxed text-neutral-500">
               {level.new_stop_reason}
               {level.locks_in_entry && (
                 <span className="ml-1 text-emerald-500">· 此段成交後已保住進場價</span>
@@ -105,7 +105,7 @@ function ManagementPlaybook({ plan }: { plan: TradePlan }) {
     <div className="mt-3 border-t border-neutral-800 pt-3">
       <p className="mb-1.5 text-xs text-neutral-400">
         進場後的管理劇本
-        <span className="ml-2 text-[10px] text-neutral-600">
+        <span className="ml-2 text-[11px] text-neutral-500">
           5 分鐘監控自動執行；回測量的就是這套規則
         </span>
       </p>
@@ -113,7 +113,7 @@ function ManagementPlaybook({ plan }: { plan: TradePlan }) {
         {steps.map((s) => (
           <li key={s.when} className="text-[11px] leading-relaxed">
             <span className="text-neutral-300">{s.when}</span>
-            <span className="text-neutral-600"> → </span>
+            <span className="text-neutral-500"> → </span>
             <span className="text-neutral-500">{s.act}</span>
           </li>
         ))}
@@ -166,7 +166,7 @@ export function TradePlanCard({
           <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-400/90">
             現在不進場
           </span>
-          <span className="ml-auto text-[11px] text-neutral-600">
+          <span className="ml-auto text-[11px] text-neutral-500">
             {plan.decided_by === "ai" ? "AI 判斷" : "預設規則"}
           </span>
         </div>
@@ -200,7 +200,7 @@ export function TradePlanCard({
             風險報酬比 1:{plan.risk_reward}
           </span>
         )}
-        <span className="ml-auto text-[11px] text-neutral-600">
+        <span className="ml-auto text-[11px] text-neutral-500">
           {plan.decided_by === "ai" ? "AI 判斷" : "預設規則"}
         </span>
       </div>
@@ -232,7 +232,7 @@ export function TradePlanCard({
               </span>
             )}
           </summary>
-          <p className="mt-2 text-[11px] leading-relaxed text-neutral-600">
+          <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
             上方主計畫是當沖（目標 ≤2×ATR）；這裡是同一套分析放到波段的選擇
             —— 目標可到 5×ATR，統計附加審查相同（實測虧損或勝率 &lt;40% 才否決；≥ +{TRADE_MIN_EXPECTANCY_R}R 且 ≥55% 掛「強」），且只在 D1 趨勢與方向同向時提供。
             監控與自動復盤只追蹤主計畫，一次一單。
@@ -266,9 +266,9 @@ export function TradePlanCard({
                 {backtest.expectancyR}R
               </span>
             )}
-            <span className="ml-2 text-neutral-600">n={backtest.resolved}</span>
+            <span className="ml-2 text-neutral-500">n={backtest.resolved}</span>
             {typeof backtest.costPct === "number" && backtest.costPct > 0 && (
-              <span className="ml-2 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
+              <span className="ml-2 rounded bg-neutral-800 px-1.5 py-0.5 text-[11px] text-neutral-400">
                 已扣成本 {backtest.costPct}%
               </span>
             )}

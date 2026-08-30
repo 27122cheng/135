@@ -61,14 +61,14 @@ function NewsDigestCard({ digest }: { digest: NewsDigest }) {
                 <li key={i} className="border-l-2 border-neutral-700 pl-3">
                   <div className="flex items-start gap-2">
                     <span
-                      className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${style.className}`}
+                      className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[11px] ${style.className}`}
                     >
                       {style.label}
                     </span>
                     <p className="text-xs leading-relaxed text-neutral-200">{k.point}</p>
                   </div>
                   {k.sources.length > 0 && (
-                    <p className="mt-1 flex flex-wrap gap-x-2 text-[10px] text-neutral-600">
+                    <p className="mt-1 flex flex-wrap gap-x-2 text-[11px] text-neutral-500">
                       依據：
                       {k.sources.map((idx) => {
                         const src = digest.sources[idx];
@@ -95,13 +95,13 @@ function NewsDigestCard({ digest }: { digest: NewsDigest }) {
         )}
 
         <details className="border-t border-neutral-800 pt-2">
-          <summary className="cursor-pointer text-[11px] text-neutral-600 hover:text-neutral-400">
+          <summary className="cursor-pointer text-[11px] text-neutral-500 hover:text-neutral-400">
             看 {digest.sources.length} 則原始標題
           </summary>
           <ul className="mt-2 space-y-1.5">
             {digest.sources.map((s, i) => (
               <li key={i} className="text-[11px] leading-relaxed">
-                <span className="font-mono text-neutral-700">[{i}]</span>{" "}
+                <span className="font-mono text-neutral-500">[{i}]</span>{" "}
                 <a
                   href={s.url}
                   target="_blank"
@@ -110,7 +110,7 @@ function NewsDigestCard({ digest }: { digest: NewsDigest }) {
                 >
                   {s.headline}
                 </a>
-                <span className="ml-1 text-neutral-700">
+                <span className="ml-1 text-neutral-500">
                   — {s.domain} · {s.datetime.slice(5, 16).replace("T", " ")}
                 </span>
               </li>
@@ -118,7 +118,7 @@ function NewsDigestCard({ digest }: { digest: NewsDigest }) {
           </ul>
         </details>
 
-        <p className="text-[10px] text-neutral-600">
+        <p className="text-[11px] text-neutral-500">
           分析者：{digest.analyzed_by}。只根據上列標題推論，未補充標題以外的事實。
         </p>
       </div>
@@ -152,7 +152,7 @@ function Interventions({ items }: { items: AppliedIntervention[] }) {
             </p>
             <p className="mt-0.5 text-[11px] text-neutral-500">{item.evidence}</p>
             {item.triggered_by.length > 0 && (
-              <p className="mt-0.5 text-[10px] text-neutral-600">
+              <p className="mt-0.5 text-[11px] text-neutral-500">
                 觸發來源：{item.triggered_by.join("、")}
               </p>
             )}
@@ -319,7 +319,7 @@ function ConfidenceBadge({ c, compact = false }: { c: Confidence; compact?: bool
     <span
       className={cn(
         "rounded px-1.5 py-0.5 font-medium tabular-nums",
-        compact ? "text-[10px]" : "text-[11px]",
+        compact ? "text-[11px]" : "text-[11px]",
         CONFIDENCE_STYLE[c.level],
       )}
     >
@@ -355,7 +355,7 @@ function PriceRow({
             )}
           />
           {label}
-          <span className="text-xs text-neutral-600 group-open:hidden">▾</span>
+          <span className="text-xs text-neutral-500 group-open:hidden">▾</span>
         </span>
         <span className="flex items-center gap-2">
           {confidence && <ConfidenceBadge c={confidence} compact />}
@@ -374,7 +374,7 @@ function PriceRow({
       <div className="pb-3">
         <p className="whitespace-pre-line text-xs leading-relaxed text-neutral-500">{detail}</p>
         {confidence && (
-          <ul className="mt-2 space-y-0.5 border-t border-neutral-800/60 pt-2 text-[11px] leading-relaxed text-neutral-600">
+          <ul className="mt-2 space-y-0.5 border-t border-neutral-800/60 pt-2 text-[11px] leading-relaxed text-neutral-500">
             {confidence.factors.map((f, i) => (
               <li key={i}>· {f}</li>
             ))}
@@ -423,7 +423,7 @@ function ChartPatterns({ patterns }: { patterns: NonNullable<TradeSignal["chart_
             {confirmed} 個已確認
           </span>
         ) : (
-          <span className="text-[11px] text-neutral-600">無已確認型態</span>
+          <span className="text-[11px] text-neutral-500">無已確認型態</span>
         )
       }
     >
@@ -434,10 +434,10 @@ function ChartPatterns({ patterns }: { patterns: NonNullable<TradeSignal["chart_
             <li key={i} className="rounded-lg border border-neutral-800 bg-neutral-950/50 p-2.5">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium text-neutral-200">{p.name}</span>
-                <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", status.className)}>
+                <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-medium", status.className)}>
                   {status.label}
                 </span>
-                <span className="text-[10px] text-neutral-600">
+                <span className="text-[11px] text-neutral-500">
                   {p.timeframe}·{p.bars} 根·{p.kind === "reversal" ? "反轉" : p.kind === "continuation" ? "續勢" : "待定"}
                 </span>
                 <span
@@ -452,17 +452,17 @@ function ChartPatterns({ patterns }: { patterns: NonNullable<TradeSignal["chart_
 
               <dl className="mt-2 grid grid-cols-3 gap-2">
                 <div>
-                  <dt className="text-[10px] text-neutral-600">頸線／邊界</dt>
+                  <dt className="text-[11px] text-neutral-500">頸線／邊界</dt>
                   <dd className="font-mono text-xs text-neutral-300">
                     {formatPrice(p.breakout_level)}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] text-neutral-600">目標</dt>
+                  <dt className="text-[11px] text-neutral-500">目標</dt>
                   <dd className="font-mono text-xs text-emerald-400/80">{formatPrice(p.target)}</dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] text-neutral-600">失效</dt>
+                  <dt className="text-[11px] text-neutral-500">失效</dt>
                   <dd className="font-mono text-xs text-red-400/80">
                     {formatPrice(p.invalidation_level)}
                   </dd>
@@ -472,7 +472,7 @@ function ChartPatterns({ patterns }: { patterns: NonNullable<TradeSignal["chart_
               <ul className="mt-2 flex flex-col gap-0.5">
                 {p.checks.map((c, j) => (
                   <li key={j} className="flex gap-1.5 text-[11px] leading-relaxed">
-                    <span className={c.passed ? "text-emerald-500" : "text-neutral-600"}>
+                    <span className={c.passed ? "text-emerald-500" : "text-neutral-500"}>
                       {c.passed ? "✓" : "○"}
                     </span>
                     <span className={c.passed ? "text-neutral-400" : "text-amber-500/80"}>
@@ -483,7 +483,7 @@ function ChartPatterns({ patterns }: { patterns: NonNullable<TradeSignal["chart_
                 ))}
               </ul>
 
-              <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-600">
+              <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500">
                 {p.note}
                 <br />
                 目標算法：{p.target_basis}
@@ -492,7 +492,7 @@ function ChartPatterns({ patterns }: { patterns: NonNullable<TradeSignal["chart_
           );
         })}
       </ul>
-      <p className="mt-2.5 text-[10px] leading-relaxed text-neutral-600">
+      <p className="mt-2.5 text-[11px] leading-relaxed text-neutral-500">
         只有「已確認」的型態會影響評分、成為停損可錨定的結構、並把目標放進停利階梯。
         已突破但還沒回踩守住的，依規則不算可交易。
       </p>
@@ -623,6 +623,95 @@ function ForcedDowngrade({ signal }: { signal: TradeSignal }) {
  * floor and the same expectancy ranking the traded signal goes through. The
  * only thing that differs is that nobody is recommending it.
  */
+/**
+ * 一眼看到結論 — the verdict, its three prices, and the single reason.
+ *
+ * The card is a stack of ten bordered boxes that all look alike, so the one
+ * thing the reader came for — do I act, and at what price — was the same
+ * weight as the trend-efficiency footnote. This is the answer, first, big:
+ * enter with its levels, or wait with the reason it is waiting, or the
+ * honest statement that there is nothing here at all.
+ */
+function VerdictStrip({ signal }: { signal: TradeSignal }) {
+  const plan = signal.trade_plan;
+  const entering = plan.stance === "enter" && plan.entry !== null;
+  const ref = signal.reference_plan;
+
+  if (entering) {
+    return (
+      <div className="mt-3 rounded-lg border border-emerald-500/40 bg-emerald-500/[0.07] px-3 py-2.5">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span className="text-lg font-bold text-emerald-300">進場</span>
+          <span className="text-sm text-emerald-400/90">
+            {signal.direction === "long" ? "做多 ▲" : "做空 ▼"}
+          </span>
+          {plan.risk_reward !== null && (
+            <span className="ml-auto font-mono text-xs text-neutral-400">
+              風報比 1:{plan.risk_reward}
+            </span>
+          )}
+        </div>
+        <div className="mt-2 flex gap-4">
+          {[
+            ["進場", plan.entry, "text-neutral-100"],
+            ["停損", plan.stop_loss, "text-red-400"],
+            ["停利", plan.take_profit, "text-emerald-400"],
+          ].map(([label, price, tone]) => (
+            <div key={label as string}>
+              <p className="text-[11px] text-neutral-500">{label as string}</p>
+              <p className={cn("font-mono text-base font-bold tabular-nums", tone as string)}>
+                {typeof price === "number" ? formatPrice(price) : "—"}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const isNoTrade = signal.grade === "no-trade";
+  return (
+    <div
+      className={cn(
+        "mt-3 rounded-lg border px-3 py-2.5",
+        isNoTrade
+          ? "border-neutral-700 bg-neutral-800/40"
+          : "border-amber-500/40 bg-amber-500/[0.06]",
+      )}
+    >
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <span
+          className={cn(
+            "text-lg font-bold",
+            isNoTrade ? "text-neutral-300" : "text-amber-300",
+          )}
+        >
+          {isNoTrade ? "無交易" : "觀望"}
+        </span>
+        <span className="text-xs text-neutral-400">
+          {isNoTrade ? "評等未達進場門檻" : "分析成立，但現在不進場"}
+        </span>
+      </div>
+      {plan.wait_for && (
+        <p className="mt-1.5 text-xs leading-relaxed text-neutral-300">
+          <span className="text-neutral-500">要等的是：</span>
+          {plan.wait_for}
+        </p>
+      )}
+      {ref && (
+        <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500">
+          {ref.vetoed ? "⚠ 未通過審查、僅紙上追蹤" : "參考價位"}：
+          <span className="font-mono text-neutral-300"> {formatPrice(ref.entry)}</span>
+          <span className="text-neutral-500"> / 損 </span>
+          <span className="font-mono text-red-400/80">{formatPrice(ref.stop_loss)}</span>
+          <span className="text-neutral-500"> / 利 </span>
+          <span className="font-mono text-emerald-400/80">{formatPrice(ref.take_profit)}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ReferencePlan({ signal }: { signal: TradeSignal }) {
   const ref = signal.reference_plan;
   if (!ref) return null;
@@ -643,7 +732,7 @@ function ReferencePlan({ signal }: { signal: TradeSignal }) {
         <span className="text-sm font-medium text-neutral-200">若要做，會是這一組</span>
         <span
           className={cn(
-            "rounded px-1.5 py-0.5 text-[10px]",
+            "rounded px-1.5 py-0.5 text-[11px]",
             vetoed ? "bg-amber-500/15 text-amber-400" : "bg-neutral-800 text-neutral-400",
           )}
         >
@@ -665,15 +754,15 @@ function ReferencePlan({ signal }: { signal: TradeSignal }) {
 
       <dl className="grid grid-cols-3 gap-2">
         <div>
-          <dt className="text-[10px] text-neutral-600">進場</dt>
+          <dt className="text-[11px] text-neutral-500">進場</dt>
           <dd className="font-mono text-sm text-neutral-200">{formatPrice(ref.entry)}</dd>
         </div>
         <div>
-          <dt className="text-[10px] text-neutral-600">停損</dt>
+          <dt className="text-[11px] text-neutral-500">停損</dt>
           <dd className="font-mono text-sm text-red-400/80">{formatPrice(ref.stop_loss)}</dd>
         </div>
         <div>
-          <dt className="text-[10px] text-neutral-600">停利</dt>
+          <dt className="text-[11px] text-neutral-500">停利</dt>
           <dd className="font-mono text-sm text-emerald-400/80">{formatPrice(ref.take_profit)}</dd>
         </div>
       </dl>
@@ -699,10 +788,10 @@ function ReferencePlan({ signal }: { signal: TradeSignal }) {
         </p>
       )}
 
-      <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-600">
+      <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500">
         {ref.entry_reason}｜停損：{ref.stop_reason}｜停利：{ref.target_reason}
       </p>
-      <p className="mt-1 text-[10px] leading-relaxed text-neutral-600">{ref.basis}</p>
+      <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">{ref.basis}</p>
     </div>
   );
 }
@@ -762,7 +851,7 @@ function LabGateCard({ gate }: { gate: NonNullable<TradeSignal["lab_gate"]> }) {
         <span className="text-sm font-medium text-neutral-200">實驗室已採用條件</span>
         <span
           className={cn(
-            "rounded px-1.5 py-0.5 text-[10px]",
+            "rounded px-1.5 py-0.5 text-[11px]",
             gate.met ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400",
           )}
         >
@@ -776,7 +865,7 @@ function LabGateCard({ gate }: { gate: NonNullable<TradeSignal["lab_gate"]> }) {
         <ul className="flex flex-col gap-1">
           {gate.checks.map((c) => (
             <li key={c.id} className="flex items-start gap-2 text-xs">
-              <span className={c.met ? "text-emerald-400" : "text-neutral-600"}>
+              <span className={c.met ? "text-emerald-400" : "text-neutral-500"}>
                 {c.met ? "✓" : "✗"}
               </span>
               <span className={c.met ? "text-neutral-300" : "text-neutral-500"}>{c.label}</span>
@@ -785,7 +874,7 @@ function LabGateCard({ gate }: { gate: NonNullable<TradeSignal["lab_gate"]> }) {
         </ul>
       )}
 
-      <p className="mt-2 text-[10px] leading-relaxed text-neutral-500">
+      <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
         採用依據：樣本內 {gate.in_sample_trades} 筆勝率{" "}
         {Math.round(gate.in_sample_hit_rate * 100)}%、樣本外 {gate.out_of_sample_trades} 筆勝率{" "}
         {Math.round(gate.out_of_sample_hit_rate * 100)}%（
@@ -815,13 +904,13 @@ function MarketRegime({ items }: { items: BiasItem[] }) {
       <CardContent className="p-4 pt-4">
         <div className="mb-3 flex items-baseline justify-between gap-2">
           <p className="text-sm font-medium text-neutral-300">市況與價格行為</p>
-          <span className="text-[11px] text-neutral-600">先看這裡，再看細項</span>
+          <span className="text-[11px] text-neutral-500">先看這裡，再看細項</span>
         </div>
 
         <dl className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
           {cells.map(({ title, cell, mono }) => (
             <div key={title} className="rounded-lg border border-neutral-800 bg-neutral-950/50 p-2.5">
-              <dt className="text-[10px] text-neutral-600">{title}</dt>
+              <dt className="text-[11px] text-neutral-500">{title}</dt>
               <dd
                 className={cn(
                   "mt-0.5 text-sm font-medium",
@@ -831,7 +920,7 @@ function MarketRegime({ items }: { items: BiasItem[] }) {
                 {cell.label}
               </dd>
               {cell.detail && (
-                <dd className="mt-0.5 text-[10px] leading-relaxed text-neutral-500">{cell.detail}</dd>
+                <dd className="mt-0.5 text-[11px] leading-relaxed text-neutral-500">{cell.detail}</dd>
               )}
             </div>
           ))}
@@ -866,7 +955,7 @@ function MarketRegime({ items }: { items: BiasItem[] }) {
         {r.gaps && (
           <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-950/50 p-2.5">
             <p className="text-[11px] leading-relaxed text-neutral-400">▤ {r.gaps.factor}</p>
-            <p className="mt-0.5 text-[10px] leading-relaxed text-neutral-600">{r.gaps.evidence}</p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-500">{r.gaps.evidence}</p>
           </div>
         )}
       </CardContent>
@@ -916,10 +1005,10 @@ function TraderViewCard({ signal }: { signal: TradeSignal }) {
       <CardContent className="p-4 pt-4">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <p className="text-sm font-medium text-neutral-200">頂級交易員視角</p>
-          <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", convictionTone)}>
+          <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-medium", convictionTone)}>
             信心 {convictionLabel}
           </span>
-          <span className="ml-auto text-[10px] text-neutral-600">
+          <span className="ml-auto text-[11px] text-neutral-500">
             以下每一句都對應卡片上的具體數字，非模型自由發揮
           </span>
         </div>
@@ -979,12 +1068,12 @@ function TraderViewCard({ signal }: { signal: TradeSignal }) {
                 <li key={i} className="rounded-lg border border-neutral-800 bg-neutral-950/50 p-2">
                   <div className="flex items-start justify-between gap-2">
                     <p className="min-w-0 text-[11px] leading-relaxed text-neutral-300">
-                      <span className="mr-1.5 text-neutral-600">{m.dimension}</span>
+                      <span className="mr-1.5 text-neutral-500">{m.dimension}</span>
                       {m.name}
                     </p>
                     <span
                       className={cn(
-                        "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+                        "shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium",
                         stanceStyle[m.stance] ?? stanceStyle["中性"],
                       )}
                     >
@@ -993,7 +1082,7 @@ function TraderViewCard({ signal }: { signal: TradeSignal }) {
                     </span>
                   </div>
                   {m.note && (
-                    <p className="mt-0.5 font-mono text-[10px] leading-relaxed text-neutral-600">
+                    <p className="mt-0.5 font-mono text-[11px] leading-relaxed text-neutral-500">
                       {m.note}
                     </p>
                   )}
@@ -1021,9 +1110,9 @@ function TechnicalDetails({ items }: { items: BiasItem[] }) {
       <CardContent className="p-4 pt-4">
         <div className="mb-1 flex items-baseline justify-between gap-2">
           <p className="text-sm font-medium text-neutral-300">技術指標明細</p>
-          <span className="text-[11px] text-neutral-600">{tech.length} 項讀數</span>
+          <span className="text-[11px] text-neutral-500">{tech.length} 項讀數</span>
         </div>
-        <p className="mb-3 text-[11px] leading-relaxed text-neutral-600">
+        <p className="mb-3 text-[11px] leading-relaxed text-neutral-500">
           每項指標的當前數據與結論。標「中性」且無權重的是純讀數 — 有算、有看，只是不構成方向依據。
         </p>
         <ul className="flex flex-col gap-2">
@@ -1042,7 +1131,7 @@ function TechnicalDetails({ items }: { items: BiasItem[] }) {
                   <p className="min-w-0 text-xs leading-relaxed text-neutral-200">{b.factor}</p>
                   <span
                     className={cn(
-                      "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+                      "shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium",
                       v.cls,
                     )}
                   >
@@ -1052,7 +1141,7 @@ function TechnicalDetails({ items }: { items: BiasItem[] }) {
                 <p className="mt-1 font-mono text-[11px] leading-relaxed text-neutral-500">
                   {b.evidence}
                 </p>
-                <p className="mt-0.5 text-[10px] text-neutral-700">{b.source}</p>
+                <p className="mt-0.5 text-[11px] text-neutral-500">{b.source}</p>
               </li>
             );
           })}
@@ -1163,10 +1252,16 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
             <GradeBadge grade={signal.grade} />
           </div>
 
+          {/* 結論先講 — the verdict at the top, in the size a verdict
+              deserves. It used to live only in the plan card further down,
+              so the answer to "what do I do" arrived after a screenful of
+              scores and chips. Same fields, read once. */}
+          <VerdictStrip signal={signal} />
+
           <div className="mt-3 flex items-center justify-between text-xs text-neutral-500">
             <span>
               方向分 <span className="font-mono text-neutral-300">{signal.bias_score}</span>
-              <span className="mx-1.5 text-neutral-700">+</span>
+              <span className="mx-1.5 text-neutral-500">+</span>
               結構分 <span className="font-mono text-neutral-300">{signal.entry_structure_score}</span>
             </span>
             <span>
@@ -1354,7 +1449,7 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
 
       <Section title={`進場結構（${signal.entry_structures.length}）`}>
         {signal.entry_structures.length === 0 ? (
-          <p className="text-xs text-neutral-600">無資料</p>
+          <p className="text-xs text-neutral-500">無資料</p>
         ) : (
           <ul className="flex flex-col gap-1.5">
             {signal.entry_structures.map((s, i) => (
@@ -1368,7 +1463,7 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
                 </span>
                 <span className="shrink-0 font-mono text-neutral-300">
                   {formatPrice(s.price)}
-                  <span className="ml-1.5 text-neutral-600">{s.distance_pct}%</span>
+                  <span className="ml-1.5 text-neutral-500">{s.distance_pct}%</span>
                 </span>
               </li>
             ))}
@@ -1378,7 +1473,7 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
 
       <Section title={`路徑障礙（${signal.path_obstacles.length}）`}>
         {signal.path_obstacles.length === 0 ? (
-          <p className="text-xs text-neutral-600">無資料</p>
+          <p className="text-xs text-neutral-500">無資料</p>
         ) : (
           <ul className="flex flex-col gap-1.5">
             {signal.path_obstacles.map((o, i) => {
@@ -1404,7 +1499,7 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
 
       <Section title={`全部因子（${signal.bias_items.length}）`}>
         {signal.bias_items.length === 0 ? (
-          <p className="text-xs text-neutral-600">無資料</p>
+          <p className="text-xs text-neutral-500">無資料</p>
         ) : (
           <ul className="flex flex-col gap-2">
             {signal.bias_items.map((b, i) => (
@@ -1421,7 +1516,7 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
                   {b.weight > 0 && ` ×${b.weight}`}
                 </span>
                 <span className="text-neutral-300">{b.factor}</span>
-                <span className="block text-neutral-600">
+                <span className="block text-neutral-500">
                   {b.evidence} · {b.source}
                 </span>
               </li>

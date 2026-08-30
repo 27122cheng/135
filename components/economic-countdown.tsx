@@ -105,7 +105,7 @@ export function EconomicCountdown() {
                 <span className={`font-mono ${soon ? "text-amber-400" : "text-neutral-500"}`}>
                   {formatCountdown(minutes)}後
                 </span>
-                <span className="text-[10px] text-neutral-600">
+                <span className="text-[11px] text-neutral-500">
                   {e.at.toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                 </span>
               </div>
@@ -114,7 +114,7 @@ export function EconomicCountdown() {
           );
         })}
       </ul>
-      <p className="mt-2 text-[10px] leading-relaxed text-neutral-600">
+      <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
         只列時間可推算的兩項：NFP（每月第一個週五）與 FOMC（聯準會提前一年公布）。
         CPI 的日期每月浮動，寧可不列也不猜錯。數據前後 24 小時內訊號評等自動降一級；
         公布前 2 小時內是硬規則 —— 不建立新倉。

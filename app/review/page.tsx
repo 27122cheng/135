@@ -149,7 +149,7 @@ export default function ReviewPage() {
             {stats.trackRecord ? (
               <TrackRecordTable record={stats.trackRecord} />
             ) : (
-              <p className="text-xs text-neutral-600">
+              <p className="text-xs text-neutral-500">
                 每筆建議進場的訊號由 5 分鐘監控自動追蹤到停損或停利，結算後自動記錄在這裡 —
                 不需要手動輸入。目前還沒有結算完成的建議。
               </p>
@@ -199,7 +199,7 @@ export default function ReviewPage() {
               </p>
               <table className="w-full">
                 <thead>
-                  <tr className="text-left text-[10px] text-neutral-600">
+                  <tr className="text-left text-[11px] text-neutral-500">
                     <th className="py-1 font-normal">關卡</th>
                     <th className="py-1 text-right font-normal">數量</th>
                     <th className="py-1 text-right font-normal">佔比</th>
@@ -223,7 +223,7 @@ export default function ReviewPage() {
                       <td className="py-1.5 text-right font-mono text-[11px] text-neutral-500">
                         {b.share}%
                       </td>
-                      <td className="py-1.5 pl-2 text-[10px] text-neutral-600">
+                      <td className="py-1.5 pl-2 text-[11px] text-neutral-500">
                         {b.symbols.join("、")}
                       </td>
                     </tr>
@@ -249,7 +249,7 @@ export default function ReviewPage() {
               </p>
               <table className="w-full">
                 <thead>
-                  <tr className="text-left text-[10px] text-neutral-600">
+                  <tr className="text-left text-[11px] text-neutral-500">
                     <th className="py-1 font-normal">條件</th>
                     <th className="py-1 text-right font-normal">勝率</th>
                     <th className="py-1 text-right font-normal">勝／敗</th>
@@ -261,18 +261,18 @@ export default function ReviewPage() {
                     <tr key={`${c.direction}:${c.conditionId}`} className="border-t border-neutral-800">
                       <td className="py-1.5 pr-2 text-[11px] text-neutral-300">
                         {c.label}
-                        <span className="ml-1 text-[10px] text-neutral-600">
+                        <span className="ml-1 text-[11px] text-neutral-500">
                           {c.direction === "long" ? "多" : "空"}
                         </span>
                       </td>
                       <td className="py-1.5 text-right font-mono text-[11px] text-neutral-400">
                         {c.hitRate === null ? "—" : `${Math.round(c.hitRate * 100)}%`}
-                        <span className="ml-1 text-[10px] text-neutral-600">n={c.resolved}</span>
+                        <span className="ml-1 text-[11px] text-neutral-500">n={c.resolved}</span>
                       </td>
                       <td className="py-1.5 text-right font-mono text-[11px] text-neutral-500">
                         {c.wins}／{c.losses}
                       </td>
-                      <td className="py-1.5 text-right font-mono text-[11px] text-neutral-600">
+                      <td className="py-1.5 text-right font-mono text-[11px] text-neutral-500">
                         {c.open}
                       </td>
                     </tr>
@@ -406,17 +406,17 @@ function RiskAdviceList({ items }: { items: RiskAdvice[] }) {
           <div className="flex items-start justify-between gap-2">
             <p className="text-xs font-medium text-neutral-200">{a.title}</p>
             {a.active && a.tag && (
-              <span className="shrink-0 rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] font-medium text-red-400">
+              <span className="shrink-0 rounded bg-red-500/15 px-1.5 py-0.5 text-[11px] font-medium text-red-400">
                 干涉生效中
               </span>
             )}
           </div>
           <p className="mt-1 text-[11px] leading-relaxed text-neutral-400">{a.detail}</p>
           {a.basedOn && (
-            <p className="mt-1 text-[10px] text-neutral-600">依據：{a.basedOn}</p>
+            <p className="mt-1 text-[11px] text-neutral-500">依據：{a.basedOn}</p>
           )}
           {a.automated && (
-            <p className="mt-1 text-[10px] leading-relaxed text-emerald-500/70">
+            <p className="mt-1 text-[11px] leading-relaxed text-emerald-500/70">
               系統已自動化：{a.automated}
               {a.tag && !a.active && "（此原因尚未達到觸發門檻，達標後自動生效）"}
             </p>
@@ -438,7 +438,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function LossRanking({ data }: { data: TagDistribution[] }) {
   if (data.length === 0) {
-    return <p className="py-4 text-center text-xs text-neutral-600">尚無資料</p>;
+    return <p className="py-4 text-center text-xs text-neutral-500">尚無資料</p>;
   }
   // Bars are scaled to the worst tag, so the top bar is always full width.
   const worst = Math.min(...data.map((d) => d.cumulativeLossPct));
@@ -540,7 +540,7 @@ function EquityCurveChart({ curve }: { curve: EquityCurve }) {
           />
         )}
       </svg>
-      <p className="text-[10px] leading-relaxed text-neutral-600">
+      <p className="text-[11px] leading-relaxed text-neutral-500">
         每筆以進場價的損益百分比累加（不複利、不假設倉位大小 —— 帳戶資金只存在你的瀏覽器）。
         紅圈是最深回撤的谷底
         {curve.maxDrawdownAt ? `（${curve.maxDrawdownAt.slice(0, 10)}）` : ""}。
@@ -578,19 +578,19 @@ function LearningLog({ entries }: { entries: LearningEntry[] }) {
               <span className={e.direction === "long" ? "text-emerald-400/80" : "text-red-400/80"}>
                 {e.direction === "long" ? "多" : "空"}
               </span>
-              <span className="rounded bg-neutral-800 px-1 py-0.5 text-[10px] text-neutral-400">{e.grade}</span>
+              <span className="rounded bg-neutral-800 px-1 py-0.5 text-[11px] text-neutral-400">{e.grade}</span>
               <span className={`font-medium ${r.tone}`}>{r.text}</span>
               <span className={`font-mono ${e.pnlPct > 0 ? "text-emerald-400" : e.pnlPct < 0 ? "text-red-400" : "text-neutral-400"}`}>
                 {e.pnlPct > 0 ? "+" : ""}
                 {e.pnlPct}%
               </span>
               {e.tag && (
-                <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-400">
+                <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] text-amber-400">
                   {e.tag} {STOP_REASON_LABELS[e.tag as keyof typeof STOP_REASON_LABELS] ?? ""}
                 </span>
               )}
               {e.severity !== null && (
-                <span className="text-[10px] text-neutral-600">嚴重度 {e.severity}</span>
+                <span className="text-[11px] text-neutral-500">嚴重度 {e.severity}</span>
               )}
             </div>
             {e.note && (
@@ -599,7 +599,7 @@ function LearningLog({ entries }: { entries: LearningEntry[] }) {
           </div>
         );
       })}
-      <p className="text-[10px] leading-relaxed text-neutral-600">
+      <p className="text-[11px] leading-relaxed text-neutral-500">
         這就是「學習」實際發生的地方：每筆自動結算的交易寫入一則復盤（[自動追蹤] 開頭），
         停損由規則或 AI 分類成 S1–S8 並寫下原因；被分類的原因會透過干涉引擎
         <span className="text-neutral-400">收緊之後的訊號</span>（上方「目前生效的干涉」區）。
@@ -614,7 +614,7 @@ function TrackRecordTable({ record }: { record: TrackRecord }) {
   const rows = [record.real, record.paper, record.manual].filter((b) => b.trades > 0);
   if (rows.length === 0) {
     return (
-      <p className="text-xs text-neutral-600">
+      <p className="text-xs text-neutral-500">
         監控結算的交易會自動記到這裡（正式訊號與參考價位分開統計），目前還沒有結算的紀錄。
       </p>
     );
@@ -623,7 +623,7 @@ function TrackRecordTable({ record }: { record: TrackRecord }) {
     <div className="flex flex-col gap-2">
       <table className="w-full text-xs">
         <thead>
-          <tr className="text-left text-[10px] text-neutral-600">
+          <tr className="text-left text-[11px] text-neutral-500">
             <th className="py-1 font-normal">來源</th>
             <th className="py-1 text-right font-normal">筆數</th>
             <th className="py-1 text-right font-normal">勝/敗</th>
@@ -645,7 +645,7 @@ function TrackRecordTable({ record }: { record: TrackRecord }) {
               <td className="py-1.5 text-right font-mono text-neutral-200">
                 {b.winRate === null ? "—" : `${b.winRate}%`}
                 {b.breakevenWinRate !== null && (
-                  <span className="text-[10px] text-neutral-600"> /需{b.breakevenWinRate}%</span>
+                  <span className="text-[11px] text-neutral-500"> /需{b.breakevenWinRate}%</span>
                 )}
               </td>
               <td className="py-1.5 text-right font-mono text-neutral-400">
@@ -662,7 +662,7 @@ function TrackRecordTable({ record }: { record: TrackRecord }) {
           ))}
         </tbody>
       </table>
-      <p className="text-[10px] leading-relaxed text-neutral-600">
+      <p className="text-[11px] leading-relaxed text-neutral-500">
         <span className="text-neutral-400">期望值</span>＝每筆結算交易的平均損益，才是「有沒有賺」的答案；
         勝率旁的「需 x%」是這個盈虧比損益兩平所需的勝率——實際勝率高於它才是正期望，
         低於它就算勝率 70% 也在虧。紙上追蹤假設完美成交、無滑價點差，讀作上限；
@@ -674,7 +674,7 @@ function TrackRecordTable({ record }: { record: TrackRecord }) {
 
 function GradeTable({ data }: { data: GradePerformance[] }) {
   if (data.length === 0) {
-    return <p className="py-4 text-center text-xs text-neutral-600">尚無資料</p>;
+    return <p className="py-4 text-center text-xs text-neutral-500">尚無資料</p>;
   }
   return (
     <div className="overflow-x-auto">
@@ -710,7 +710,7 @@ function GradeTable({ data }: { data: GradePerformance[] }) {
           ))}
         </tbody>
       </table>
-      <p className="mt-2 text-[10px] leading-relaxed text-neutral-600">
+      <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
         勝率不計平手；期望值是所有交易 pnl_pct 的平均（含平手）。樣本少的時候這些數字不代表什麼 ——
         看的是等級越高表現是不是真的越好。
       </p>

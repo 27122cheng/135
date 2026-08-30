@@ -155,7 +155,7 @@ function ReferenceLevels({ row }: { row: BoardRow }) {
     // has no usable stop price look identical — both show nothing at all.
     if (row.generatedAt === null) return null;
     return (
-      <p className="mt-2.5 text-[11px] leading-relaxed text-neutral-600">
+      <p className="mt-2.5 text-[11px] leading-relaxed text-neutral-500">
         {/* Two floors, in order: the trade recommendation needs a combination
             whose *managed* backtest (breakeven, trailing, CHoCH exit — the
             rules the monitor actually runs) shows expectancy ≥ +0.75R and a
@@ -188,12 +188,12 @@ function ReferenceLevels({ row }: { row: BoardRow }) {
           : "border-neutral-800 bg-neutral-950/60"
       }`}
     >
-      <p className="mb-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[10px] text-neutral-500">
+      <p className="mb-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] text-neutral-500">
         <span className={ref.vetoed ? "text-amber-500/80" : ""}>
           參考價位{ref.vetoed ? "（未通過審查，僅紙上追蹤）" : ""}
         </span>
         <span className={dirTone}>{dir}</span>
-        <span className="text-neutral-600">
+        <span className="text-neutral-500">
           {ref.vetoed
             ? "系統不建議進場；仍逐筆追蹤到底，用來檢驗門檻本身是否擋錯"
             : "已通過統計附加審查與風報比，但未達可交易評等"}
@@ -201,15 +201,15 @@ function ReferenceLevels({ row }: { row: BoardRow }) {
       </p>
       <dl className="grid grid-cols-3 gap-2">
         <div>
-          <dt className="text-[10px] text-neutral-600">進場區</dt>
+          <dt className="text-[11px] text-neutral-500">進場區</dt>
           <dd className="font-mono text-[13px] text-neutral-300">{zone}</dd>
         </div>
         <div>
-          <dt className="text-[10px] text-neutral-600">止損</dt>
+          <dt className="text-[11px] text-neutral-500">止損</dt>
           <dd className="font-mono text-[13px] text-red-400/80">{fmt(ref.stopLoss)}</dd>
         </div>
         <div>
-          <dt className="text-[10px] text-neutral-600">止盈</dt>
+          <dt className="text-[11px] text-neutral-500">止盈</dt>
           <dd className="font-mono text-[13px] text-emerald-400/80">
             {ref.takeProfits.length === 0 ? "無" : fmt(ref.takeProfits[0].price)}
           </dd>
@@ -219,16 +219,16 @@ function ReferenceLevels({ row }: { row: BoardRow }) {
         <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-neutral-500">
           {ref.takeProfits.slice(1).map((tp, i) => (
             <li key={i}>
-              <span className="text-neutral-600">TP{i + 2} · {tp.allocationPct}%</span>{" "}
+              <span className="text-neutral-500">TP{i + 2} · {tp.allocationPct}%</span>{" "}
               <span className="font-mono text-neutral-400">{fmt(tp.price)}</span>
             </li>
           ))}
         </ul>
       )}
       {ref.vetoed && ref.vetoNote && (
-        <p className="mt-1.5 text-[10px] leading-relaxed text-amber-500/70">⚠ {ref.vetoNote}</p>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-amber-500/70">⚠ {ref.vetoNote}</p>
       )}
-      <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-600">
+      <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500">
         {ref.entryReason}
         {ref.stopReason ? `｜止損結構：${ref.stopReason}` : ""}
       </p>
@@ -286,7 +286,7 @@ function HeldStrip() {
           <span className={h.direction === "long" ? "text-emerald-400" : "text-red-400"}>
             {h.direction === "long" ? "▲" : "▼"}
           </span>
-          {h.state === "scaled" && <span className="text-[10px] text-emerald-500">半倉</span>}
+          {h.state === "scaled" && <span className="text-[11px] text-emerald-500">半倉</span>}
           {h.openR !== null && (
             <span
               className={`font-mono text-[11px] ${h.openR > 0 ? "text-emerald-400" : h.openR < 0 ? "text-red-400" : "text-neutral-500"}`}
@@ -713,19 +713,19 @@ export default function BoardPage() {
                           : "做空 ▼"}
                     </span>
                     <span
-                      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                      className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${
                         GRADE_STYLE[row.grade ?? "no-trade"]
                       }`}
                     >
                       {row.grade}
                     </span>
                     {row.confidence !== null && (
-                      <span className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-400/80">
+                      <span className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-400/80">
                         信心 {row.confidence}
                       </span>
                     )}
                     {row.addOns.length > 0 && (
-                      <span className="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
+                      <span className="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-[11px] text-neutral-400">
                         加倉 {row.addOns.length}
                       </span>
                     )}
@@ -734,17 +734,17 @@ export default function BoardPage() {
                   <>
                     <span className="text-xs text-neutral-500">觀望</span>
                     {row.confidence !== null && (
-                      <span className="shrink-0 text-[10px] text-neutral-600">
+                      <span className="shrink-0 text-[11px] text-neutral-500">
                         信心 {row.confidence}/{CONFIDENT_ENTRY_MIN}
                       </span>
                     )}
                   </>
                 )}
 
-                <span className="ml-auto shrink-0 text-[10px] text-neutral-600">
+                <span className="ml-auto shrink-0 text-[11px] text-neutral-500">
                   {busy ? "掃描中…" : ago(row.generatedAt)}
                 </span>
-                <span className="shrink-0 text-neutral-600">{isOpen ? "▾" : "▸"}</span>
+                <span className="shrink-0 text-neutral-500">{isOpen ? "▾" : "▸"}</span>
               </button>
 
               {isOpen && (
@@ -753,15 +753,15 @@ export default function BoardPage() {
                     <>
                       <dl className="grid grid-cols-3 gap-2">
                         <div>
-                          <dt className="text-[10px] text-neutral-600">進場</dt>
+                          <dt className="text-[11px] text-neutral-500">進場</dt>
                           <dd className="font-mono text-sm text-neutral-100">{fmt(row.entry)}</dd>
                         </div>
                         <div>
-                          <dt className="text-[10px] text-neutral-600">止損</dt>
+                          <dt className="text-[11px] text-neutral-500">止損</dt>
                           <dd className="font-mono text-sm text-red-400">{fmt(row.stopLoss)}</dd>
                         </div>
                         <div>
-                          <dt className="text-[10px] text-neutral-600">止盈</dt>
+                          <dt className="text-[11px] text-neutral-500">止盈</dt>
                           <dd className="font-mono text-sm text-emerald-400">
                             {fmt(row.takeProfit)}
                           </dd>
@@ -794,15 +794,15 @@ export default function BoardPage() {
 
                       {row.addOns.length > 0 ? (
                         <div className="mt-2.5 border-t border-neutral-800/60 pt-2">
-                          <p className="mb-1 text-[10px] text-neutral-600">
+                          <p className="mb-1 text-[11px] text-neutral-500">
                             加倉點（{row.addOns.length}，每一筆都會收緊止損）
                           </p>
                           <ul className="flex flex-col gap-1">
                             {row.addOns.map((a) => (
                               <li key={a.sequence} className="flex items-baseline gap-2">
-                                <span className="text-[10px] text-neutral-600">#{a.sequence}</span>
+                                <span className="text-[11px] text-neutral-500">#{a.sequence}</span>
                                 <span className="font-mono text-neutral-200">{fmt(a.price)}</span>
-                                <span className="text-[10px] text-neutral-600">止損→</span>
+                                <span className="text-[11px] text-neutral-500">止損→</span>
                                 <span className="font-mono text-[11px] text-red-400">
                                   {fmt(a.new_stop_loss)}
                                 </span>
@@ -811,7 +811,7 @@ export default function BoardPage() {
                           </ul>
                         </div>
                       ) : (
-                        <p className="mt-2 text-[11px] text-neutral-600">
+                        <p className="mt-2 text-[11px] text-neutral-500">
                           無加倉點 —— 沒有結構支撐時不設，這是答案不是遺漏。
                         </p>
                       )}
@@ -823,7 +823,7 @@ export default function BoardPage() {
                           這次掃描失敗：{scanErrors[row.symbol]}
                         </p>
                       ) : row.generatedAt === null ? (
-                        <p className="text-neutral-600">
+                        <p className="text-neutral-500">
                           這個商品還沒有掃描紀錄。等下一次排程，或按上面的「立即全部掃描」。
                         </p>
                       ) : (
@@ -854,7 +854,7 @@ export default function BoardPage() {
         })}
       </div>
 
-      <div className="mt-4 space-y-1.5 text-[11px] leading-relaxed text-neutral-600">
+      <div className="mt-4 space-y-1.5 text-[11px] leading-relaxed text-neutral-500">
         <p>
           這頁與詳細分析頁讀的是<span className="text-neutral-400">同一筆</span>資料庫紀錄，
           所以兩邊不可能講不同的話。掃描結果會寫回資料庫，不是各自算各自的。
@@ -875,7 +875,7 @@ export default function BoardPage() {
         </p>
         {/* So "the fix didn't work" and "the fix isn't deployed yet" stop
             looking the same from a phone screenshot. */}
-        <p className="text-neutral-700">
+        <p className="text-neutral-500">
           版本 {data?.build ?? "本機"}
           {data?.source ? `．資料來源 ${data.source}` : ""}
           {/* The database *host*. If this string is different in two

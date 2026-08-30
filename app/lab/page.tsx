@@ -86,7 +86,7 @@ function FindingRow({
           {f.labels.join(" ＋ ")}
         </span>
         {f.verified && (
-          <span className="ml-1.5 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-400">
+          <span className="ml-1.5 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[11px] text-emerald-400">
             通過
           </span>
         )}
@@ -94,7 +94,7 @@ function FindingRow({
             and the server re-verifies before believing this click anyway. */}
         {f.verified &&
           (adopted ? (
-            <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] text-sky-400">
+            <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[11px] text-sky-400">
               已採用
             </span>
           ) : (
@@ -102,7 +102,7 @@ function FindingRow({
               type="button"
               disabled={busy}
               onClick={() => onAdopt(f.ids)}
-              className="ml-1.5 rounded border border-emerald-500/40 px-1.5 py-0.5 text-[10px] text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40"
+              className="ml-1.5 rounded border border-emerald-500/40 px-1.5 py-0.5 text-[11px] text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40"
             >
               採用
             </button>
@@ -117,7 +117,7 @@ function FindingRow({
       >
         {fmtR(inExp)}
         <span
-          className="ml-1 text-[10px] text-neutral-600"
+          className="ml-1 text-[11px] text-neutral-500"
           title={`勝率 ${pct(f.inSample.hitRate)}．${f.inSample.trades} 筆成交／${f.inSample.entries} 次符合（${f.inSample.unresolved} 次沒有合理結構停損可掛）`}
         >
           {pct(f.inSample.hitRate)}·n={f.inSample.trades}/{f.inSample.entries}
@@ -132,7 +132,7 @@ function FindingRow({
       >
         {fmtR(outExp)}
         <span
-          className="ml-1 text-[10px] text-neutral-600"
+          className="ml-1 text-[11px] text-neutral-500"
           title={`勝率 ${pct(f.outOfSample.hitRate)}．${f.outOfSample.trades} 筆成交／${f.outOfSample.entries} 次符合`}
         >
           {pct(f.outOfSample.hitRate)}·n={f.outOfSample.trades}/{f.outOfSample.entries}
@@ -140,7 +140,7 @@ function FindingRow({
       </td>
       <td
         className={`py-2 text-right font-mono text-[11px] ${
-          (f.lift ?? 0) > 0 ? "text-emerald-400" : "text-neutral-600"
+          (f.lift ?? 0) > 0 ? "text-emerald-400" : "text-neutral-500"
         }`}
       >
         {f.lift === null ? "—" : `${f.lift > 0 ? "+" : ""}${f.lift}`}
@@ -165,13 +165,13 @@ function Table({
   onAdopt: (ids: string[]) => void;
 }) {
   if (rows.length === 0) {
-    return <p className="py-3 text-center text-[11px] text-neutral-600">樣本不足，沒有可報告的結果</p>;
+    return <p className="py-3 text-center text-[11px] text-neutral-500">樣本不足，沒有可報告的結果</p>;
   }
   return (
     <div className="overflow-x-auto">
       <table className="w-full">
         <thead>
-          <tr className="text-left text-[10px] text-neutral-600">
+          <tr className="text-left text-[11px] text-neutral-500">
             <th className="py-1 font-normal">條件</th>
             <th className="py-1 text-right font-normal">樣本內期望值</th>
             <th className="py-1 text-right font-normal">樣本外期望值</th>
@@ -419,7 +419,7 @@ export default function LabPage() {
         </h2>
         {adopt?.error && <p className="text-[11px] text-amber-400">{adopt.error}</p>}
         {adoptions.length === 0 ? (
-          <p className="text-[10px] leading-relaxed text-neutral-500">
+          <p className="text-[11px] leading-relaxed text-neutral-500">
             目前沒有任何條件被採用，交易建議照原本的規則產生。
             通過驗證的組合按下「採用」後，該商品該方向的每一次進場都必須先滿足它，不滿足就只給參考價位。
           </p>
@@ -436,10 +436,10 @@ export default function LabPage() {
                 >
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="text-[11px] font-medium text-neutral-100">{a.symbol}</span>
-                    <span className="text-[10px] text-neutral-400">
+                    <span className="text-[11px] text-neutral-400">
                       {a.direction === "long" ? "做多" : "做空"}
                     </span>
-                    <span className="rounded bg-sky-500/15 px-1 py-0.5 text-[10px] text-sky-400">
+                    <span className="rounded bg-sky-500/15 px-1 py-0.5 text-[11px] text-sky-400">
                       {a.timeframe === "H4" ? "H4" : "日線"}
                     </span>
                     <span className="text-[11px] text-neutral-300">{a.labels.join(" ＋ ")}</span>
@@ -447,12 +447,12 @@ export default function LabPage() {
                       type="button"
                       disabled={busy}
                       onClick={() => void onRevoke(a.symbol, a.direction)}
-                      className="ml-auto rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-400 hover:bg-neutral-800 disabled:opacity-40"
+                      className="ml-auto rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-400 hover:bg-neutral-800 disabled:opacity-40"
                     >
                       撤銷
                     </button>
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-neutral-500">
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-neutral-500">
                     <span>
                       採用時：樣本內{" "}
                       <span className="font-mono text-neutral-300">{pct(a.inSample.hitRate)}</span>
@@ -466,9 +466,9 @@ export default function LabPage() {
                   </div>
                   {/* The proof it is actually running: what the newest stored
                       signal's own gate recorded, not a re-derivation here. */}
-                  <div className="mt-1 text-[10px] leading-relaxed">
+                  <div className="mt-1 text-[11px] leading-relaxed">
                     {status?.met === null || !status ? (
-                      <span className="text-neutral-600">
+                      <span className="text-neutral-500">
                         最新掃描狀態：{status?.detail ?? "尚無資料"}
                       </span>
                     ) : status.met ? (
@@ -499,7 +499,7 @@ export default function LabPage() {
             前進實驗 · {symbol} {direction === "long" ? "做多" : "做空"}
           </h2>
           {forward?.total !== undefined && (
-            <span className="text-[10px] text-neutral-500">
+            <span className="text-[11px] text-neutral-500">
               累計 {forward.total} 筆．進行中 {forward.open ?? 0}
             </span>
           )}
@@ -507,12 +507,12 @@ export default function LabPage() {
             type="button"
             onClick={() => void advance()}
             disabled={advancing}
-            className="ml-auto rounded-lg border border-neutral-700 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+            className="ml-auto rounded-lg border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
           >
             {advancing ? "推進中…" : "立即推進"}
           </button>
         </div>
-        <p className="mb-2 text-[10px] leading-relaxed text-neutral-500">
+        <p className="mb-2 text-[11px] leading-relaxed text-neutral-500">
           每個條件<span className="text-neutral-300">各自獨立</span>下單：條件成立且掛得出合理的結構停損，
           就以當根收盤價進場 —— 停損在已確認 swing 外 0.5×ATR、停利在最近壓力（沒有壓力就不設，靠移動停損出場）、
           停利 ≥2R 先平一半（不足則全出）、走出 1R 保本移停、新 swing 墊高停損、反向 CHoCH 出場，
@@ -526,7 +526,7 @@ export default function LabPage() {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="text-left text-[10px] text-neutral-600">
+                <tr className="text-left text-[11px] text-neutral-500">
                   <th className="py-1 font-normal">條件</th>
                   <th className="py-1 text-right font-normal">前進期望值</th>
                   <th className="py-1 text-right font-normal">勝／敗</th>
@@ -541,24 +541,24 @@ export default function LabPage() {
                     <td
                       className={`py-1.5 text-right font-mono text-[11px] ${
                         s.expectancyR === null
-                          ? "text-neutral-600"
+                          ? "text-neutral-500"
                           : s.expectancyR > 0
                             ? "text-emerald-400"
                             : "text-neutral-400"
                       }`}
                     >
                       {s.expectancyR === null ? "—" : `${s.expectancyR >= 0 ? "+" : ""}${s.expectancyR}R`}
-                      <span className="ml-1 text-[10px] text-neutral-600">
+                      <span className="ml-1 text-[11px] text-neutral-500">
                         {pct(s.hitRate)}·n={s.resolved}
                       </span>
                     </td>
                     <td className="py-1.5 text-right font-mono text-[11px] text-neutral-500">
                       {s.wins}／{s.losses}
                       {s.scratches > 0 && (
-                        <span className="text-neutral-700">／平{s.scratches}</span>
+                        <span className="text-neutral-500">／平{s.scratches}</span>
                       )}
                     </td>
-                    <td className="py-1.5 text-right font-mono text-[11px] text-neutral-600">
+                    <td className="py-1.5 text-right font-mono text-[11px] text-neutral-500">
                       {s.expired}
                     </td>
                     <td className="py-1.5 text-right font-mono text-[11px] text-neutral-500">
@@ -571,25 +571,25 @@ export default function LabPage() {
           </div>
         ) : (
           !forward?.error && (
-            <p className="text-[10px] leading-relaxed text-neutral-600">
+            <p className="text-[11px] leading-relaxed text-neutral-500">
               還沒有前進紀錄。第一次推進之後，每根新的日線都會讓條件各自開倉、結算，
               數字會從零開始累積 —— 這段等待正是它比回測可信的原因：它沒辦法作弊。
             </p>
           )
         )}
-        <p className="mt-2 text-[10px] leading-relaxed text-neutral-700">
+        <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
           帳本按商品分開 —— 這裡顯示的是「{symbol} {direction === "long" ? "做多" : "做空"}」
           的紀錄；換上方的商品／方向即可看其他標的（每次排程掃描時全部商品都在各自開倉結算）。
           全商品合計的前進成績在 /review 的前進實驗區。
         </p>
         {forward?.recent && forward.recent.length > 0 && (
           <details className="mt-2">
-            <summary className="cursor-pointer text-[10px] text-neutral-600">
+            <summary className="cursor-pointer text-[11px] text-neutral-500">
               最近 {forward.recent.length} 筆逐筆紀錄
             </summary>
             <ul className="mt-1 flex flex-col gap-0.5">
               {forward.recent.map((t) => (
-                <li key={t.id} className="font-mono text-[10px] text-neutral-500">
+                <li key={t.id} className="font-mono text-[11px] text-neutral-500">
                   {t.entryBarTime.slice(0, 10)} {t.conditionId} {t.direction === "long" ? "多" : "空"}{" "}
                   進 {t.entry.toFixed(2)} 損 {t.stop.toFixed(2)} 利{" "}
                   {t.target === null ? "無壓力・移動停損" : t.target.toFixed(2)}{" "}
@@ -599,7 +599,7 @@ export default function LabPage() {
                         ? "text-emerald-400"
                         : t.status === "loss"
                           ? "text-red-400"
-                          : "text-neutral-600"
+                          : "text-neutral-500"
                     }
                   >
                     {t.status === "open"
@@ -650,7 +650,7 @@ export default function LabPage() {
               <span>
                 樣本內{" "}
                 <span className="font-mono text-neutral-200">{pct(r.baseline.inSample.hitRate)}</span>
-                <span className="text-neutral-600">
+                <span className="text-neutral-500">
                   {" "}
                   n={r.baseline.inSample.trades}/{r.baseline.inSample.entries}
                 </span>
@@ -660,16 +660,16 @@ export default function LabPage() {
                 <span className="font-mono text-neutral-200">
                   {pct(r.baseline.outOfSample.hitRate)}
                 </span>
-                <span className="text-neutral-600">
+                <span className="text-neutral-500">
                   {" "}
                   n={r.baseline.outOfSample.trades}/{r.baseline.outOfSample.entries}
                 </span>
               </span>
-              <span className="text-neutral-600">
+              <span className="text-neutral-500">
                 門檻 期望值 ≥ +{r.minExpectancyR}R、勝率 ≥{pct(r.floor)}．已扣成本 {r.costPct}%．{r.bars} 根 K 棒
               </span>
             </div>
-            <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-600">
+            <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500">
               結構管理式出場（和 live 相同）：停損掛已確認 swing 外 0.5×ATR、停利掛最近壓力、
               停利 ≥2R 先平一半（不足則全出）、1R 保本移停、新 swing 墊高停損、反向 CHoCH 出場，
               最多持有 20 根後以市價結算。
@@ -682,7 +682,7 @@ export default function LabPage() {
               <h2 className="mb-1.5 text-xs font-medium text-emerald-300">
                 通過樣本外驗證（{r.verified.length}）
               </h2>
-              <p className="mb-2 text-[10px] leading-relaxed text-neutral-400">
+              <p className="mb-2 text-[11px] leading-relaxed text-neutral-400">
                 樣本內 ≥100 筆、樣本外 ≥43 筆，兩邊期望值都 ≥ +{r.minExpectancyR}R、勝率都 ≥{pct(r.floor)}。
                 這些是目前唯一有資格被納入交易條件的組合。按<span className="text-emerald-300">採用</span>
               就會生效 —— 伺服器會當場重跑一次驗證，通過才寫入。
@@ -711,7 +711,7 @@ export default function LabPage() {
               <h2 className="mb-1.5 text-xs font-medium text-neutral-300">
                 接近通過（{r.nearMisses.length}）—— 值得繼續觀察，不是建議
               </h2>
-              <p className="mb-2 text-[10px] leading-relaxed text-neutral-500">
+              <p className="mb-2 text-[11px] leading-relaxed text-neutral-500">
                 差距很小的落選者，差在哪裡寫在旁邊。勝率不足的要等新資料自己證明；
                 樣本外筆數不足的會隨新 K 棒累積（新資料都落在樣本外那一半）。
                 差距可能縮小也可能擴大 —— 兩種結果都是資訊。按「採用」時伺服器一律重新驗證，
@@ -722,14 +722,14 @@ export default function LabPage() {
                   <li key={f.ids.join("+")} className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-2">
                     <div className="flex flex-wrap items-baseline gap-x-2">
                       <span className="text-[11px] text-neutral-200">{f.labels.join(" ＋ ")}</span>
-                      <span className="ml-auto font-mono text-[10px] text-neutral-500">
+                      <span className="ml-auto font-mono text-[11px] text-neutral-500">
                         內 {fmtR(f.inSample.expectancyR)}·{pct(f.inSample.hitRate)}／外{" "}
                         {fmtR(f.outOfSample.expectancyR)}·{pct(f.outOfSample.hitRate)}
                       </span>
                     </div>
                     <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
                       {f.shortfalls.map((line, i) => (
-                        <li key={i} className="text-[10px] text-amber-400/80">· {line}</li>
+                        <li key={i} className="text-[11px] text-amber-400/80">· {line}</li>
                       ))}
                     </ul>
                   </li>
@@ -756,7 +756,7 @@ export default function LabPage() {
             <h2 className="mb-1.5 text-xs font-medium text-neutral-300">
               條件組合（{r.pairs.length}）
             </h2>
-            <p className="mb-1.5 text-[10px] leading-relaxed text-neutral-600">
+            <p className="mb-1.5 text-[11px] leading-relaxed text-neutral-500">
               <span className="text-neutral-400">不預先挑選</span>：每一組兩兩配對都測，
               不管單獨測的時候表現如何 —— 一個條件單獨看可能沒用，卻剛好是另一個訊號需要的否決條件。
               兩個測完之後，還有樣本數的再往三個、四個疊。
@@ -777,16 +777,16 @@ export default function LabPage() {
             <h2 className="mb-1.5 text-xs font-medium text-neutral-300">這份實驗的誠實限制</h2>
             <ul className="flex flex-col gap-1.5">
               {r.notes.map((n, i) => (
-                <li key={i} className="text-[10px] leading-relaxed text-neutral-500">
+                <li key={i} className="text-[11px] leading-relaxed text-neutral-500">
                   · {n}
                 </li>
               ))}
-              <li className="text-[10px] leading-relaxed text-neutral-500">
+              <li className="text-[11px] leading-relaxed text-neutral-500">
                 · 停損停利由結構決定、和 live 同一套管理規則 —— 但「看法改變就出場」
                 在回測裡只有結構（反向 CHoCH）這種可驗證的形式；基本面與新聞的看法
                 改變沒有逐 bar 的歷史檔案可以重播，只有 live 監控在做。
               </li>
-              <li className="text-[10px] leading-relaxed text-neutral-500">
+              <li className="text-[11px] leading-relaxed text-neutral-500">
                 · 一個商品的結果不能套用到另一個。外匯與原油的行為不同，
                 條件要各自驗證。
               </li>

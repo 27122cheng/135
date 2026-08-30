@@ -121,22 +121,22 @@ export function PositionSizing({
     <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4">
       <div className="mb-2 flex flex-wrap items-baseline gap-2">
         <span className="text-sm font-medium text-neutral-200">這筆該下多少</span>
-        <span className="text-[10px] text-neutral-600">
+        <span className="text-[11px] text-neutral-500">
           帳戶 {config.accountSize.toLocaleString()} × 風險 {config.riskPct}%
           {sizing.correlationFactor < 1 && " × 相關減半"}
         </span>
       </div>
       <dl className="grid grid-cols-3 gap-2">
         <div>
-          <dt className="text-[10px] text-neutral-600">風險金額</dt>
+          <dt className="text-[11px] text-neutral-500">風險金額</dt>
           <dd className="font-mono text-sm text-red-400/80">{sizing.riskAmount.toLocaleString()}</dd>
         </div>
         <div>
-          <dt className="text-[10px] text-neutral-600">部位（單位）</dt>
+          <dt className="text-[11px] text-neutral-500">部位（單位）</dt>
           <dd className="font-mono text-sm text-neutral-200">{sizing.units.toLocaleString()}</dd>
         </div>
         <div>
-          <dt className="text-[10px] text-neutral-600">
+          <dt className="text-[11px] text-neutral-500">
             {sizing.lots !== null ? "≈ 手數" : "名目曝險"}
           </dt>
           <dd className="font-mono text-sm text-neutral-200">
@@ -144,13 +144,13 @@ export function PositionSizing({
           </dd>
         </div>
       </dl>
-      <p className="mt-2 text-[10px] leading-relaxed text-neutral-600">
+      <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
         1 單位 = 價格每動 1 點損益 1 元（報價幣別）。停損觸發時虧損即為風險金額；
         名目曝險 {sizing.notional.toLocaleString()}（約帳戶的 {sizing.leverage} 倍）。
         {sizing.lotLabel ? `手數以${sizing.lotLabel}換算，券商合約規格不同時以單位數自行換算。` : ""}
       </p>
       {sizing.notes.map((n, i) => (
-        <p key={i} className="mt-1.5 text-[10px] leading-relaxed text-amber-400/80">
+        <p key={i} className="mt-1.5 text-[11px] leading-relaxed text-amber-400/80">
           · {n}
         </p>
       ))}
@@ -159,7 +159,7 @@ export function PositionSizing({
           own worst streak. Approximate on purpose (assumes ~1R per loss,
           no compounding) and says so. */}
       {lossStreak !== null && lossStreak >= 2 && (
-        <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-500">
+        <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500">
           · 本系統實測的最長連敗是 <span className="text-neutral-300">{lossStreak} 筆</span>。
           以單筆風險 {config.riskPct}% 計，重演一次約回撤{" "}
           <span className="text-neutral-300">
