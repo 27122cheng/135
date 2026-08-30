@@ -413,6 +413,22 @@ export interface TradeSignal {
     /** How it was chosen — the same sentence the traded plan carries. */
     basis: string;
     backtest: PlanBacktest | null;
+    /**
+     * 這組價位有沒有通過統計附加審查。
+     *
+     * The paper tier used to be withheld entirely when the veto fired — and
+     * that made it useless for the one job it exists to do. Its purpose is
+     * to answer "is the gate costing money?", which is unanswerable if the
+     * gate also decides what gets tracked: the monitor then paper-trades
+     * only the trades the rules already approved, and the review page's
+     * paper bucket can never disagree with the real one. False here means
+     * "the rules refused this; we are tracking it anyway to find out
+     * whether they were right", and every renderer labels it as such.
+     * Optional: rows written before this field lack it and read as passed.
+     */
+    vetoed?: boolean;
+    /** When vetoed, the measured reason — quoted, never invented. */
+    vetoNote?: string | null;
   } | null;
   /** Every reason the computed grade was overruled, in the order applied. */
   downgrades?: string[];

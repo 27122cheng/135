@@ -150,23 +150,31 @@ function signal(over: Partial<TradeSignal> = {}): TradeSignal {
     rows.reduce((n, r) => n + r.count, 0) === 4, rows);
 }
 
-// ── 信心度過低時，參考價位也不該出現 ──────────────────────────────
+// ── 信心度過低：標記，不是刪除 ────────────────────────────────────
 //
-// The rule lives in the signal builder (it needs the computed confidence), so
-// what is pinned here is the consequence the two pages read: a low-confidence
-// signal carries no reference_plan, and therefore no page can render levels
-// for it. Both the board and the card gate on that one field.
+// The rule used to DELETE the reference plan on a low-confidence run, and
+// the live monitor then reported 「觀望且沒有可追蹤的參考價位」 on 8 of 11
+// symbols: nothing was paper-tracked, so the learning loop had no input and
+// the review page's paper bucket could never disagree with the real one. A
+// low-confidence run is exactly the sample that answers whether
+// low-confidence signals are actually worse. The levels now stay, flagged
+// `vetoed` with the reason, tracked to resolution, recommended to nobody.
 {
   const lowConfidence = signal({
     confidence: { score: 5, level: "low", factors: ["評等 C（基準 40）", "5 項資料缺口（-15）"] },
-    reference_plan: null,
-    data_gaps: ["本次不提供參考價位：信心度 5 屬「低」，代表這次分析的證據本身不足，價位算得出來也不值得看"],
+    reference_plan: {
+      entry: 100, stop_loss: 98, take_profit: 105, risk_reward: 2.5,
+      entry_reason: "e", stop_reason: "s", target_reason: "t", basis: "b",
+      backtest: null, vetoed: true,
+      vetoNote: "信心度 5 屬「低」——這次分析的證據本身不足，價位僅作紙上追蹤以累積證據，不建議進場",
+    },
   });
-  check("a low-confidence signal carries no reference plan",
-    lowConfidence.reference_plan === null);
-  check("and says why, in the gaps",
-    lowConfidence.data_gaps.some((g) => g.includes("信心度")), lowConfidence.data_gaps);
-  check("the blocker is still attributed to confidence, not to the missing levels",
+  check("a low-confidence signal keeps its reference plan, flagged",
+    lowConfidence.reference_plan?.vetoed === true, lowConfidence.reference_plan);
+  check("and the flag carries the reason, so no renderer has to invent one",
+    lowConfidence.reference_plan?.vetoNote?.includes("信心度") === true,
+    lowConfidence.reference_plan?.vetoNote);
+  check("the blocker is still attributed to confidence",
     classifyBlocker(lowConfidence).id === "confidence", classifyBlocker(lowConfidence));
 }
 

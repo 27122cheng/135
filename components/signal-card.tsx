@@ -629,15 +629,39 @@ function ReferencePlan({ signal }: { signal: TradeSignal }) {
   const bt = ref.backtest;
   const hit = bt?.hitRate ?? null;
 
+  const vetoed = ref.vetoed === true;
   return (
-    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4">
+    <div
+      className={cn(
+        "rounded-xl border p-4",
+        vetoed
+          ? "border-dashed border-amber-500/30 bg-amber-500/[0.02]"
+          : "border-neutral-800 bg-neutral-900/40",
+      )}
+    >
       <div className="mb-2 flex flex-wrap items-baseline gap-2">
         <span className="text-sm font-medium text-neutral-200">若要做，會是這一組</span>
-        <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
-          非建議進場
+        <span
+          className={cn(
+            "rounded px-1.5 py-0.5 text-[10px]",
+            vetoed ? "bg-amber-500/15 text-amber-400" : "bg-neutral-800 text-neutral-400",
+          )}
+        >
+          {vetoed ? "未通過審查・僅紙上追蹤" : "非建議進場"}
         </span>
         <span className="ml-auto font-mono text-xs text-neutral-400">1:{ref.risk_reward}</span>
       </div>
+      {vetoed && ref.vetoNote && (
+        <p className="mb-2 rounded-lg bg-amber-500/[0.06] px-2.5 py-2 text-[11px] leading-relaxed text-amber-300/90">
+          ⚠ 系統<span className="font-medium">不建議</span>進場：{ref.vetoNote}
+          <br />
+          <span className="text-amber-400/70">
+            這組價位仍會被 5 分鐘監控逐筆追蹤到停損或停利，結果記入
+            <span className="text-amber-300">紙上追蹤</span>
+            ——目的是回頭檢驗「門檻擋掉的交易，實際上是賺是賠」。門檻擋錯了，數字會說話。
+          </span>
+        </p>
+      )}
 
       <dl className="grid grid-cols-3 gap-2">
         <div>

@@ -703,7 +703,7 @@ async function buildSignalForSymbol(
 
   if (tradePlan.stance !== "enter" && referenceGeometry === null) {
     gaps.push(
-      "本次不提供參考價位：沒有任何組合通過統計附加審查（實測期望值 <0 或勝率 <40% 即否決，風報比 ≥1:1.5）",
+      "本次連參考價位都沒有：現有結構組不出任何通過風報比 ≥1:1.5 的進出場組合（不是被統計否決，是結構本身不存在）",
     );
   }
 
@@ -834,6 +834,8 @@ async function buildSignalForSymbol(
           target_reason: referenceGeometry.targetReason,
           basis: referenceGeometry.basis,
           backtest: referenceGeometry.backtest,
+          vetoed: referenceGeometry.vetoed,
+          vetoNote: referenceGeometry.vetoNote,
         }
       : null,
     downgrades,
@@ -931,13 +933,21 @@ async function buildSignalForSymbol(
   // "低" is the existing vocabulary for that (below 45, see levelFor), not a
   // new threshold invented here. Above it, a signal that merely failed the
   // entry bar still shows its reference levels — that is what they are for.
+  // Marked, not deleted. Deleting it was the same mistake the veto made: a
+  // low-confidence run is *precisely* the sample that answers "are
+  // low-confidence signals actually worse?", and throwing it away meant the
+  // question could never be measured — while the monitor reported 「觀望且
+  // 沒有可追蹤的參考價位」 on 8 of 11 symbols and the learning loop starved.
+  // The levels stay, flagged, paper-tracked and never recommended.
   if (signal.reference_plan && signal.confidence?.level === "low") {
-    signal.reference_plan = null;
-    signal.data_gaps = [
-      ...signal.data_gaps,
-      `本次不提供參考價位：信心度 ${signal.confidence.score} 屬「低」，` +
-        `代表這次分析的證據本身不足，價位算得出來也不值得看`,
-    ];
+    signal.reference_plan = {
+      ...signal.reference_plan,
+      vetoed: true,
+      vetoNote:
+        `信心度 ${signal.confidence.score} 屬「低」——這次分析的證據本身不足，` +
+        `價位僅作紙上追蹤以累積證據，不建議進場` +
+        (signal.reference_plan.vetoNote ? `；另有：${signal.reference_plan.vetoNote}` : ""),
+    };
   }
 
   return signal;

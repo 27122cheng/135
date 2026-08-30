@@ -70,11 +70,15 @@ async function structureFor(
  * paper position opens where the analysis was standing.
  */
 function shadowPlan(signal: SignalRow): TradePlan | null {
-  // Only the vetted reference plan is paper-tracked — the levels that passed
-  // the 55% hit-rate floor and the 1:1.5 payoff floor. The raw computed
-  // levels used to be tracked here, which measured geometry no rule had
-  // approved; a win rate for levels nobody vetted answers a question nobody
-  // asked.
+  // The *selected* reference plan is paper-tracked — one combination the
+  // same search picked, not the raw list of nearby prices (that was the old
+  // bug: a win rate for levels nobody chose answers a question nobody asked).
+  //
+  // It is tracked whether or not the statistical veto passed it, and that is
+  // the point: the paper bucket exists to answer "is the gate costing
+  // money?", and gating what gets measured by the same gate makes the
+  // question unanswerable. A vetoed reference is labelled everywhere it
+  // appears, alerts nobody, and lands in the journal marked 紙上追蹤.
   const ref = signal.reference_plan;
   if (!ref) return null;
   const { entry, stop_loss: stop, take_profit: target } = ref;

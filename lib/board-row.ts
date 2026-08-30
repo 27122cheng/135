@@ -34,6 +34,9 @@ export interface BoardReference {
   stopLoss: number;
   stopReason: string;
   takeProfits: { price: number; allocationPct: number; structure: string }[];
+  /** True when the statistical veto refused it — shown, but never as advice. */
+  vetoed: boolean;
+  vetoNote: string | null;
 }
 
 /**
@@ -161,6 +164,11 @@ export function toReference(row: SignalRow): BoardReference | null {
     takeProfits: Number.isFinite(ref.take_profit)
       ? [{ price: ref.take_profit, allocationPct: 100, structure: ref.target_reason }]
       : [],
+    // Rows written before the paper tier stopped being gated carry neither
+    // field; they were only ever stored when they had passed, so absent
+    // reads as passed.
+    vetoed: ref.vetoed === true,
+    vetoNote: ref.vetoNote ?? null,
   };
 }
 

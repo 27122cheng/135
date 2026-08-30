@@ -614,15 +614,30 @@ export interface ReferenceGeometry {
   /** How it was chosen — the same sentence the traded plan carries. */
   basis: string;
   backtest: PlanBacktest | null;
+  /** False when the statistical veto refused it — tracked anyway, labelled. */
+  vetoed: boolean;
+  vetoNote: string | null;
 }
 
+/**
+ * 紙上追蹤一律成立 —— the paper tier is not a second gate.
+ *
+ * It used to be withheld whenever the veto fired, and the live monitor then
+ * reported 「觀望且沒有可追蹤的參考價位」 on 8 of 11 symbols: the learning
+ * loop had no input, the review page's paper bucket stayed empty, and the
+ * question the paper tier exists to answer — *is the gate costing money?* —
+ * became structurally unanswerable, because the gate also decided what got
+ * measured. A paper position costs nothing, alerts nobody and risks no
+ * money; the only thing it can do is produce evidence.
+ *
+ * So the best available geometry is always returned, carrying the veto's
+ * own verdict. Renderers show a vetoed reference differently and the
+ * journal marks its rows 紙上追蹤 — nobody is told to take it. What changes
+ * is that in a month there is a measured answer instead of an empty table.
+ */
 export function selectReferenceGeometry(input: TradePlanInput): ReferenceGeometry | null {
-  // The reference levels have their own floor (55%), set by the operator:
-  // paper trades below it teach nothing worth learning, and levels that
-  // cannot demonstrate it are not shown at all rather than shown with a
-  // caveat nobody reads.
   const picked = chooseGeometry(input, REFERENCE_PROFILE);
-  if (!picked || !picked.meetsFloor) return null;
+  if (!picked) return null;
   const { entry, sl, tp, rr, backtest } = picked.combo;
   return {
     entry: round(entry.price),
@@ -634,6 +649,14 @@ export function selectReferenceGeometry(input: TradePlanInput): ReferenceGeometr
     targetReason: tp.label,
     basis: picked.basis,
     backtest,
+    vetoed: !picked.meetsFloor,
+    vetoNote: picked.meetsFloor
+      ? null
+      : backtest
+        ? `實測期望值 ${backtest.expectancyR ?? "未知"}R、勝率 ${
+            backtest.hitRate === null ? "未知" : `${Math.round(backtest.hitRate * 100)}%`
+          }（不含打平）觸及否決線；仍以紙上追蹤累積證據，未建議進場`
+        : "樣本不足以驗證；仍以紙上追蹤累積證據，未建議進場",
   };
 }
 

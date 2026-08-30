@@ -1,5 +1,5 @@
 import { check, report } from "./_harness";
-import { buildTradePlan } from "@/lib/analysis/trade-plan";
+import { buildTradePlan, selectReferenceGeometry } from "@/lib/analysis/trade-plan";
 
 const cands = {
   entryCandidates: [{ price: 4120, label: "現價" }, { price: 4100, label: "回測" }],
@@ -125,6 +125,19 @@ async function main() {
       informed.stance === "wait", informed.summary);
     check("with the measured hit rate in the refusal",
       informed.summary.includes("勝率"), informed.summary);
+
+    // 紙上追蹤一律成立 — the same vetoed menu still yields a reference
+    // geometry, flagged. Withholding it was why the live monitor reported
+    // 「觀望且沒有可追蹤的參考價位」 on 8 of 11 symbols: the paper bucket
+    // that exists to test the gate was itself gated, so the learning loop
+    // had no input and the gate could never be proven wrong.
+    const paper = selectReferenceGeometry({ ...menu, candles });
+    check("a vetoed menu still produces a paper-tracked reference",
+      paper !== null, paper);
+    check("flagged as vetoed, so no renderer can present it as advice",
+      paper?.vetoed === true, paper?.vetoed);
+    check("carrying the measured reason rather than an invented one",
+      paper?.vetoNote?.includes("紙上追蹤") === true, paper?.vetoNote);
   }
 
   // ── the floor is passable, not decorative ────────────────────────

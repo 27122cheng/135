@@ -181,11 +181,23 @@ function ReferenceLevels({ row }: { row: BoardRow }) {
       : "text-red-400/70";
 
   return (
-    <div className="mt-2.5 rounded-lg border border-neutral-800 bg-neutral-950/60 px-2.5 py-2">
-      <p className="mb-1.5 flex items-baseline gap-2 text-[10px] text-neutral-500">
-        <span>參考價位</span>
+    <div
+      className={`mt-2.5 rounded-lg border px-2.5 py-2 ${
+        ref.vetoed
+          ? "border-dashed border-amber-500/30 bg-amber-500/[0.02]"
+          : "border-neutral-800 bg-neutral-950/60"
+      }`}
+    >
+      <p className="mb-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[10px] text-neutral-500">
+        <span className={ref.vetoed ? "text-amber-500/80" : ""}>
+          參考價位{ref.vetoed ? "（未通過審查，僅紙上追蹤）" : ""}
+        </span>
         <span className={dirTone}>{dir}</span>
-        <span className="text-neutral-600">已通過回測與風報比門檻，但未達可交易評等</span>
+        <span className="text-neutral-600">
+          {ref.vetoed
+            ? "系統不建議進場；仍逐筆追蹤到底，用來檢驗門檻本身是否擋錯"
+            : "已通過統計附加審查與風報比，但未達可交易評等"}
+        </span>
       </p>
       <dl className="grid grid-cols-3 gap-2">
         <div>
@@ -212,6 +224,9 @@ function ReferenceLevels({ row }: { row: BoardRow }) {
             </li>
           ))}
         </ul>
+      )}
+      {ref.vetoed && ref.vetoNote && (
+        <p className="mt-1.5 text-[10px] leading-relaxed text-amber-500/70">⚠ {ref.vetoNote}</p>
       )}
       <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-600">
         {ref.entryReason}
