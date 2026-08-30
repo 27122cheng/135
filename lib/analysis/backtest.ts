@@ -3,6 +3,7 @@ import { COMMODITIES } from "@/types/signal";
 import { totalCostFraction, tradingCostFor } from "@/config/trading-costs";
 import { ema, macd, rsi } from "./indicators";
 import { buildContext, type LabContext } from "./lab-conditions";
+import { PROXIMITY_ATR } from "./proximity";
 import { SCRATCH_R, classifyR, walkManaged } from "./lab-manage";
 
 /**
@@ -195,6 +196,33 @@ function tiersFor(direction: "long" | "short", candles: Candle[]): Tier[] {
   ];
 }
 
+/**
+ * 掛單等回踩，不是收盤追進 — how long a pending entry stays live, in bars.
+ *
+ * The walk used to enter at EVERY qualifying bar's close: a market order on
+ * every signal. But most plans this system writes are pullback limit orders
+ * («等回測 H4 前低上緣»), and buying every extended close is a materially
+ * worse trade than being filled on a dip into structure. The live sweep made
+ * the cost visible: grade-A setups on GER40 and US30 had *every* geometry
+ * measured as losing money, and the statistical veto — correctly, given what
+ * it was shown — refused them all.
+ *
+ * Five bars, because that is roughly how long the order actually stands: the
+ * scan reruns every 4 hours and withdraws a plan whose thesis has weakened,
+ * so an order that has not filled within a few daily bars would have been
+ * cancelled and replaced rather than left resting. An unfilled sample is not
+ * a loss and not a win — it is a trade that never happened, and it is
+ * excluded from the statistics with the fill rate reported alongside them.
+ */
+const FILL_WINDOW_BARS = 5;
+
+/**
+ * Below this the entry is at the market, not a pullback: rounding and the
+ * mid-of-zone convention put "現價進場" a hair off the last close, and
+ * treating that as a limit order would make it wait for a dip nobody planned.
+ */
+const MIN_PULLBACK_PCT = 0.0005;
+
 export function backtestPlanGeometry(
   direction: "long" | "short",
   entry: number,
@@ -257,42 +285,98 @@ function walk(
   // recommended.
   if (tpPct <= costFraction) return null;
 
+  // 這個計畫是掛單還是市價？ The plan's entry sits at some distance from the
+  // price the analysis was standing on (the newest close). A long whose entry
+  // is BELOW that price is a limit order waiting for a pullback — so the walk
+  // must wait for one too, or it is measuring a different trade. See
+  // FILL_WINDOW_BARS.
   const ctx = labCtxOf(candles);
+  const refPrice = candles[candles.length - 1].close;
+  const pullbackPct =
+    refPrice > 0
+      ? (direction === "long" ? refPrice - entry : entry - refPrice) / refPrice
+      : 0;
+  // Bounded by the live screen itself: `isNearEntry` only ever admits entry
+  // structures within PROXIMITY_ATR of the entry zone, so a requested
+  // pullback deeper than that is not an order this system would place — a
+  // stale entry against a moved market, or a synthetic input. Simulating it
+  // as a resting limit would answer with silence (nothing ever fills) when
+  // the honest answer is the relative geometry measured at the market.
+  const refAtr = ctx.atr[candles.length - 1];
+  const withinLiveScreen =
+    refAtr !== null && refAtr > 0 && refPrice > 0
+      ? pullbackPct * refPrice <= refAtr * PROXIMITY_ATR
+      : false;
+  const isLimitOrder = pullbackPct > MIN_PULLBACK_PCT && withinLiveScreen;
+
   let wins = 0;
   let losses = 0;
   let scratches = 0;
   let sumR = 0;
   let hadAmbiguousBars = false;
   let sampled = 0;
+  let unfilled = 0;
 
   const lastStart = candles.length - horizonBars - 1;
   for (let i = 0; i <= lastStart; i++) {
-    const e = candles[i].close;
-    if (!(e > 0)) continue;
+    const signalPrice = candles[i].close;
+    if (!(signalPrice > 0)) continue;
     if (tier.accept) {
       // The first bars of every indicator are still converging from their
       // seeds, so they are skipped rather than classified on numbers that are
       // mostly the first close.
       if (i < 50) continue;
-      if (!tier.accept(i, e)) continue;
+      if (!tier.accept(i, signalPrice)) continue;
     }
+    sampled++;
+
+    // 掛單模擬：on a pullback plan the order rests below (long) the price the
+    // signal fired at, and only a bar that trades down to it fills. Nothing
+    // here peeks — the level is set from bar i's close and the fill is looked
+    // for on bars strictly after it.
+    let entryBar = i;
+    let e = signalPrice;
+    if (isLimitOrder) {
+      const limit =
+        direction === "long"
+          ? signalPrice * (1 - pullbackPct)
+          : signalPrice * (1 + pullbackPct);
+      let filled = -1;
+      const last = Math.min(i + FILL_WINDOW_BARS, candles.length - 1);
+      for (let j = i + 1; j <= last; j++) {
+        const touched =
+          direction === "long" ? candles[j].low <= limit : candles[j].high >= limit;
+        if (touched) {
+          filled = j;
+          break;
+        }
+      }
+      // Never filled: the order would have been cancelled with the plan. Not
+      // a loss, not a win — a trade that did not happen.
+      if (filled < 0) {
+        unfilled++;
+        continue;
+      }
+      entryBar = filled;
+      e = limit;
+    }
+
     // The trailing buffer is measured in the entry bar's ATR; a bar without
     // one cannot be managed the way the live trade will be, so it is skipped
     // rather than simulated under different rules.
-    const a = ctx.atr[i];
+    const a = ctx.atr[entryBar];
     if (a === null || !(a > 0)) continue;
-    sampled++;
 
     const slLevel = direction === "long" ? e * (1 - slPct) : e * (1 + slPct);
     const tpLevel = direction === "long" ? e * (1 + tpPct) : e * (1 - tpPct);
-    // The shared exit engine: breakeven at 1R, structure trailing, opposite
-    // CHoCH exit, market close at the horizon, stop-first pessimism inside
-    // each bar, cost charged against every exit. Identical to what the
-    // monitor runs on the live position and what the lab measures.
+    // The shared exit engine: scale-out at a ≥2R target, breakeven at 1R,
+    // structure trailing, opposite CHoCH exit, market close at the horizon,
+    // stop-first pessimism inside each bar, cost charged against every exit.
+    // Identical to what the monitor runs on the live position.
     const exit = walkManaged({
       ctx,
       direction,
-      firstBar: i + 1,
+      firstBar: entryBar + 1,
       entry: e,
       stop: slLevel,
       target: tpLevel,
@@ -344,7 +428,12 @@ function walk(
     conditioned: tier.conditioned,
     costPct: Math.round(costFraction * 100 * 1000) / 1000,
     basis:
-      `只取「${tier.label}」的 ${sampled} 根 K 棒為進場點，依實際執行的管理規則模擬` +
+      `只取「${tier.label}」的 ${sampled} 根 K 棒為訊號點，` +
+      (isLimitOrder
+        ? `依本計畫的回踩掛單模擬（掛在訊號價下方 ${(pullbackPct * 100).toFixed(2)}%，` +
+          `${FILL_WINDOW_BARS} 根內未成交就視同撤單：${sampled - unfilled} 筆成交、${unfilled} 筆未成交），`
+        : `本計畫為現價進場，於訊號當根收盤成交，`) +
+      `再依實際執行的管理規則模擬` +
       `（停利 ≥2R 先平一半、不足則全出、1R 保本、結構移停、反向 CHoCH 出場、逾時以市價結束），` +
       `勝率不含 |R|≤${SCRATCH_R} 的打平，已扣除來回交易成本 ${(costFraction * 100).toFixed(3)}%`,
   };

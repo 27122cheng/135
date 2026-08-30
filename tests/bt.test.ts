@@ -37,4 +37,65 @@ check("straddle must count as loss, not win", r4.hadAmbiguousBars && r4.wins ===
 // 5. Too few candles -> null, not a fabricated stat.
 check("insufficient data must return null", backtestPlanGeometry("long", 100, 99, 102, bars([100, 101, 102])) === null);
 
+// ── 掛單等回踩，不是收盤追進 ──────────────────────────────────────
+//
+// Most plans this system writes are pullback limit orders («等回測 H4 前低
+// 上緣»), and the walk used to enter at every qualifying bar's close — a
+// market order, i.e. a materially different and worse trade. The live cost
+// was visible: grade-A setups on GER40 and US30 had *every* geometry
+// measured as losing money, so the statistical veto refused them all.
+{
+  // A market that never dips: a pullback order resting below each signal
+  // bar never fills, and the honest answer is "this measured nothing",
+  // not a market entry's numbers wearing a limit order's label.
+  const climb = bars(Array.from({ length: 120 }, (_, i) => 100 + i * 0.5), 0.001);
+  const refClimb = climb[climb.length - 1].close;
+  const limitNeverFills = backtestPlanGeometry(
+    "long",
+    refClimb * 0.995, // 0.5% below the price the signal fired at
+    refClimb * 0.985,
+    refClimb * 1.02,
+    climb,
+  )!;
+  check("a pullback order in a market that never dips fills nothing",
+    limitNeverFills.resolved === 0, limitNeverFills.resolved);
+  check("and the basis says so rather than implying a market entry",
+    limitNeverFills.basis?.includes("回踩掛單") === true &&
+      limitNeverFills.basis?.includes("未成交") === true,
+    limitNeverFills.basis);
+
+  // An oscillating market does offer the dip: the order fills, and it fills
+  // at the limit — a better price than the close that triggered it.
+  const swing = bars(
+    Array.from({ length: 200 }, (_, i) => 100 + 4 * Math.sin(i / 2)),
+    0.002,
+  );
+  const refSwing = swing[swing.length - 1].close;
+  const fills = backtestPlanGeometry(
+    "long",
+    refSwing * 0.99,
+    refSwing * 0.975,
+    refSwing * 1.03,
+    swing,
+  )!;
+  check("a pullback order does fill when the market dips", fills.resolved > 0, fills.resolved);
+  check("and the basis reports the fill count honestly",
+    fills.basis?.includes("筆成交") === true, fills.basis);
+
+  // A market entry is still a market entry: the entry sits at the price the
+  // signal fired at, so it fills on that bar's close and says so.
+  const atMarket = backtestPlanGeometry("long", refSwing, refSwing * 0.975, refSwing * 1.03, swing)!;
+  check("a 現價進場 plan is not simulated as a limit order",
+    atMarket.basis?.includes("現價進場") === true, atMarket.basis);
+
+  // The bound is the live screen's own: `isNearEntry` never admits a
+  // structure further than PROXIMITY_ATR from the zone, so an entry beyond
+  // that is a mismatch (a stale plan, a synthetic input) and is measured on
+  // its relative geometry at the market rather than answered with silence.
+  // Fixture 1 above is exactly that case — entry 100 against a series that
+  // ends near 299 — and it still produces a full sample.
+  check("an entry beyond the live proximity screen falls back to market entry",
+    r1.resolved > 0 && r1.basis?.includes("現價進場") === true, r1.basis);
+}
+
 report("bt");

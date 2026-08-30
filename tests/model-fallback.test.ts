@@ -53,9 +53,13 @@ async function main() {
   {
     reset();
     process.env.GEMINI_API_KEY = "x";
+    // The FIRST id is the one stubbed dead — the walk only proves anything
+    // when the head of the list fails. (The alias leads the list now: a
+    // retired versioned id was killing the whole provider while a
+    // version-agnostic pointer sat behind it.)
     const seen = stubFetch((url) =>
-      url.includes("gemini-2.5-flash")
-        ? { status: 404, json: { error: { message: "models/gemini-2.5-flash is not found" } } }
+      url.includes("gemini-flash-latest")
+        ? { status: 404, json: { error: { message: "models/gemini-flash-latest is not found" } } }
         : url.includes("googleapis")
           ? { status: 200, json: geminiOk }
           : { status: 500, body: "no" },

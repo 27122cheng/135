@@ -15,11 +15,28 @@ import { AIProviderError, type AIProvider, type CompleteOptions, type ResponseSc
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 /**
- * In preference order. Google retires free access to old Flash models on its
- * own schedule; when the first id dies the next is tried, and the alias at
- * the end tracks whatever Google currently calls its default Flash.
+ * In preference order, **alias first**.
+ *
+ * The versioned ids were first and the alias last, and the live sweep showed
+ * exactly why that is backwards: Google retired gemini-2.0-flash and answered
+ * every call with `no longer available … use models/gemini-3.6-flash`, so the
+ * whole provider died across every symbol («所有 AI 供應商皆無法回應») while
+ * an alias that would have worked sat behind two dead ids — each costing a
+ * round trip against a 12-second provider budget that then had nothing left
+ * for the catalogue lookup.
+ *
+ * `gemini-flash-latest` is Google's own version-agnostic pointer at its
+ * current default Flash: putting it first means a rename costs zero requests
+ * instead of killing the dimension until someone redeploys. The versioned ids
+ * follow as the fallback for a key whose account cannot call the alias —
+ * gemini-3.6-flash named by Google's own error message, then the older ones.
  */
-const DEFAULT_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"];
+const DEFAULT_MODELS = [
+  "gemini-flash-latest",
+  "gemini-3.6-flash",
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+];
 
 interface GeminiResponse {
   candidates?: Array<{
