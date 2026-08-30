@@ -54,6 +54,14 @@ export interface TradePlanInput {
    */
   dayHitRateFloorBump?: number;
   /**
+   * 行情性質給的目標可及距離，in ATR — from the thesis's playbook.
+   *
+   * A range's targets are bounded by the range; a trend's are not. Passing
+   * it here is what turns 「讀了行情性質卻不改打法」 into an actual change
+   * of behaviour. Absent falls back to the profile's own default.
+   */
+  regimeMaxTargetAtr?: number;
+  /**
    * `symbol:h4BarTime` — a stable identity for the AI cache, so an hourly
    * sweep inside one H4 bar asks the model once rather than four times.
    */
@@ -69,6 +77,29 @@ export function effectiveDayProfile(bump: number | undefined): HorizonProfile {
   // Carried as its own field rather than added into minHitRate, so the base
   // floor and the audit's demand stay separately visible in every message.
   return { ...DAY_PROFILE, hitRateBump: extra };
+}
+
+/**
+ * 依行情性質調整目標可及距離 —— the one place the playbook actually bites.
+ *
+ * A range has a ceiling by definition: its width. A trend does not. Applying
+ * the same 2×ATR target reach to both was the concrete form of 「一套打法用
+ * 到底」 — in a trend it truncated every winner at the nearest shelf, and in
+ * a range it admitted targets the range could never deliver.
+ *
+ * Reach only. The veto lines, the payoff floor and the ATR stop screens are
+ * untouched: this decides how far a target may sit, not whether a measured
+ * loser may trade.
+ */
+export function regimeAdjustedProfile(
+  profile: HorizonProfile,
+  maxTargetAtr: number | undefined,
+): HorizonProfile {
+  if (typeof maxTargetAtr !== "number" || !Number.isFinite(maxTargetAtr) || maxTargetAtr <= 0) {
+    return profile;
+  }
+  if (maxTargetAtr === profile.maxTargetAtr) return profile;
+  return { ...profile, maxTargetAtr };
 }
 
 function round(n: number): number {
@@ -696,7 +727,10 @@ function fallbackPlan(input: TradePlanInput, why: string | null): TradePlan {
     );
   }
 
-  const dayProfile = effectiveDayProfile(input.dayHitRateFloorBump);
+  const dayProfile = regimeAdjustedProfile(
+    effectiveDayProfile(input.dayHitRateFloorBump),
+    input.regimeMaxTargetAtr,
+  );
   const picked = chooseGeometry(input, dayProfile);
   if (!picked) {
     // Either there were no candidates at all, or every combination lost on
@@ -916,7 +950,10 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
       ? backtestPlanGeometry(input.direction, entry.price, sl.price, tp.price, input.candles, undefined, input.symbol)
       : null;
   const aiHit = aiBacktest?.hitRate ?? null;
-  const aiDayProfile = effectiveDayProfile(input.dayHitRateFloorBump);
+  const aiDayProfile = regimeAdjustedProfile(
+    effectiveDayProfile(input.dayHitRateFloorBump),
+    input.regimeMaxTargetAtr,
+  );
   if (
     aiBacktest === null ||
     aiBacktest.resolved < MIN_RESOLVED_FOR_RANKING ||

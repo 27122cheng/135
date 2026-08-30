@@ -973,6 +973,119 @@ function MarketRegime({ items }: { items: BiasItem[] }) {
  * card — see lib/analysis/trader-view.ts for why it is composed rather than
  * generated.
  */
+/**
+ * 論點 — the reasoning, the playbook, and the invalidation list.
+ *
+ * The card used to show conclusions and scores; a reader could not follow
+ * "because A and B, therefore C, unless D". This is the D and the therefore.
+ * Absent on rows written before the thesis existed — the card simply omits
+ * the section rather than pretending.
+ */
+function ThesisCard({ signal }: { signal: TradeSignal }) {
+  const t = signal.thesis;
+  if (!t) return null;
+  const p = t.playbook;
+
+  return (
+    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4">
+      <div className="mb-3 flex flex-wrap items-baseline gap-2">
+        <span className="text-sm font-medium text-neutral-200">分析論點</span>
+        <span
+          className={cn(
+            "rounded px-1.5 py-0.5 text-[11px]",
+            p.regime === "trending"
+              ? "bg-emerald-500/15 text-emerald-400"
+              : p.regime === "ranging"
+                ? "bg-sky-500/15 text-sky-400"
+                : "bg-neutral-800 text-neutral-400",
+          )}
+        >
+          {p.regimeLabel}
+        </span>
+        <span className="text-[11px] text-neutral-400">打法：{p.label}</span>
+      </div>
+
+      {p.fightsRegime && p.fightNote && (
+        <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-2.5 py-2 text-[11px] leading-relaxed text-amber-300">
+          ⚠ {p.fightNote}
+        </p>
+      )}
+
+      {/* 推理過程：ordered, each step carrying its own evidence. */}
+      <ol className="flex flex-col gap-2.5">
+        {t.reasoning.map((s) => (
+          <li key={s.step} className="border-l-2 border-neutral-700 pl-3">
+            <p className="text-[11px] text-neutral-500">{s.step}</p>
+            <p className="mt-0.5 text-xs font-medium leading-relaxed text-neutral-200">{s.claim}</p>
+            <ul className="mt-1 flex flex-col gap-0.5">
+              {s.evidence.map((e, i) => (
+                <li key={i} className="text-[11px] leading-relaxed text-neutral-500">
+                  · {e}
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ol>
+
+      {/* 情境折扣：which votes this market discounts, and why. */}
+      {t.convictionPenalty > 0 && (
+        <details className="mt-3 border-t border-neutral-800 pt-3">
+          <summary className="cursor-pointer text-xs text-neutral-400 hover:text-neutral-200">
+            情境折扣：淨分 {t.rawBias} → {t.adjustedBias}
+            <span className="ml-2 text-[11px] text-amber-400/80">
+              −{t.convictionPenalty}
+            </span>
+          </summary>
+          <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
+            六個面向不是平行相加：落後三天的部位資料在剛起的趨勢裡系統性站錯邊，
+            日線級別的利差若與盤面相反多半已反映在價格上，沒有排程數據推動的新聞情緒衰減得快。
+            下面列出這個市場對每一票的折扣與理由。
+          </p>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {t.conditional
+              .filter((c) => c.multiplier !== 1 && c.raw !== 0)
+              .map((c, i) => (
+                <li key={i} className="text-[11px] leading-relaxed">
+                  <span className="text-neutral-300">
+                    {c.dimension} ×{c.multiplier}
+                  </span>
+                  <span className="font-mono text-neutral-500">
+                    {" "}
+                    {c.raw} → {c.effective}
+                  </span>
+                  <br />
+                  <span className="text-neutral-500">{c.why}</span>
+                </li>
+              ))}
+          </ul>
+        </details>
+      )}
+
+      {/* 反證條件 — written before the position exists, on purpose. */}
+      {t.invalidations.length > 0 && (
+        <div className="mt-3 border-t border-neutral-800 pt-3">
+          <p className="mb-1.5 text-xs text-neutral-400">
+            什麼會證明這個論點看錯
+            <span className="ml-2 text-[11px] text-neutral-500">
+              進場前先寫下來，進場後心會自己談判
+            </span>
+          </p>
+          <ul className="flex flex-col gap-1.5">
+            {t.invalidations.map((inv, i) => (
+              <li key={i} className="text-[11px] leading-relaxed">
+                <span className="text-red-400/80">✕ {inv.trigger}</span>
+                <br />
+                <span className="text-neutral-500">{inv.meaning}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TraderViewCard({ signal }: { signal: TradeSignal }) {
   const view = buildTraderView(signal);
   const convictionLabel = { high: "高", medium: "中", low: "低" }[view.conviction];
@@ -1295,6 +1408,10 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
       {signal.lab_gate && <LabGateCard gate={signal.lab_gate} />}
 
       {signal.interventions.length > 0 && <Interventions items={signal.interventions} />}
+
+      {/* 論點在最前面：行情性質決定打法，打法決定價位怎麼挑。讀者要能跟著
+          「因為 A 且 B，所以 C，除非 D」走一遍，而不是只看到分數。 */}
+      <ThesisCard signal={signal} />
 
       {/* 頂級交易員視角在新聞之上：新聞是輸入，先有自己的看法才有判斷新聞的標準。 */}
       <TraderViewCard signal={signal} />

@@ -6,6 +6,7 @@ import { fetchLatestPrice } from "./data-sources/yfinance";
 import { atr as computeAtr } from "./analysis/indicators";
 import { analyzeTechnical } from "./analysis/technical";
 import { EVENT_BLACKOUT_MS, analyzeTiming, upcomingHighImpactEvent } from "./analysis/timing";
+import { buildThesis, playbookFor } from "./analysis/thesis";
 import { detectAllPatterns, patternContributions } from "./analysis/patterns";
 import { dedupeBiasItems } from "./analysis/evidence";
 import { describeProximity, isNearEntry } from "./analysis/proximity";
@@ -534,6 +535,17 @@ async function buildSignalForSymbol(
     grade = trendGate.grade;
   }
 
+  // 情境折扣 — the conditional layer, recorded where every other subtraction
+  // is recorded. It never changes the grade (the grade table has its own
+  // tested inputs); what it does is make the erosion visible in the same
+  // place the reader already looks for reasons a signal was held back, so
+  // 「方向分 6」 that is really 「6 分裡有 4 分來自落後三天的部位資料」 stops
+  // reading as conviction. Subtract-only, like every gate here.
+  {
+    const t = playbookFor({ direction, directionTie: tie, biasItems });
+    if (t.fightsRegime && t.fightNote) downgrades.push(`逆行情打法：${t.fightNote}`);
+  }
+
   // ── Stage 3 干涉 ────────────────────────────────────────────────
   // Everything below can only hold the grade or push it down. `grade` at this
   // point is the baseline the penalties are clamped against.
@@ -638,6 +650,11 @@ async function buildSignalForSymbol(
     },
     atrD1,
   );
+  // 行情性質先讀，再選打法 — the playbook depends only on the regime and the
+  // direction, so it is available before any level is picked, and its target
+  // reach goes into the geometry search rather than being reported after it.
+  const playbook = playbookFor({ direction, directionTie: tie, biasItems });
+
   // Even on a no-trade grade the AI is still asked to weigh in — it can't turn
   // it into an entry (gradeForcesWait), but it can explain what to wait for.
   const tradePlan = await buildTradePlan(
@@ -645,6 +662,7 @@ async function buildSignalForSymbol(
       symbol: meta.symbol,
       direction,
       grade,
+      regimeMaxTargetAtr: playbook.maxTargetAtr,
       bias_score: score.biasScore,
       entry_structure_score: score.entryStructureScore,
       total_score: score.totalScore,
@@ -799,6 +817,11 @@ async function buildSignalForSymbol(
   // noisy — it moves the number that decides whether this is tradeable.
   const dedupedGaps = collapseCascades(gaps);
 
+  // The 24-hour window the thesis reports on, distinct from the 2-hour hard
+  // blackout applied further down: inside a day of a release the news vote is
+  // worth more and the invalidation list should name the print.
+  const eventForThesis = upcomingHighImpactEvent(new Date(), 24 * 60 * 60 * 1000);
+
   const signal: TradeSignal = {
     symbol: meta.symbol,
     direction,
@@ -816,6 +839,24 @@ async function buildSignalForSymbol(
     news_digest: news.digest,
     narrative,
     trade_plan: tradePlan,
+    // 論點 — regime, playbook, conditional weighting, invalidations and the
+    // reasoning chain. Built from evidence already gathered, so it costs no
+    // request; see lib/analysis/thesis.ts for what each layer answers.
+    thesis: buildThesis({
+      direction,
+      directionTie: tie,
+      biasItems,
+      entryStructures: technical.entryStructures,
+      atr: atrD1,
+      price: entryZone.high > 0 ? (entryZone.low + entryZone.high) / 2 : null,
+      plan: {
+        entry: tradePlan.entry,
+        stopLoss: tradePlan.stop_loss,
+        takeProfit: tradePlan.take_profit,
+      },
+      eventMinutesAway: eventForThesis?.minutesAway ?? null,
+      eventLabel: eventForThesis?.label ?? null,
+    }),
     plan_backtest: planBacktest,
     interventions,
     direction_tie: tie,

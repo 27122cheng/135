@@ -4,6 +4,9 @@
  */
 
 import type { AppliedIntervention } from "./journal";
+// Type-only, so it is erased at compile time and the modules stay acyclic at
+// runtime: thesis.ts imports this file's types, this file imports only its type.
+import type { Thesis } from "@/lib/analysis/thesis";
 
 /**
  * H4 / D1 / W1 only. Intraday below 4h is deliberately out of scope: the free
@@ -343,6 +346,16 @@ export interface TradeSignal {
   narrative: string;
   /** The one recommendation to act on — see TradePlan. */
   trade_plan: TradePlan;
+  /**
+   * 論點 — the reasoning layer: which market regime this is, which playbook
+   * that regime calls for, which votes the context discounts, what would
+   * prove the whole thing wrong, and the ordered steps that got here.
+   *
+   * Optional because rows written before it exists lack it; every renderer
+   * treats its absence as "show the old summary" rather than an error.
+   * See lib/analysis/thesis.ts.
+   */
+  thesis?: Thesis | null;
   /** Historical feasibility check on trade_plan's geometry; null when not computable. */
   plan_backtest: PlanBacktest | null;
   /**
