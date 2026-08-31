@@ -10,7 +10,7 @@ import type {
   SignalStore,
   StoredRelease,
 } from "./index";
-import { signalExtras, unpackSignalRow } from "./signal-extras";
+import { isoString, numberOf, signalExtras, unpackSignalRow } from "./signal-extras";
 import type { PlanState } from "@/lib/monitor/plan-state";
 
 /**
@@ -257,7 +257,7 @@ export function postgresStore(connectionString: string): SignalStore {
         )
         returning *
       `;
-        return rows[0] as unknown as JournalEntry;
+        return toJournalEntry(rows[0] as unknown as Record<string, unknown>);
       } catch (err) {
         throw explain(err);
       }
@@ -274,7 +274,7 @@ export function postgresStore(connectionString: string): SignalStore {
         order by closed_at desc
         limit ${options.limit}
       `;
-        return rows as unknown as JournalEntry[];
+        return (rows as unknown as Record<string, unknown>[]).map(toJournalEntry);
       } catch (err) {
         throw explain(err);
       }
@@ -522,6 +522,43 @@ export function postgresStore(connectionString: string): SignalStore {
         throw explain(err);
       }
     },
+  };
+}
+
+/**
+ * A trade_journal row as the `JournalEntry` its type promises.
+ *
+ * `select *` hands back whatever the driver decodes to, and the Neon HTTP
+ * driver decodes `timestamptz` to a JS `Date` and `numeric` to a string. The
+ * journal readers treat these as the string/number the type declares —
+ * `closed_at.slice(0, 10)` to bucket by day, `localeCompare` to sort the
+ * equity curve — so a blind cast made /api/review throw
+ * `closed_at.slice is not a function` the moment the table had rows in it.
+ * Supabase's PostgREST returns JSON strings, which is why the same reader
+ * code was fine there and the mismatch only ever showed in production.
+ */
+export function toJournalEntry(row: Record<string, unknown>): JournalEntry {
+  const str = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v));
+  const nullableStr = (v: unknown): string | null =>
+    v == null ? null : typeof v === "string" ? v : String(v);
+  const result = str(row.result);
+  return {
+    id: str(row.id),
+    signal_id: nullableStr(row.signal_id),
+    symbol: str(row.symbol),
+    direction: row.direction === "short" ? "short" : "long",
+    grade: str(row.grade),
+    entry_price: numberOf(row.entry_price),
+    exit_price: numberOf(row.exit_price),
+    result: (result === "win" || result === "loss" || result === "breakeven"
+      ? result
+      : "breakeven") as JournalEntry["result"],
+    pnl_pct: numberOf(row.pnl_pct),
+    closed_at: isoString(row.closed_at),
+    stop_reason_tag: (nullableStr(row.stop_reason_tag) ?? null) as JournalEntry["stop_reason_tag"],
+    severity: row.severity == null ? null : numberOf(row.severity),
+    review_note: nullableStr(row.review_note),
+    created_at: isoString(row.created_at),
   };
 }
 

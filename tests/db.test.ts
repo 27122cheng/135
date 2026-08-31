@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { check, report } from "./_harness";
 import { directNeonUrl } from "@/lib/db";
 import { signalExtras, unpackSignalRow } from "@/lib/db/signal-extras";
-import { explain } from "@/lib/db/postgres-store";
+import { explain, toJournalEntry } from "@/lib/db/postgres-store";
 import { REQUIRED_TABLES, SCHEMA_SQL, schemaStatements } from "@/lib/db/schema";
 import { USER_SETTABLE_KEYS } from "@/lib/api-key-names";
 import { parseUserKeyHeader } from "@/lib/api-keys";
@@ -203,6 +203,70 @@ import type { TradeSignal } from "@/types/signal";
     check(`${name} falls back when the column is missing`, /extras/i.test(src) &&
       src.includes("/extras/i"), name);
   }
+}
+
+/**
+ * The driver's types, not the declared ones.
+ *
+ * /api/review returned 500 with `e.closed_at.slice is not a function` the day
+ * the journal first had rows in it: the Neon HTTP driver decodes `timestamptz`
+ * to a JS `Date` and `numeric` to a string, and the readers call
+ * `.slice(0, 10)` and `localeCompare` on fields the type declares as strings.
+ * Supabase's PostgREST hands back JSON strings, so nothing in test or in the
+ * Supabase deployment ever saw it. Normalise at the store boundary.
+ */
+{
+  const closed = new Date("2026-08-30T14:05:00.000Z");
+  const e = toJournalEntry({
+    id: 7,
+    signal_id: null,
+    symbol: "XAUUSD",
+    direction: "long",
+    grade: "A",
+    entry_price: "3421.50",
+    exit_price: "3455.25",
+    result: "win",
+    pnl_pct: "0.98",
+    closed_at: closed,
+    stop_reason_tag: null,
+    severity: "2",
+    review_note: null,
+    created_at: closed,
+  });
+
+  check("a Date closed_at becomes an ISO string",
+    typeof e.closed_at === "string" && e.closed_at.slice(0, 10) === "2026-08-30", e.closed_at);
+  check("and created_at with it", typeof e.created_at === "string", e.created_at);
+  check("numeric columns become numbers",
+    e.entry_price === 3421.5 && e.exit_price === 3455.25 && e.pnl_pct === 0.98,
+    [e.entry_price, e.exit_price, e.pnl_pct]);
+  check("severity too, when present", e.severity === 2, e.severity);
+  check("a bigint id becomes a string", e.id === "7", e.id);
+  check("sortable against another row",
+    typeof e.closed_at.localeCompare === "function" &&
+      e.closed_at.localeCompare("2026-08-29T00:00:00.000Z") > 0);
+
+  // Nulls stay null rather than becoming the string "null" — the review page
+  // keys 「未分類」 off a null stop_reason_tag.
+  const bare = toJournalEntry({
+    id: "x", symbol: "US30", direction: "short", grade: "B",
+    result: "loss", closed_at: "2026-08-30T00:00:00.000Z",
+    stop_reason_tag: null, severity: null, review_note: null, signal_id: null,
+  });
+  check("null tags stay null", bare.stop_reason_tag === null && bare.severity === null);
+  check("a missing numeric falls back to 0 rather than NaN",
+    bare.pnl_pct === 0 && Number.isFinite(bare.pnl_pct), bare.pnl_pct);
+  check("an already-string timestamp is untouched",
+    bare.closed_at === "2026-08-30T00:00:00.000Z", bare.closed_at);
+
+  // And the store actually routes both journal reads through it — structural,
+  // so a later `select *` cannot quietly reintroduce the blind cast.
+  const pg = readFileSync(join(__dirname, "..", "lib", "db", "postgres-store.ts"), "utf8");
+  check("postgres never casts a journal row blind",
+    !pg.includes("as unknown as JournalEntry"), "blind cast is back");
+  check("the single-row read normalises",
+    pg.includes("return toJournalEntry(rows[0]"), "insertJournalEntry");
+  check("the list read normalises", pg.includes(".map(toJournalEntry)"), "listJournal");
 }
 
 report("db setup errors");
