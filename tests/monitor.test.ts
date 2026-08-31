@@ -256,7 +256,55 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   check("the remainder's stop-out terminates", scaledStop.memory.state === "stop_hit", scaledStop.memory.state);
   check("and says the first half was banked",
     scaledStop.events.some((e) => e.kind === "stop_hit" && e.headline.includes("剩餘半倉")), scaledStop.events);
-  check("it points at the journal", scaledStop.events.some((e) => e.detail.includes("/review")));
+  // 結束不是交作業給使用者。The message used to end with 「請到 /review 記錄
+  // 並選一個 S1–S8 停損原因」 — asking the reader to hand-do the very
+  // classification recordResolvedPlan performs seconds later, and never
+  // showing them its answer.
+  check("the close-out never asks the reader to classify it themselves",
+    scaledStop.events.every((e) => !/請到 \/review|選一個 S1/.test(e.detail)), scaledStop.events);
+  check("it says the system is settling it instead",
+    scaledStop.events.some((e) => /系統/.test(e.detail)), scaledStop.events);
+
+  // And the push carries the conclusion the journal just recorded.
+  const withLesson = formatMonitorAlert("XAUUSD", "long", scaledStop.events, 5, "https://x.app", {
+    entry: 2000,
+    generatedAt: "2026-08-21T09:00:00Z",
+    resolution: {
+      kind: "觸及停損",
+      result: "loss",
+      pnlPct: -1.2,
+      tag: "S3",
+      label: "停損過窄被掃（結構抓對但 buffer 不足）",
+      decidedBy: "rules",
+      why: "最大順向 1.4R 後才回落觸及停損，方向判斷正確而停損距離不足。",
+      consequence: "可事前預防。累積後會加大停損的 ATR buffer，讓停損離結構更遠。",
+      severity: 4,
+    },
+  });
+  check("the resolution push names the classified reason", withLesson.includes("S3"), withLesson);
+  check("and who decided it", withLesson.includes("規則判定"), withLesson);
+  check("and the reasoning written at classification time",
+    withLesson.includes("最大順向 1.4R"), withLesson);
+  check("and — the part that makes it learning — what changes next time",
+    withLesson.includes("加大停損的 ATR buffer"), withLesson);
+  check("and states it is already recorded, so nothing is asked of the reader",
+    withLesson.includes("已寫入交易日誌"), withLesson);
+  check("a win reports the settlement without inventing a stop reason", (() => {
+    const win = formatMonitorAlert("XAUUSD", "long", scaledStop.events, 5, undefined, {
+      resolution: {
+        kind: "觸及停利", result: "win", pnlPct: 2.4, tag: null, label: null,
+        decidedBy: null, why: null, consequence: null, severity: null,
+      },
+    });
+    return (
+      win.includes("獲利 +2.4%") &&
+      // No classified-reason line at all — S1–S8 diagnoses stop-outs, and
+      // labelling a winner with one would teach the intervention engine
+      // something that never happened.
+      !win.includes("停損原因（系統判定）") &&
+      win.includes("只分類停損")
+    );
+  })());
   // A structure flip closes the scaled remainder too.
   const scaledFlip = advancePlan({
     direction: "long", plan: plan(), price: 2050, priceAgeMinutes: 5,

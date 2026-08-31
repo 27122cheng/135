@@ -305,27 +305,16 @@ export async function GET(request: Request) {
         };
       }
 
-      let notified: string[] = [];
-      if (events.length > 0 && !paper) {
-        const results = await notifyAll(
-          formatMonitorAlert(meta.symbol, tracked.direction, events, quote.ageMinutes, appUrl, {
-            entry: plan.entry,
-            generatedAt: tracked.generatedAt,
-            // The newest stored analysis, not the tracked snapshot: an add-on
-            // days later must know whether the thesis it would be adding to
-            // still stands.
-            analysisSupports:
-              latest.trade_plan?.stance === "enter" && latest.direction === tracked.direction,
-          }),
-        );
-        notified = results.filter((r) => r.ok).map((r) => r.channel);
-      }
-
-      // The loop the whole Stage 3 machinery was built for and never got to
-      // run: a resolved plan is written to the journal, a stop-out is
-      // classified, and the classification tightens how the next signal for
-      // this symbol is built.
+      // 先結算，再通知 —— the order matters, and it was backwards.
+      //
+      // The classification (S1–S8, the reasoning, the severity, what it
+      // tightens next) was computed here and written to the journal, but the
+      // push had already gone out telling the reader to 「到 /review 記錄並選
+      // 一個 S1–S8 停損原因」 — asking them to hand-do work the system had
+      // just done, and never showing the answer. Resolving first lets the one
+      // message carry the system's own conclusion.
       let review: string | null = null;
+      let resolution: Awaited<ReturnType<typeof recordResolvedPlan>>["outcome"] = null;
       const resolved = events.find(
         (e) => e.kind === "stop_hit" || e.kind === "target_hit" || e.kind === "structure_exit",
       );
@@ -361,6 +350,25 @@ export async function GET(request: Request) {
           gaps,
         });
         review = logged.note;
+        resolution = logged.outcome;
+      }
+
+      let notified: string[] = [];
+      if (events.length > 0 && !paper) {
+        const results = await notifyAll(
+          formatMonitorAlert(meta.symbol, tracked.direction, events, quote.ageMinutes, appUrl, {
+            entry: plan.entry,
+            generatedAt: tracked.generatedAt,
+            // The newest stored analysis, not the tracked snapshot: an add-on
+            // days later must know whether the thesis it would be adding to
+            // still stands.
+            analysisSupports:
+              latest.trade_plan?.stance === "enter" && latest.direction === tracked.direction,
+            // What the system concluded about this trade, when it just ended.
+            resolution,
+          }),
+        );
+        notified = results.filter((r) => r.ok).map((r) => r.channel);
       }
 
       return {

@@ -1,6 +1,6 @@
 import type { SignalStore } from "@/lib/db";
 import type { SignalRow } from "@/types/signal";
-import type { JournalEntry, TradeResult } from "@/types/journal";
+import { STOP_REASON_LABELS, type JournalEntry, type StopReasonTag, type TradeResult } from "@/types/journal";
 import { computeSeverity } from "./severity";
 import { describeConsequence, reviewStop, type StopContext } from "./stop-review";
 import { fetchOHLCV } from "@/lib/data-sources/ohlcv";
@@ -86,11 +86,39 @@ async function bestPriceSince(
     : Math.min(...after.map((c) => c.low));
 }
 
+/**
+ * 系統自己的結論 —— what the classification concluded, in pieces a push can
+ * render.
+ *
+ * All of this was already being computed and written to the journal, and none
+ * of it ever reached the person: the stop-hit push told them 「請到 /review
+ * 記錄並選一個 S1–S8 停損原因」 — asking them to do, by hand, work the system
+ * had just finished doing, and never showing the answer. A feedback loop
+ * nobody is told the output of teaches nobody anything.
+ */
+export interface ResolutionOutcome {
+  result: TradeResult;
+  pnlPct: number;
+  /** Set only on a real loss — S1–S8 classifies stop-outs, not wins. */
+  tag: StopReasonTag | null;
+  label: string | null;
+  decidedBy: "ai" | "rules" | null;
+  /** The reasoning written at classification time. */
+  why: string | null;
+  /** What accumulating this tag tightens on future signals. */
+  consequence: string | null;
+  severity: number | null;
+  /** One line naming the kind of exit, for the headline. */
+  kind: string;
+}
+
 export interface AutoLogResult {
   entry: JournalEntry | null;
   tag: string | null;
   decidedBy: "ai" | "rules" | null;
   note: string;
+  /** Null only when the write failed — the push then says nothing it cannot back. */
+  outcome: ResolutionOutcome | null;
 }
 
 export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogResult> {
@@ -114,6 +142,19 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
     classifyR(moveR) === "scratch" ? "breakeven" : moveR > 0 ? "win" : "loss";
 
   const markers = paper ? `${AUTO_MARKER}${PAPER_MARKER}` : AUTO_MARKER;
+
+  /** The outcome every non-loss path reports — no S-tag, because S1–S8 classifies stop-outs. */
+  const plainOutcome = (kind: string): ResolutionOutcome => ({
+    result,
+    pnlPct,
+    tag: null,
+    label: null,
+    decidedBy: null,
+    why: null,
+    consequence: null,
+    severity: null,
+    kind,
+  });
 
   if (scaled !== null && outcome !== "target_hit") {
     // 分批止盈後的收尾 — not a stop-out to classify. The S1–S8 taxonomy
@@ -145,13 +186,14 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
         },
         null,
       );
-      return { entry: written, tag: null, decidedBy: null, note: "分批止盈後收尾，已記錄" };
+      return { entry: written, tag: null, decidedBy: null, note: "分批止盈後收尾，已記錄", outcome: plainOutcome("分批止盈後收尾") };
     } catch (err) {
       return {
         entry: null,
         tag: null,
         decidedBy: null,
         note: `寫入交易日誌失敗：${err instanceof Error ? err.message : String(err)}`,
+        outcome: null,
       };
     }
   }
@@ -181,13 +223,14 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
         },
         null,
       );
-      return { entry: written, tag: null, decidedBy: null, note: "結構翻轉出場，已記錄" };
+      return { entry: written, tag: null, decidedBy: null, note: "結構翻轉出場，已記錄", outcome: plainOutcome("結構翻轉出場") };
     } catch (err) {
       return {
         entry: null,
         tag: null,
         decidedBy: null,
         note: `寫入交易日誌失敗：${err instanceof Error ? err.message : String(err)}`,
+        outcome: null,
       };
     }
   }
@@ -216,13 +259,14 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
         },
         null,
       );
-      return { entry: written, tag: null, decidedBy: null, note: "停利，已記錄" };
+      return { entry: written, tag: null, decidedBy: null, note: "觸及停利，已記錄", outcome: plainOutcome("觸及停利") };
     } catch (err) {
       return {
         entry: null,
         tag: null,
         decidedBy: null,
         note: `寫入交易日誌失敗：${err instanceof Error ? err.message : String(err)}`,
+        outcome: null,
       };
     }
   }
@@ -253,13 +297,14 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
         },
         null,
       );
-      return { entry: written, tag: null, decidedBy: null, note: "保本出場（打平），已記錄" };
+      return { entry: written, tag: null, decidedBy: null, note: "保本出場，已記錄", outcome: plainOutcome("保本出場") };
     } catch (err) {
       return {
         entry: null,
         tag: null,
         decidedBy: null,
         note: `寫入交易日誌失敗：${err instanceof Error ? err.message : String(err)}`,
+        outcome: null,
       };
     }
   }
@@ -324,6 +369,19 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
       tag: review.tag,
       decidedBy: review.decidedBy,
       note: `停損，已分類為 ${review.tag}，severity ${severity}`,
+      // The whole point of the classification: it goes to the person, not
+      // just into a table they were told to fill in themselves.
+      outcome: {
+        result,
+        pnlPct,
+        tag: review.tag,
+        label: STOP_REASON_LABELS[review.tag],
+        decidedBy: review.decidedBy,
+        why: review.note,
+        consequence: describeConsequence(review.tag),
+        severity,
+        kind: "觸及停損",
+      },
     };
   } catch (err) {
     return {
@@ -331,6 +389,10 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
       tag: review.tag,
       decidedBy: review.decidedBy,
       note: `已分類為 ${review.tag}，但寫入交易日誌失敗：${err instanceof Error ? err.message : String(err)}`,
+      // No stored row, no reported lesson: a push claiming the system learned
+      // something it failed to persist would be the worst kind of false
+      // reassurance — next sweep it would have learned nothing.
+      outcome: null,
     };
   }
 }

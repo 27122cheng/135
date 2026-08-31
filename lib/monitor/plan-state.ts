@@ -163,8 +163,8 @@ export function advancePlan(input: MonitorInput): MonitorResult {
           headline: state === "scaled" ? "剩餘半倉停損觸及" : "停損觸及",
           detail:
             state === "scaled"
-              ? `價格 ${fmt(price)} 觸及停損 ${fmt(activeStop)}，剩餘半倉出場（前一半已在停利 ${plan.take_profit !== null ? fmt(plan.take_profit) : "—"} 落袋）。本次交易結束，請到 /review 記錄。`
-              : `價格 ${fmt(price)} 觸及停損 ${fmt(activeStop)}，本次交易結束。請到 /review 記錄並選一個 S1–S8 停損原因。`,
+              ? `價格 ${fmt(price)} 觸及停損 ${fmt(activeStop)}，剩餘半倉出場（前一半已在停利 ${plan.take_profit !== null ? fmt(plan.take_profit) : "—"} 落袋）。本次交易結束，系統正在結算並分類。`
+              : `價格 ${fmt(price)} 觸及停損 ${fmt(activeStop)}，本次交易結束。系統會自行判定停損原因並記入學習。`,
           newStop: null,
         },
       ],
@@ -199,7 +199,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
             headline: "停利觸及，全部出場",
             detail:
               `價格 ${fmt(price)} 觸及停利 ${fmt(plan.take_profit)}。此目標不足 ${SCALE_OUT_MIN_R}R，` +
-              `依規則整筆出場（分批只在目標 ≥${SCALE_OUT_MIN_R}R 時啟用）。本次交易結束，請到 /review 記錄。`,
+              `依規則整筆出場（分批只在目標 ≥${SCALE_OUT_MIN_R}R 時啟用）。本次交易結束，系統正在結算。`,
             newStop: null,
           },
         ],
@@ -375,6 +375,27 @@ export function formatMonitorAlert(
      * act on it; the stop moves are unaffected — they only ever reduce risk.
      */
     analysisSupports?: boolean;
+    /**
+     * 系統自己的結論 — the classification the journal just recorded.
+     *
+     * The stop-hit push used to end with 「請到 /review 記錄並選一個 S1–S8
+     * 停損原因」: it asked the reader to hand-do work the system had already
+     * finished, and never showed the answer. The classifier runs, writes the
+     * tag, the reasoning, the severity and the consequence into the journal,
+     * and the intervention engine reads them on the next signal — all of it
+     * invisible. This carries that conclusion to the person it is for.
+     */
+    resolution?: {
+      kind: string;
+      result: "win" | "loss" | "breakeven";
+      pnlPct: number;
+      tag: string | null;
+      label: string | null;
+      decidedBy: "ai" | "rules" | null;
+      why: string | null;
+      consequence: string | null;
+      severity: number | null;
+    } | null;
   } = {},
 ): string {
   const lines = [`<b>${symbol} ${direction === "long" ? "做多 ▲" : "做空 ▼"}</b>`];
@@ -409,6 +430,31 @@ export function formatMonitorAlert(
       `⚠ 最新一輪分析已轉觀望，<b>不建議執行這次加倉</b> —— 加倉是唯一會增加風險的動作，` +
         `只在最新分析仍支持這個方向時才值得做。停損上移照常執行，持倉本身不受影響。`,
     );
+  }
+
+  // 系統的結論，不是給你的作業。
+  const r = context.resolution;
+  if (r) {
+    const resultWord = r.result === "win" ? "獲利" : r.result === "loss" ? "虧損" : "打平";
+    lines.push(
+      "",
+      `<b>本次結算：${r.kind}｜${resultWord} ${r.pnlPct > 0 ? "+" : ""}${r.pnlPct}%</b>`,
+    );
+    if (r.tag && r.label) {
+      lines.push(
+        `<b>停損原因（系統判定）：${r.tag} ${r.label}</b>` +
+          (r.decidedBy ? `　—— 由${r.decidedBy === "ai" ? " AI 複核" : "規則判定"}` : "") +
+          (r.severity !== null ? `，嚴重度 ${r.severity}` : ""),
+      );
+      if (r.why) lines.push(r.why);
+      // The part that makes it learning rather than labelling: what changes.
+      if (r.consequence) lines.push(`<i>接下來的影響：${r.consequence}</i>`);
+    } else {
+      lines.push(
+        `<i>S1–S8 只分類停損，這筆不是停損出場，因此不列入停損原因統計。已記入實績。</i>`,
+      );
+    }
+    lines.push(`<i>已寫入交易日誌，下一次訊號會帶著這個結論建立。</i>`);
   }
 
   lines.push(
