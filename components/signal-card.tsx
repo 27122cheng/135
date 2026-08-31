@@ -746,7 +746,7 @@ function ReferencePlan({ signal }: { signal: TradeSignal }) {
           ⚠ 系統<span className="font-medium">不建議</span>進場：{ref.vetoNote}
           <br />
           <span className="text-amber-400/70">
-            這組價位仍會被 5 分鐘監控逐筆追蹤到停損或停利，結果記入
+            這組價位仍會被定時監控追蹤到停損或停利，結果記入
             <span className="text-amber-300">紙上追蹤</span>
             ——目的是回頭檢驗「門檻擋掉的交易，實際上是賺是賠」。門檻擋錯了，數字會說話。
           </span>

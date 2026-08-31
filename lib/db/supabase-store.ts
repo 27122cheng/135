@@ -207,6 +207,7 @@ export function supabaseStore(): SignalStore | null {
         activeStop: data.active_stop,
         lastPrice: data.last_price,
         tracked: data.tracked ?? null,
+        updatedAt: typeof data.updated_at === "string" ? data.updated_at : null,
       };
     },
 

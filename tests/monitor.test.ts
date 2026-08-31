@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { check, report } from "./_harness";
 import {
   advancePlan,
@@ -499,6 +501,85 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
     refresh);
   check("the dedupe fails open rather than silencing a real warning",
     refresh.includes(".catch(() => ({ isNew: true }))"), refresh);
+}
+
+// ── 補看漏掉的那段 ─────────────────────────────────────────────────
+//
+// The workflow asks GitHub for a run every five minutes; the last thirty
+// scheduled runs came a median of 3.5 hours apart, max 12.3. Deciding from
+// the spot price at each of those moments means every level touched in
+// between is invisible — the entry tagged on a dip and recovered, the stop
+// run through and bounced. Those trades were not mis-measured, they were
+// never seen, which is why the site showed plans Telegram never mentioned.
+{
+  const held: MonitorMemory = { state: "entered", addOnsFilled: 0, activeStop: 1980 };
+  const win = (high: number, low: number) => ({ high, low });
+  const go = (price: number, memory: MonitorMemory, window?: { high: number; low: number }) =>
+    advancePlan({ direction: "long", plan: plan(), price, priceAgeMinutes: 5, memory, window });
+
+  // Price is back above the stop by the time anyone looks, but the window
+  // says it traded through it. Under the old spot-only rule: silence.
+  check("a stop touched inside the unobserved window still stops the trade",
+    go(2010, held, win(2015, 1975)).memory.state === "stop_hit",
+    go(2010, held, win(2015, 1975)).memory.state);
+  check("and the same price with no window is silent — the regression it fixes",
+    go(2010, held).events.length === 0, go(2010, held).events);
+  check("the alert says the level was hit in the gap, not at the price shown",
+    go(2010, held, win(2015, 1975)).events.some(
+      (e) => e.kind === "stop_hit" && e.detail.includes("自上次檢查以來")),
+    go(2010, held, win(2015, 1975)).events);
+
+  // A target reached in the gap resolves the same way, off the window's high.
+  const hitTp = go(2010, held, win(2090, 2000));
+  check("a target touched inside the window resolves the trade",
+    hitTp.memory.state === "scaled" || hitTp.memory.state === "target_hit", hitTp.memory.state);
+
+  // An entry is a limit order, so a long fills off the window's LOW — the
+  // dip that happened while nobody was watching.
+  // Spot 2015 is above the entry, so without the window this never fills.
+  const filled = go(2015, INITIAL_MEMORY, win(2015, 1995));
+  check("a long fills on a dip inside the window even if price recovered",
+    filled.memory.state === "entered", filled.memory.state);
+  check("which the spot price alone would have missed entirely",
+    go(2015, INITIAL_MEMORY).memory.state === "waiting");
+  check("and a window that never dipped to the entry does not fill",
+    go(2050, INITIAL_MEMORY, win(2060, 2005)).memory.state === "waiting");
+  // The direction of the extreme matters: the window's HIGH must never fill
+  // a long, or the fictional-trade bug walks straight back in.
+  check("a window high above the entry cannot fill a long",
+    go(2100, INITIAL_MEMORY, win(2200, 2050)).events.length === 0);
+
+  // Pessimistic ordering survives: a window that covers both levels reports
+  // the stop, because bars cannot order intrabar events.
+  check("a window spanning stop and target reports the stop",
+    go(2010, held, win(2090, 1975)).memory.state === "stop_hit");
+
+  // Shorts mirror.
+  const shortHeld: MonitorMemory = { state: "entered", addOnsFilled: 0, activeStop: 2020 };
+  const shortPlan = plan({ entry: 2000, stop_loss: 2020, take_profit: 1920, add_ons: [] });
+  const shortRes = advancePlan({
+    direction: "short", plan: shortPlan, price: 1990, priceAgeMinutes: 5,
+    memory: shortHeld, window: win(2025, 1985),
+  });
+  check("a short's stop is breached by the window's high", shortRes.memory.state === "stop_hit",
+    shortRes.memory.state);
+}
+
+// ── 出場價是被觸及的價位，不是現在的價位 ─────────────────────────
+//
+// The route recorded every exit at the spot price. Correct only when the
+// level is hit the instant the monitor looks; at a 3.5-hour gap it is wrong
+// by hours and wrong in the worst direction — a stop run through at 09:00
+// and recovered by 12:30 was booked at the 12:30 price, filing a loss as a
+// profit. Structural, because it is one expression in a route with no unit
+// seam and the failure is silent.
+{
+  const src = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  const call = src.slice(src.indexOf("recordResolvedPlan({"), src.indexOf("review = logged.note"));
+  check("a stop-out is journalled at the stop", /stop_hit"\s*\?\s*\(next\.activeStop/.test(call), call.slice(0, 400));
+  check("a target is journalled at the target", call.includes("? plan.take_profit"), call);
+  check("only a structure exit uses the spot price",
+    (call.match(/quote\.price/g) ?? []).length === 1, call);
 }
 
 report("monitor + add-ons");

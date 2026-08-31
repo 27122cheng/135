@@ -292,6 +292,7 @@ export function postgresStore(connectionString: string): SignalStore {
           active_stop: number | null;
           last_price: number | null;
           tracked?: MonitorRow["tracked"];
+          updated_at?: unknown;
         }>;
         const row = rows[0];
         if (!row) return null;
@@ -303,6 +304,7 @@ export function postgresStore(connectionString: string): SignalStore {
           activeStop: row.active_stop,
           lastPrice: row.last_price,
           tracked: row.tracked ?? null,
+          updatedAt: row.updated_at === undefined ? null : isoString(row.updated_at) || null,
         };
       } catch (err) {
         throw explain(err);

@@ -107,7 +107,7 @@ function ManagementPlaybook({ plan }: { plan: TradePlan }) {
       <p className="mb-1.5 text-xs text-neutral-400">
         進場後的管理劇本
         <span className="ml-2 text-[11px] text-neutral-500">
-          5 分鐘監控自動執行；回測量的就是這套規則
+          定時監控自動執行；回測量的就是這套規則
         </span>
       </p>
       <ol className="flex flex-col gap-1.5">

@@ -58,6 +58,28 @@ export interface MonitorInput {
     /** An opposite CHoCH confirmed on the newest completed D1 bar. */
     flipped: boolean;
   } | null;
+  /**
+   * 補看漏掉的那段 —— the price range since the monitor last looked at this
+   * symbol, from candles.
+   *
+   * This exists because the schedule is fiction. The workflow asks GitHub for
+   * a run every five minutes; measured over the last thirty scheduled runs the
+   * real gap is a **median of 3.5 hours and a maximum of 12.3**. Deciding a
+   * fill from the single spot price at each of those moments means every level
+   * touched in between is invisible: a long whose entry was tagged on a dip
+   * three hours ago and has since recovered never fills, and a position that
+   * ran to its stop and bounced is never stopped out. The tracker was not
+   * mis-measuring those trades — it was not seeing them at all, which is why
+   * the operator kept finding signals on the site that Telegram never
+   * mentioned and trades that never appeared in the journal.
+   *
+   * Given the window, every level test uses the extreme that could have
+   * touched it — the low of the window for a long's entry and stop, the high
+   * for its target — so the same 3.5-hour gap now yields the same verdict a
+   * continuous watch would have. Absent (a first sighting, or no candles) it
+   * falls back to the spot price and behaves exactly as before.
+   */
+  window?: { high: number; low: number } | null;
 }
 
 export interface MonitorEvent {
@@ -123,6 +145,19 @@ export function advancePlan(input: MonitorInput): MonitorResult {
   const { direction, plan, price, memory } = input;
   const events: MonitorEvent[] = [];
 
+  // The two extremes a level test can care about, over the unobserved window
+  // (see MonitorInput.window). `adverse` is where the market went against the
+  // trade — and, for a limit entry, where it came *down* to fill a long.
+  // `favourable` is where it went in the trade's favour. Without a window both
+  // collapse to the spot price and every rule below is unchanged.
+  const w = input.window;
+  const adverse = w ? (direction === "long" ? Math.min(w.low, price) : Math.max(w.high, price)) : price;
+  const favourable = w ? (direction === "long" ? Math.max(w.high, price) : Math.min(w.low, price)) : price;
+  // Named for the events, so an alert about a level touched two hours ago
+  // never reads as if it just happened at the price on screen.
+  const caught = w !== null && w !== undefined && (adverse !== price || favourable !== price);
+  const since = caught ? "（自上次檢查以來的區間內觸及，非當下價）" : "";
+
   // Terminal states stay terminal until a new plan replaces the row.
   if (
     memory.state === "stop_hit" ||
@@ -140,20 +175,21 @@ export function advancePlan(input: MonitorInput): MonitorResult {
   let activeStop = memory.activeStop ?? plan.stop_loss;
 
   if (state === "waiting") {
-    if (!entryFilled(direction, price, plan.entry)) {
+    if (!entryFilled(direction, adverse, plan.entry)) {
       return { memory: { state, addOnsFilled, activeStop }, events };
     }
     state = "entered";
     events.push({
       kind: "entered",
       headline: "已觸及進場價",
-      detail: `價格 ${fmt(price)} 觸及進場 ${fmt(plan.entry)}，停損 ${fmt(activeStop)}`,
+      detail:
+        `價格 ${fmt(caught ? adverse : price)} 觸及進場 ${fmt(plan.entry)}，停損 ${fmt(activeStop)}${since}`,
       newStop: activeStop,
     });
   }
 
   // Checked first — see the note above about intrabar ordering.
-  if (stopBreached(direction, price, activeStop)) {
+  if (stopBreached(direction, adverse, activeStop)) {
     return {
       memory: { state: "stop_hit", addOnsFilled, activeStop },
       events: [
@@ -163,8 +199,8 @@ export function advancePlan(input: MonitorInput): MonitorResult {
           headline: state === "scaled" ? "剩餘半倉停損觸及" : "停損觸及",
           detail:
             state === "scaled"
-              ? `價格 ${fmt(price)} 觸及停損 ${fmt(activeStop)}，剩餘半倉出場（前一半已在停利 ${plan.take_profit !== null ? fmt(plan.take_profit) : "—"} 落袋）。本次交易結束，系統正在結算並分類。`
-              : `價格 ${fmt(price)} 觸及停損 ${fmt(activeStop)}，本次交易結束。系統會自行判定停損原因並記入學習。`,
+              ? `價格 ${fmt(caught ? adverse : price)} 觸及停損 ${fmt(activeStop)}${since}，剩餘半倉出場（前一半已在停利 ${plan.take_profit !== null ? fmt(plan.take_profit) : "—"} 落袋）。本次交易結束，系統正在結算並分類。`
+              : `價格 ${fmt(caught ? adverse : price)} 觸及停損 ${fmt(activeStop)}${since}，本次交易結束。系統會自行判定停損原因並記入學習。`,
           newStop: null,
         },
       ],
@@ -185,7 +221,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
   if (
     state !== "scaled" &&
     plan.take_profit !== null &&
-    reached(direction, price, plan.take_profit)
+    reached(direction, favourable, plan.take_profit)
   ) {
     const risk = Math.abs(plan.entry - plan.stop_loss);
     const tpR = risk > 0 ? Math.abs(plan.take_profit - plan.entry) / risk : 0;
@@ -198,7 +234,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
             kind: "target_hit",
             headline: "停利觸及，全部出場",
             detail:
-              `價格 ${fmt(price)} 觸及停利 ${fmt(plan.take_profit)}。此目標不足 ${SCALE_OUT_MIN_R}R，` +
+              `價格 ${fmt(caught ? favourable : price)} 觸及停利 ${fmt(plan.take_profit)}${since}。此目標不足 ${SCALE_OUT_MIN_R}R，` +
               `依規則整筆出場（分批只在目標 ≥${SCALE_OUT_MIN_R}R 時啟用）。本次交易結束，系統正在結算。`,
             newStop: null,
           },
@@ -217,7 +253,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
       kind: "scale_out",
       headline: "觸及停利 —— 先平一半，剩餘保本追蹤",
       detail:
-        `價格 ${fmt(price)} 觸及停利 ${fmt(banked)}：平掉一半部位落袋，` +
+        `價格 ${fmt(caught ? favourable : price)} 觸及停利 ${fmt(banked)}${since}：平掉一半部位落袋，` +
         `剩餘半倉停損${movedStop ? `移至進場價 ${fmt(plan.entry)}` : `維持 ${fmt(activeStop)}（已優於進場價）`}，` +
         `之後交由結構移停與反向 CHoCH 出場管理 —— 這半倉最差是打平，最好是跑出一段趨勢。`,
       newStop: activeStop,
@@ -276,13 +312,13 @@ export function advancePlan(input: MonitorInput): MonitorResult {
     const risk = Math.abs(plan.entry - plan.stop_loss);
     const proven =
       direction === "long" ? plan.entry + risk * PROVEN_R : plan.entry - risk * PROVEN_R;
-    if (risk > 0 && reached(direction, price, proven)) {
+    if (risk > 0 && reached(direction, favourable, proven)) {
       activeStop = plan.entry;
       events.push({
         kind: "stop_moved",
         headline: `已達 ${PROVEN_R}R，停損移至進場價（保本）`,
         detail:
-          `價格 ${fmt(price)} 已朝有利方向走完 ${PROVEN_R} 個風險距離` +
+          `價格 ${fmt(caught ? favourable : price)} 已朝有利方向走完 ${PROVEN_R} 個風險距離${since}` +
           `（1R = ${fmt(risk)}，${PROVEN_R}R = ${fmt(proven)}）。` +
           `停損由 ${fmt(memory.activeStop ?? plan.stop_loss)} 移至進場價 ${fmt(plan.entry)} —— ` +
           `這筆交易從此最差是打平。` +
@@ -328,7 +364,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
           .sort((a, b) => a.sequence - b.sequence);
 
   for (const level of pending) {
-    if (!reached(direction, price, level.price)) break;
+    if (!reached(direction, favourable, level.price)) break;
     addOnsFilled = level.sequence;
     state = "added";
     events.push({

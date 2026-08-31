@@ -62,6 +62,57 @@ async function structureFor(
 }
 
 /**
+ * 補看漏掉的那段 —— the price range since this symbol was last looked at.
+ *
+ * The workflow asks GitHub for a run every five minutes. It does not get one:
+ * measured over the last thirty scheduled runs the real gap is a median of
+ * 3.5 hours and a maximum of 12.3, because GitHub drops scheduled runs under
+ * load and never says so. Judging a fill from the spot price at each of those
+ * moments means everything in between is invisible — the entry tagged on a
+ * dip two hours ago, the stop run through and recovered — which is why the
+ * site kept showing plans Telegram never mentioned and the journal stayed
+ * empty of real trades.
+ *
+ * H4 bars, because they are already fetched and cached for the structure read
+ * and six bars a day is finer than the gap being covered. Two bounds keep it
+ * honest:
+ *
+ *  - the window never starts before the plan itself existed, so a dip that
+ *    happened before the analysis was written can never fill it;
+ *  - one bar of slack before the last observation, because bar timestamps are
+ *    open times and the bar in progress then is partly inside the gap.
+ *
+ * Null when there is nothing to catch up on or no candles to do it with — the
+ * caller then decides on the spot price exactly as before.
+ */
+async function missedWindow(
+  meta: CommodityMeta,
+  since: string | null | undefined,
+  planCreatedAt: string,
+  gaps: string[],
+): Promise<{ high: number; low: number } | null> {
+  if (!since) return null;
+  const lastLook = new Date(since).getTime();
+  const created = new Date(planCreatedAt).getTime();
+  if (!Number.isFinite(lastLook) || !Number.isFinite(created)) return null;
+  const H4_MS = 4 * 60 * 60 * 1000;
+  const from = Math.max(lastLook - H4_MS, created);
+  if (Date.now() - from < H4_MS) return null;
+  try {
+    const bars = (await fetchOHLCV(meta, "H4", gaps))?.candles;
+    if (!bars?.length) return null;
+    const inWindow = bars.filter((c) => new Date(c.time).getTime() >= from);
+    if (inWindow.length === 0) return null;
+    return {
+      high: Math.max(...inWindow.map((c) => c.high)),
+      low: Math.min(...inWindow.map((c) => c.low)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The 參考價位 of a 觀望 signal, expressed as a plan the monitor can follow.
  *
  * Not a recommendation and never alerted on — it is how the reference levels
@@ -246,6 +297,13 @@ export async function GET(request: Request) {
           ? await structureFor(meta, tracked.direction, gaps)
           : null;
 
+      // Everything the market did while nobody was looking. Only for a plan
+      // already being watched: a first sighting has no gap to cover, and
+      // treating one as if it did would fill plans on history.
+      const window = samePlan
+        ? await missedWindow(meta, previous?.updatedAt, tracked.generatedAt, gaps)
+        : null;
+
       const { memory: next, events } = advancePlan({
         direction: tracked.direction,
         plan,
@@ -253,6 +311,7 @@ export async function GET(request: Request) {
         priceAgeMinutes: quote.ageMinutes,
         memory,
         structure,
+        window,
       });
 
       // No memory, no mouth. If this state cannot be persisted, the next
@@ -328,7 +387,21 @@ export async function GET(request: Request) {
           entry: plan.entry,
           stopLoss: plan.stop_loss,
           takeProfit: plan.take_profit,
-          exitPrice: quote.price,
+          // 成交在被觸及的價位，不是現在的價位.
+          //
+          // This was the spot price unconditionally, which is only correct
+          // when the level is hit the instant the monitor looks. At a median
+          // 3.5-hour gap it is routinely wrong by hours, and wrong in the
+          // most damaging direction available: a stop run through at 09:00
+          // and recovered by 12:30 was booked at the 12:30 price — recording
+          // a loss as a profit. A stop exits at the stop and a target exits
+          // at the target; only a structure exit is genuinely at market.
+          exitPrice:
+            resolved.kind === "stop_hit"
+              ? (next.activeStop ?? plan.stop_loss)
+              : resolved.kind === "target_hit"
+                ? plan.take_profit
+                : quote.price,
           outcome:
             resolved.kind === "target_hit"
               ? "target_hit"

@@ -174,7 +174,7 @@ export default function ReviewPage() {
               <TrackRecordTable record={stats.trackRecord} />
             ) : (
               <p className="text-xs text-neutral-500">
-                每筆建議進場的訊號由 5 分鐘監控自動追蹤到停損或停利，結算後自動記錄在這裡 —
+                每筆建議進場的訊號由定時監控自動追蹤到停損或停利，結算後自動記錄在這裡（GitHub 排程實際約 3.5 小時跑一次，每次以上次檢查以來的 H4 區間補判，不會漏掉中間觸及的價位）—
                 不需要手動輸入。目前還沒有結算完成的建議。
               </p>
             )}

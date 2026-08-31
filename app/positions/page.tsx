@@ -268,7 +268,7 @@ export default function PositionsPage() {
         </h2>
         {real.length === 0 ? (
           <p className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4 text-xs leading-relaxed text-neutral-500">
-            目前沒有追蹤中的部位。訊號達到門檻並觸及進場價之後，5 分鐘監控會自動開始追蹤，
+            目前沒有追蹤中的部位。訊號達到門檻並觸及進場價之後，定時監控會自動開始追蹤，
             停損移動與結算都會出現在這裡。
           </p>
         ) : (
@@ -329,7 +329,7 @@ export default function PositionsPage() {
       )}
 
       <p className="text-[11px] leading-relaxed text-neutral-500">
-        這頁讀的是 5 分鐘監控自己的紀錄，不重新抓價 —— 顯示的「現價」是監控最後一次觀察到的價格。
+        這頁讀的是定時監控自己的紀錄，不重新抓價 —— 顯示的「現價」是監控最後一次觀察到的價格。
         管理規則：停利 ≥1R 先平一半（不足則全出）、獲利達 2R 停損才移到成本、
         新 swing 確認就跟進結構、反向 CHoCH 以市價出場。結算後自動寫入
         <Link href="/review" className="underline hover:text-neutral-400">

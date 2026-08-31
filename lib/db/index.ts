@@ -216,6 +216,14 @@ export interface MonitorRow extends MonitorMemory {
   lastPrice: number | null;
   /** Null on rows written before snapshotting existed. */
   tracked?: TrackedPlan | null;
+  /**
+   * When this row was last written — i.e. when the monitor last actually
+   * looked at this symbol. The scheduler does not honour the requested
+   * cadence (see app/api/monitor/route.ts), so "since we last looked" is a
+   * measured quantity, not a constant, and the catch-up window is built from
+   * it. Null on rows written before it was exposed.
+   */
+  updatedAt?: string | null;
 }
 
 /**
