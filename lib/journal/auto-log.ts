@@ -5,6 +5,8 @@ import { computeSeverity } from "./severity";
 import { describeConsequence, reviewStop, type StopContext } from "./stop-review";
 import { fetchOHLCV } from "@/lib/data-sources/ohlcv";
 import { classifyR } from "@/lib/analysis/lab-manage";
+import { AUTO_MARKER, PAPER_MARKER } from "./markers";
+import { usableJournal } from "./quarantine";
 import type { CommodityMeta } from "@/types/signal";
 
 /**
@@ -32,10 +34,9 @@ import type { CommodityMeta } from "@/types/signal";
  * why their win rate reads optimistically — both stated on the entry itself.
  */
 
-/** Prefix on every auto-written review note. Also how the UI recognises them. */
-export const AUTO_MARKER = "[自動追蹤]";
-/** Additional marker for a plan nobody was ever told to take. */
-export const PAPER_MARKER = "[參考價位紙上追蹤]";
+// Defined in ./markers (a leaf both this module and the quarantine gate can
+// import); re-exported here so every existing import path keeps working.
+export { AUTO_MARKER, PAPER_MARKER };
 
 export interface ResolveInput {
   store: SignalStore;
@@ -121,8 +122,57 @@ export interface AutoLogResult {
   outcome: ResolutionOutcome | null;
 }
 
+/**
+ * 同一筆交易不寫第二次 —— the write-side half of the duplicate invariant.
+ *
+ * The read-side gate (lib/journal/quarantine.ts) stops a repeat from reaching
+ * a statistic; this stops it being written at all, so the table itself stays
+ * honest and the operator does not open /review to ten copies of one trade.
+ * Both are needed: the reader protects the numbers, the writer protects the
+ * record, and only the writer can say "nothing happened" instead of logging
+ * a resolution that already happened.
+ *
+ * Same identity the deduper uses — signal, direction, and the two prices the
+ * trade ran between. A store that cannot be read falls through to writing:
+ * losing a real resolution is worse than tolerating a duplicate the reader
+ * will collapse anyway.
+ */
+async function alreadyLogged(
+  store: SignalStore,
+  signal: SignalRow,
+  entry: number,
+  exitPrice: number,
+): Promise<boolean> {
+  const near = (a: number, b: number) => Math.abs(a - b) <= Math.abs(b) * 1e-9;
+  try {
+    const recent = await store.listJournal({ symbol: signal.symbol, limit: 30 });
+    return recent.some(
+      (e) =>
+        (e.signal_id ?? "") === (signal.id ?? "") &&
+        e.direction === signal.direction &&
+        near(e.entry_price, entry) &&
+        near(e.exit_price, exitPrice),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogResult> {
   const { store, signal, entry, stopLoss, takeProfit, exitPrice, outcome, paper } = input;
+
+  if (await alreadyLogged(store, signal, entry, exitPrice)) {
+    return {
+      entry: null,
+      tag: null,
+      decidedBy: null,
+      note: "這筆交易的結算已經記錄過，不重複寫入",
+      // Nothing new was concluded, so nothing is pushed: a second "本次交易
+      // 結束" for a trade that ended hours ago is noise that reads as a new
+      // loss.
+      outcome: null,
+    };
+  }
 
   const risk = Math.abs(entry - stopLoss);
   const scaled = input.scaleOutPrice ?? null;
@@ -330,7 +380,11 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
   // Severity is measured against this symbol's own prior losses, exactly as the
   // manual path does — same formula, same history, so an auto entry and a hand
   // entry are comparable.
-  const history = await store.listJournal({ symbol: signal.symbol, limit: 30 }).catch(() => []);
+  // Severity measures this loss against the symbol's prior ones; a baseline
+  // of fabricated wins makes every real loss look extraordinary.
+  const history = usableJournal(
+    await store.listJournal({ symbol: signal.symbol, limit: 30 }).catch(() => []),
+  );
   const severity = computeSeverity({
     tag: review.tag,
     pnlPct,

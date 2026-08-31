@@ -66,6 +66,7 @@ interface ReviewResponse extends ReviewStats {
   activeInterventions: TagStat[];
   recentTagStats: TagStat[];
   riskAdvice?: RiskAdvice[];
+  quarantine?: { fabricated: number; duplicates: number; note: string | null };
   error?: string;
 }
 
@@ -151,6 +152,19 @@ export default function ReviewPage() {
 
       {stats && !loading && (
         <div className="flex flex-col gap-4">
+          {/* 汙染隔離 — stated first, because it changes how every number
+              below should be read. A system that reports its own track
+              record does not get to quietly drop rows from it. */}
+          {stats.quarantine?.note && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.07] p-4">
+              <p className="mb-1.5 text-sm font-medium text-amber-300">
+                已隔離 {stats.quarantine.fabricated + stats.quarantine.duplicates} 筆不可信的紀錄
+              </p>
+              <p className="whitespace-pre-line text-[12px] leading-relaxed text-amber-200/80">
+                {stats.quarantine.note}
+              </p>
+            </div>
+          )}
           {/* The headline: how the system's own recommendations actually did.
               This page reviews the signals, not the reader's personal book —
               every 進場 recommendation is auto-settled by the 5-minute monitor

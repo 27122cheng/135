@@ -4,6 +4,7 @@ import { summariseForward } from "@/lib/analysis/lab-forward";
 import { buildRiskAdvice } from "@/lib/journal/advice";
 import { computeEquityCurve, computeReviewStats, computeTrackRecord } from "@/lib/journal/stats";
 import { summariseTags, triggeredTags } from "@/lib/journal/interventions";
+import { partitionJournal, quarantineNote } from "@/lib/journal/quarantine";
 import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +24,13 @@ export async function GET(request: Request) {
 
   const symbol = new URL(request.url).searchParams.get("symbol");
   try {
-    const entries = await store.listJournal({ symbol, limit: 500 });
+    const stored = await store.listJournal({ symbol, limit: 500 });
+    // 汙染隔離 — rows the pre-2026-08-12 fill bug fabricated, and re-armed
+    // repeats of a trade already counted, never reach a statistic. See
+    // lib/journal/quarantine.ts: without this the page reported a 100% win
+    // rate at every grade off 500 trades that never happened.
+    const partition = partitionJournal(stored);
+    const entries = partition.usable;
     const stats = computeReviewStats(entries);
 
     // 卡在哪一關 — the census over the last week of scans, not a snapshot.
@@ -66,6 +73,13 @@ export async function GET(request: Request) {
     const active = triggeredTags(tagStats);
     return json({
       ...stats,
+      // Stated on the page, not silently applied: a system that reports its
+      // own track record may not quietly drop rows from it.
+      quarantine: {
+        fabricated: partition.fabricated.length,
+        duplicates: partition.duplicates.length,
+        note: quarantineNote(partition),
+      },
       // 學習紀錄 — the raw reviewed entries behind every aggregate above.
       // The stats existed for months while the entries themselves (the S-tag,
       // the reason written at classification time, the severity) were visible

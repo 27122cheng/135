@@ -40,6 +40,7 @@ import { CONFIDENT_ENTRY_MIN, clearsEntryBar, planConfidence } from "./analysis/
 import { applyTrendAlignmentGate, gradeAllowsEntry, scoreSignal, weightedNet } from "./scoring";
 import { collapseCascades } from "./data-gaps";
 import { buildStopLoss, buildTakeProfits } from "./entry-exit";
+import { usableJournal } from "@/lib/journal/quarantine";
 import { getSignalStore } from "./db";
 import { fetchEconomicCalendar } from "./data-sources/finnhub";
 import {
@@ -71,7 +72,11 @@ async function loadInterventions(
   const store = getSignalStore();
   if (!store) return DEFAULT_EFFECTS;
   try {
-    const history = await store.listJournal({ symbol, limit: LOOKBACK });
+    // 汙染隔離 first: the intervention engine's whole job is to tighten the
+    // floors when realized results lag what they promised, and the fabricated
+    // 100%-win rows told it the system was beating its promises. It has been
+    // learning the opposite of the truth for as long as they sat in the table.
+    const history = usableJournal(await store.listJournal({ symbol, limit: LOOKBACK }));
     const effects = computeInterventions(history);
     // Fails loudly if a future edit ever makes a knob looser than baseline.
     assertNeverLoosened(effects);

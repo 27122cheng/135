@@ -1,4 +1,5 @@
 import { getSignalStore } from "@/lib/db";
+import { partitionJournal, quarantineNote, usableJournal } from "@/lib/journal/quarantine";
 import { computeSeverity } from "@/lib/journal/severity";
 import { json } from "@/lib/json-response";
 import {
@@ -23,11 +24,22 @@ export async function GET(request: Request) {
   }
   const params = new URL(request.url).searchParams;
   try {
-    const entries = await store.listJournal({
+    const stored = await store.listJournal({
       symbol: params.get("symbol"),
       limit: Math.min(Number(params.get("limit") ?? "100") || 100, 500),
     });
-    return json({ entries });
+    // The raw list stays available — quarantined rows are hidden from
+    // statistics, not from the reader — but it says which rows those are, so
+    // nothing downstream can count them by accident.
+    const partition = partitionJournal(stored);
+    return json({
+      entries: partition.usable,
+      quarantined: {
+        fabricated: partition.fabricated,
+        duplicates: partition.duplicates,
+        note: quarantineNote(partition),
+      },
+    });
   } catch (err) {
     return json(
       { error: err instanceof Error ? err.message : "讀取交易日誌失敗", entries: [] },
@@ -142,7 +154,7 @@ export async function POST(request: Request) {
     let severity: number | null = null;
     let breakdown = null;
     if (tag) {
-      const history = await store.listJournal({ symbol, limit: 20 });
+      const history = usableJournal(await store.listJournal({ symbol, limit: 20 }));
       const computed = computeSeverity({ tag, pnlPct, history });
       severity = computed.severity;
       breakdown = computed;

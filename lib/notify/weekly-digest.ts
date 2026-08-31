@@ -2,6 +2,7 @@ import type { SignalStore } from "@/lib/db";
 import { COMMODITIES } from "@/types/signal";
 import { allInstruments } from "@/lib/server-symbols";
 import type { JournalEntry } from "@/types/journal";
+import { usableJournal } from "@/lib/journal/quarantine";
 import { computeEquityCurve, computeTrackRecord, type TrackBucket } from "@/lib/journal/stats";
 import { notifyAll } from "@/lib/notify";
 
@@ -152,7 +153,7 @@ export async function maybeSendWeeklyDigest(
   await store.saveSetting(MARKER_KEY, week);
 
   const weekAgo = Date.now() - 7 * 24 * 3600_000;
-  const allEntries = await store.listJournal({ limit: 500 }).catch(() => []);
+  const allEntries = usableJournal(await store.listJournal({ limit: 500 }).catch(() => []));
   const entries = allEntries.filter((e) => Date.parse(e.closed_at) >= weekAgo);
   // 累計權益 over real trades only — paper 參考價位 rows would flatter it.
   const realAllTime = allEntries.filter((e) => !e.review_note?.includes("[參考價位紙上追蹤]"));
