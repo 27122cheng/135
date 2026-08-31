@@ -17,8 +17,8 @@ import type { LabContext } from "./lab-conditions";
  *    找不到合理結構停損（距離在雜訊內／太遠）就不進場 —— live 也不會進。
  *  - **停利在壓力位**：最近的上方已確認 swing high 或 20 根區間高點，取較近
  *    者。上方沒有記錄到壓力就不設停利，讓移動停損決定出場。
- *  - **保本移停**：走出 1R 後停損移到進場價 —— lib/monitor/plan-state.ts
- *    的同一條規則。
+ *  - **保本移停**：走出 PROVEN_R（2R）後停損才移到進場價 —— lib/monitor/
+ *    plan-state.ts 的同一條規則。1R 就保本會把 13% 的交易做成 ±0R 的白工。
  *  - **結構移停**：新的 swing low 在停損之上確認，就把停損墊上去（只朝
  *    安全方向）。
  *  - **看法改變就出場**：出現反向 CHoCH（結構翻轉）以收盤價離場。這是
@@ -115,21 +115,62 @@ export const SCALE_OUT_FRACTION = 0.5;
  * combination collapsed to ≈0R expectancy (SPX500 +0.04R, EURUSD −0.13R) and
  * the floors correctly refused everything — zero trades, zero reference
  * plans, eleven symbols. The textbook partial-exit rule carries this exact
- * precondition: scale out only when the first target pays well more than the
- * risk. Nearer targets exit in full — taking the whole shelf beats banking
- * half a crumb and donating the rest to a breakeven wash.
+ * precondition: scale out only when the first target pays at least the risk.
  *
- * Two, not one, and the second live sweep is why. At 1R the gate never
- * bound: the geometry search's candidates all carry RR ≥ 1.5 by the floor's
- * own rule, so every candidate still scaled, every winner still paid
- * ~0.5×tpR plus a remainder that mostly washed, and the post-fix sweep came
- * back 0-for-11 again (ETHUSD's picked combination: 4% decisive hit rate,
- * −0.61R). The regime that historically measured +0.69R on 124 trades was
- * full exit at the target. At 2R the typical day plan (target 1.5–2R) exits
- * whole again — the measured-good shape — while genuinely far targets keep
- * the banked-half runner.
+ * It was then raised to 2 — wrongly, and the correction is worth recording
+ * because the reasoning was superficially sound. At 1R the gate never bound
+ * (the geometry search's candidates all carry RR ≥ 1.5), the sweep came back
+ * 0-for-11 a second time, and the conclusion drawn was "scaling out is the
+ * problem, make the gate bind". It was not. The problem was that the runner
+ * left behind could never run: the old breakeven rule armed on an *intrabar
+ * touch* of 1R and the remainder — already parked at entry by the scale-out —
+ * was washed out at 0R by the first routine pullback. Half a target plus a
+ * wash is a small win; that is the 「小獲利或止損」 shape the operator saw.
+ *
+ * With the breakeven rule moved to {@link PROVEN_R} the runner survives, and
+ * the same simulation that condemned scaling now favours it. Measured over
+ * 10.8k managed trades across trending, ranging and high-volatility synthetic
+ * regimes (real candles are not reachable from the build environment, so this
+ * is a relative comparison of exit rules, not an edge claim):
+ *
+ * | rule                          |     E |  avg win | payoff | scratch |
+ * |-------------------------------|-------|----------|--------|---------|
+ * | scale ≥2R, breakeven at 1R    | .160R |    1.30R |   1.38 |     13% |
+ * | scale ≥2R, breakeven at 2R    | .225R |    1.46R |   1.58 |      3% |
+ * | scale ≥1R, breakeven at 2R    | .270R |    1.55R |   1.69 |      3% |
+ *
+ * Average loss is −0.92R in every row: none of this is bought by widening
+ * risk. It is bought by letting a proven trade finish.
  */
-export const SCALE_OUT_MIN_R = 2.0;
+export const SCALE_OUT_MIN_R = 1.0;
+
+/**
+ * 交易「證明自己」的門檻 —— the advance that earns a trade its breakeven stop.
+ *
+ * Was one R, armed on an intrabar touch, and it was the single largest
+ * manufacturer of nothing-outcomes in the system: 13% of all managed trades
+ * exited as ±0R washes, and every one of them was a trade that had already
+ * moved a full risk distance in its favour. A one-R excursion is not proof of
+ * anything on a daily bar — it is inside the ordinary range of a market that
+ * is going to reverse and of one that is going to trend — so arming there
+ * charges the winners the full cost of the rule while collecting almost none
+ * of its protection.
+ *
+ * At two R the scratch rate falls to 3%, the average win rises from 1.30R to
+ * 1.46R, and the average loss does not move (−0.92R): the give-back the rule
+ * exists to prevent is prevented by the structure trail instead, which by 2R
+ * has stepped the stop up behind at least one confirmed swing. Requiring a
+ * *close* beyond 2R rather than a touch adds a further +0.002R — inside the
+ * noise — so the cheap probe is kept and the live monitor, which sees quotes
+ * rather than closes, can run the identical rule.
+ *
+ * In practice the scale-out usually gets there first: any plan with a target
+ * worth ≥{@link SCALE_OUT_MIN_R} banks half and moves the stop to entry at
+ * the target. This threshold governs what is left — the runner, and plans
+ * with no registered target at all. The principle is the same for both: a
+ * trade earns protection by paying for it.
+ */
+export const PROVEN_R = 2.0;
 
 /**
  * 打平帶 — |net R| at or below this is a scratch, not a loss (or a win).
@@ -258,8 +299,14 @@ export function walkManaged(input: WalkInput): ManagedExit | null {
     }
 
     // ── management, from this bar's information ──
-    const oneR = long ? entry + risk0 : entry - risk0;
-    if (long ? ctx.high[j] >= oneR && stop < entry : ctx.low[j] <= oneR && stop > entry) {
+    // 保本移停 — only once the trade has proven itself by PROVEN_R. See the
+    // constant: arming this at 1R washed out 13% of all trades at ±0R.
+    const provenLevel = long ? entry + risk0 * PROVEN_R : entry - risk0 * PROVEN_R;
+    if (
+      long
+        ? ctx.high[j] >= provenLevel && stop < entry
+        : ctx.low[j] <= provenLevel && stop > entry
+    ) {
       stop = entry;
     }
     const swing = long ? ctx.anchorLow[j] : ctx.anchorHigh[j];

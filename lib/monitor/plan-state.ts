@@ -1,5 +1,5 @@
 import type { AddOnLevel, TradePlan } from "@/types/signal";
-import { SCALE_OUT_MIN_R } from "@/lib/analysis/lab-manage";
+import { PROVEN_R, SCALE_OUT_MIN_R } from "@/lib/analysis/lab-manage";
 
 /**
  * What the price has done to an active plan.
@@ -248,15 +248,21 @@ export function advancePlan(input: MonitorInput): MonitorResult {
     };
   }
 
-  // 保本移停 — at 1R in favour, the stop moves to the entry.
+  // 保本移停 — at PROVEN_R in favour, the stop moves to the entry.
   //
   // The single biggest driver of the stop-out rate is trades that travel well
   // into profit and then return all the way to the original stop. Once price
-  // has moved one full risk distance in the plan's favour, the market has paid
-  // for the trade; from there the worst case becomes breakeven instead of −1R.
-  // The cost is real and accepted: some winners get scratched at entry on a
-  // pullback that would have recovered. That trade-off is the one every
-  // risk-management text makes, and it cuts realised stop-outs directly.
+  // has proven the trade, the market has paid for it; from there the worst
+  // case becomes breakeven instead of −1R. The cost is real: some winners get
+  // scratched at entry on a pullback that would have recovered.
+  //
+  // That cost is why the threshold is 2R and not the 1R it started at. At 1R
+  // the rule collected almost none of its protection (the structure trail was
+  // already there) and charged the winners the whole price — 13% of every
+  // managed trade exited as a ±0R wash, which is precisely the 「小獲利或止
+  // 損」 profile. Same constant, same probe and same arithmetic as the exit
+  // engine's, so the live position is managed exactly as the backtest that
+  // chose the plan measured it.
   //
   // No new state is needed — the rule is naturally idempotent: it fires only
   // while the active stop is still on the risk side of the entry, and firing
@@ -268,16 +274,20 @@ export function advancePlan(input: MonitorInput): MonitorResult {
     (direction === "long" ? activeStop < plan.entry : activeStop > plan.entry)
   ) {
     const risk = Math.abs(plan.entry - plan.stop_loss);
-    const oneR = direction === "long" ? plan.entry + risk : plan.entry - risk;
-    if (risk > 0 && reached(direction, price, oneR)) {
+    const proven =
+      direction === "long" ? plan.entry + risk * PROVEN_R : plan.entry - risk * PROVEN_R;
+    if (risk > 0 && reached(direction, price, proven)) {
       activeStop = plan.entry;
       events.push({
         kind: "stop_moved",
-        headline: "已達 1R，停損移至進場價（保本）",
+        headline: `已達 ${PROVEN_R}R，停損移至進場價（保本）`,
         detail:
-          `價格 ${fmt(price)} 已朝有利方向走完一個風險距離（1R = ${fmt(risk)}）。` +
+          `價格 ${fmt(price)} 已朝有利方向走完 ${PROVEN_R} 個風險距離` +
+          `（1R = ${fmt(risk)}，${PROVEN_R}R = ${fmt(proven)}）。` +
           `停損由 ${fmt(memory.activeStop ?? plan.stop_loss)} 移至進場價 ${fmt(plan.entry)} —— ` +
-          `這筆交易從此最差是打平。代價是回檔到進場價會被洗出場，那是保本規則接受的成本。`,
+          `這筆交易從此最差是打平。` +
+          `門檻是 ${PROVEN_R}R 不是 1R：1R 只是日線的日常波動，在那裡保本會把大量` +
+          `原本會走完的單洗成 ±0R，回測實測有 13% 的交易是這樣消失的。`,
         newStop: plan.entry,
       });
     }

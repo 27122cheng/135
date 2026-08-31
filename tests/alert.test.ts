@@ -187,7 +187,7 @@ function stored(s: TradeSignal): SignalRow {
   // The push carries the whole lifecycle: the reader enters knowing what the
   // monitor will do at every branch, not just where three prices sit.
   check("spells out the management playbook",
-    text.includes("先平一半") && text.includes("1R 保本") && text.includes("CHoCH"), text);
+    text.includes("先平一半") && text.includes("2R 保本") && text.includes("CHoCH"), text);
 
   // 實測證據 rides with the recommendation when the plan carries a backtest.
   const backed = signal();

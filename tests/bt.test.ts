@@ -98,4 +98,51 @@ check("insufficient data must return null", backtestPlanGeometry("long", 100, 99
     r1.resolved > 0 && r1.basis?.includes("現價進場") === true, r1.basis);
 }
 
+// ── 賠率結構 ──────────────────────────────────────────────────────
+//
+// The measurement the card needed and did not have. Expectancy plus hit rate
+// cannot distinguish 60%×1.0R from 30%×2.6R, and 「篩選出來的交易容易小獲利
+// 或是止損」 is a question about exactly that difference.
+{
+  check("a winning geometry reports what a win and a loss were worth",
+    typeof r1.avgWinR === "number" && r1.avgWinR > 0, r1.avgWinR);
+  check("the payoff ratio is the two averages divided",
+    r1.avgWinR !== null && r1.avgLossR !== null && r1.payoffRatio !== null
+      ? Math.abs(r1.payoffRatio - r1.avgWinR / Math.abs(r1.avgLossR)) < 0.02
+      : r1.payoffRatio === null,
+    [r1.avgWinR, r1.avgLossR, r1.payoffRatio]);
+  // A sample with no loss to average has no ratio rather than a fabricated one.
+  check("no losses means no payoff ratio, not a division by zero",
+    r1.losses > 0 || (r1.avgLossR === null && r1.payoffRatio === null),
+    [r1.losses, r1.avgLossR, r1.payoffRatio]);
+  // The averages must bracket the expectancy: it is their probability-weighted
+  // blend (plus the scratches), so it can never sit outside them.
+  check("expectancy lies between the average loss and the average win",
+    r1.expectancyR === null || r1.avgWinR === null || r1.avgLossR === null ||
+      (r1.expectancyR <= r1.avgWinR + 1e-9 && r1.expectancyR >= r1.avgLossR - 1e-9),
+    [r1.avgLossR, r1.expectancyR, r1.avgWinR]);
+}
+
+// ── 保本門檻搬到 2R 之後，打平不再是主要結果 ──────────────────────
+//
+// The 1R breakeven rule manufactured ±0R washes out of trades that had
+// already moved a full risk distance in their favour — 13% of every managed
+// trade in simulation, which is the concrete form of 「小獲利」. It is pinned
+// here rather than only in the constant's doc because the number is easy to
+// "fix" back down and hard to notice going wrong.
+{
+  // A choppy series that repeatedly pushes ~1.5R then pulls back: under the
+  // old rule almost everything scratched at entry.
+  const chop = bars(
+    Array.from({ length: 220 }, (_, i) => 100 + 6 * Math.sin(i / 5) + i * 0.02),
+  );
+  const r = backtestPlanGeometry("long", 100, 97, 106, chop);
+  check("a chop fixture still produces a sample", r !== null && r.resolved > 0, r?.resolved);
+  if (r) {
+    check("scratches are no longer the dominant outcome",
+      r.scratches / Math.max(1, r.resolved) < 0.5,
+      `${r.scratches}/${r.resolved}`);
+  }
+}
+
 report("bt");

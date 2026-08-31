@@ -15,7 +15,8 @@ import { SCRATCH_R, classifyR, walkManaged } from "./lab-manage";
  * trade historically returned?" It walks every past bar, assumes an entry at
  * that close in the signal's direction, places the stop and target at the
  * *same relative distances* as the current plan, and then runs the shared
- * exit engine (lib/analysis/lab-manage.ts): breakeven at 1R, the stop
+ * exit engine (lib/analysis/lab-manage.ts): half banked at a target worth at
+ * least 1R, breakeven once the trade has proven itself by 2R, the stop
  * trailed behind newly confirmed swings, exit on an opposite CHoCH, closed
  * at the market at the horizon. The monitor applies those same rules to the
  * live position, so the measured number describes the trade that will
@@ -82,6 +83,21 @@ export interface PlanBacktest {
    * way the monitor manages it, has been historically worth taking.
    */
   expectancyR: number | null;
+  /**
+   * 賠率結構 — the average winner and the average loser, in R.
+   *
+   * Expectancy alone cannot answer the question the operator actually asked
+   * ("the trades it picks tend to make a little or stop out"), because
+   * +0.3R is +0.3R whether it comes from 60% × 1.0R or 30% × 2.6R. Those are
+   * not the same trade to hold, and only one of them is worth the screen
+   * time. These are measured on the same managed walk as the expectancy, so
+   * a card that shows +0.35R can also show what a win and a loss look like.
+   * Null when the sample had no win (or no loss) to average.
+   */
+  avgWinR: number | null;
+  avgLossR: number | null;
+  /** avgWinR ÷ |avgLossR| — how many losers one winner pays for. */
+  payoffRatio: number | null;
   horizonBars: number;
   lookbackBars: number;
   /** True when at least one sample touched both levels in the same bar. */
@@ -314,6 +330,8 @@ function walk(
   let losses = 0;
   let scratches = 0;
   let sumR = 0;
+  let sumWinR = 0;
+  let sumLossR = 0;
   let hadAmbiguousBars = false;
   let sampled = 0;
   let unfilled = 0;
@@ -404,14 +422,20 @@ function walk(
     // see SCRATCH_R in lab-manage.ts. Scratches stay in the expectancy
     // (they cost the spread) and out of the rate.
     const kind = classifyR(exit.r);
-    if (kind === "win") wins++;
-    else if (kind === "loss") losses++;
-    else scratches++;
+    if (kind === "win") {
+      wins++;
+      sumWinR += exit.r;
+    } else if (kind === "loss") {
+      losses++;
+      sumLossR += exit.r;
+    } else scratches++;
   }
 
   const resolved = wins + losses + scratches;
   const decisive = wins + losses;
   const hitRate = decisive > 0 ? wins / decisive : null;
+  const avgWinR = wins > 0 ? Math.round((sumWinR / wins) * 100) / 100 : null;
+  const avgLossR = losses > 0 ? Math.round((sumLossR / losses) * 100) / 100 : null;
 
   return {
     resolved,
@@ -423,6 +447,12 @@ function walk(
     timeouts: 0,
     hitRate: hitRate === null ? null : Math.round(hitRate * 1000) / 1000,
     expectancyR: resolved > 0 ? Math.round((sumR / resolved) * 100) / 100 : null,
+    avgWinR,
+    avgLossR,
+    payoffRatio:
+      avgWinR !== null && avgLossR !== null && avgLossR !== 0
+        ? Math.round((avgWinR / Math.abs(avgLossR)) * 100) / 100
+        : null,
     horizonBars,
     lookbackBars: sampled,
     hadAmbiguousBars,
@@ -435,7 +465,7 @@ function walk(
           `${FILL_WINDOW_BARS} 根內未成交就視同撤單：${sampled - unfilled} 筆成交、${unfilled} 筆未成交），`
         : `本計畫為現價進場，於訊號當根收盤成交，`) +
       `再依實際執行的管理規則模擬` +
-      `（停利 ≥2R 先平一半、不足則全出、1R 保本、結構移停、反向 CHoCH 出場、逾時以市價結束），` +
+      `（停利 ≥1R 先平一半、不足則全出、走完 2R 才保本、結構移停、反向 CHoCH 出場、逾時以市價結束），` +
       `勝率不含 |R|≤${SCRATCH_R} 的打平，已扣除來回交易成本 ${(costFraction * 100).toFixed(3)}%`,
   };
 }

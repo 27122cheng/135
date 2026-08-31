@@ -198,11 +198,11 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   const added = step(2021, entered.memory);
   check("reaching an add-on reports it", added.events.some((e) => e.kind === "add_on"));
   check("and moves the stop", added.events.some((e) => e.kind === "stop_moved"));
-  // 2021 is past 1R (entry 2000, risk 20), so the breakeven rule lifts the
-  // stop to the entry — and the add-on's suggested 1995 must NOT drag it back
-  // down. A stop only ever moves toward safety; the tighter of the two stands.
-  check("the stop actually changes — to the tighter of breakeven and the add-on's",
-    added.memory.activeStop === 2000, added.memory.activeStop);
+  // 2021 is past 1R (entry 2000, risk 20) but NOT past PROVEN_R (2040), so
+  // breakeven has not armed and the add-on's own suggested stop 1995 stands.
+  // It is still a move toward safety from 1980; a stop never retreats.
+  check("the stop actually changes — to the add-on's own suggestion",
+    added.memory.activeStop === 1995, added.memory.activeStop);
   check("the fill is remembered", added.memory.addOnsFilled === 1);
 
   const addedAgain = step(2025, added.memory);
@@ -235,7 +235,7 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   check("a sub-1R target exits in full, terminally",
     nearShelf.memory.state === "target_hit", nearShelf.memory.state);
   check("and says why the split did not apply",
-    nearShelf.events.some((e) => e.kind === "target_hit" && e.detail.includes("不足 2R")),
+    nearShelf.events.some((e) => e.kind === "target_hit" && e.detail.includes("不足 1R")),
     nearShelf.events);
 
   const target = step(2085, entered.memory);
@@ -369,12 +369,11 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
     direction: "short", plan: shortPlan, price: 1975, priceAgeMinutes: 5, memory: shortEntered.memory,
   });
   check("short add-on triggers below", shortAdd.memory.addOnsFilled === 1);
-  // Price 1975 is past 1R for this short (entry 2000, risk 20 → 1R at 1980),
-  // so the breakeven rule has already brought the stop to 2000 — tighter than
-  // the add-on's suggested 2005. The tighter stop stands; a stop never
-  // retreats toward risk.
-  check("short stop moves down — to the tighter of breakeven and the add-on's",
-    shortAdd.memory.activeStop === 2000, shortAdd.memory.activeStop);
+  // Price 1975 is past 1R for this short (entry 2000, risk 20 → 1R at 1980)
+  // but not past PROVEN_R (1960), so breakeven has not armed and the add-on's
+  // own suggested 2005 stands — still a move toward safety from 2020.
+  check("short stop moves down — to the add-on's own suggestion",
+    shortAdd.memory.activeStop === 2005, shortAdd.memory.activeStop);
 }
 
 // ── message ───────────────────────────────────────────────────────
@@ -440,10 +439,11 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
 
   // A flip with no add-on in this batch (just a breakeven stop move, say)
   // must not warn — the caveat is scoped to the action that actually raises
-  // risk. Add-on moved out to 2050 so it does not coincide with 1R (2020).
-  const farAddOnPlan = plan({ add_ons: [addOn(1, 2050, 2010)] });
+  // risk. Add-on moved out to 2060 so it does not coincide with PROVEN_R
+  // (2040, since risk is 20).
+  const farAddOnPlan = plan({ add_ons: [addOn(1, 2060, 2010)] });
   const { events: stopOnly } = step(
-    2020, { state: "entered", addOnsFilled: 0, activeStop: 1980 }, farAddOnPlan,
+    2040, { state: "entered", addOnsFilled: 0, activeStop: 1980 }, farAddOnPlan,
   );
   check("fixture sanity: only a stop move fired, no add-on",
     stopOnly.some((e) => e.kind === "stop_moved") && !stopOnly.some((e) => e.kind === "add_on"),

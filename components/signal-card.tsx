@@ -12,6 +12,7 @@ import { groupDataGaps, KEY_SOURCES } from "@/lib/data-gaps";
 import { summariseRegime } from "@/lib/analysis/regime-summary";
 import { buildTraderView } from "@/lib/analysis/trader-view";
 import { cn } from "@/lib/utils";
+import { PayoffShape } from "./payoff-shape";
 import {
   CONFIDENT_ENTRY_MIN,
   LEVEL_LABEL,
@@ -786,6 +787,15 @@ function ReferencePlan({ signal }: { signal: TradeSignal }) {
             </>
           )}
         </p>
+      )}
+      {bt && (
+        <PayoffShape
+          className="mt-2"
+          avgWinR={bt.avgWinR}
+          avgLossR={bt.avgLossR}
+          payoffRatio={bt.payoffRatio}
+          scratches={bt.scratches}
+        />
       )}
 
       <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500">

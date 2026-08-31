@@ -271,6 +271,21 @@ export interface HorizonProfile {
   label: string;
   maxTargetAtr: number;
   /**
+   * 持有上限 — bars the managed walk may hold before closing at the market.
+   *
+   * Was a flat 20 for every profile, which quietly made the 波段 tier a lie:
+   * a target allowed to sit 5×ATR away was given the same month to get there
+   * as a target 2×ATR away, and 10% of all sampled trades ended not at a
+   * level but on the clock. A trade closed by a clock while it is in profit
+   * is a small win *by construction*, and it was a measurable share of the
+   * 「小獲利」 the operator reported. Extending only the swing tier — the one
+   * whose targets are far — lifted the simulated average win from 1.43R to
+   * 1.61R with no change to the average loss. The day tier keeps 20: a 當沖
+   * held two months is not a 當沖, and stretching its clock would be tuning
+   * the number rather than fixing the trade.
+   */
+  horizonBars: number;
+  /**
    * 統計否決線（跟單性腿）— scratch-excluded hit rate BELOW which the
    * combination is vetoed. A veto floor, not a qualifying bar: the analysis
    * decides, this only removes what is measurably unfollowable.
@@ -320,12 +335,14 @@ export { TRADE_MIN_EXPECTANCY_R };
 export const DAY_PROFILE: HorizonProfile = {
   label: "當沖",
   maxTargetAtr: 2,
+  horizonBars: 20,
   minHitRate: TRADE_VETO_HIT_RATE,
   minExpectancyR: TRADE_VETO_EXPECTANCY_R,
 };
 export const SWING_PROFILE: HorizonProfile = {
   label: "波段",
   maxTargetAtr: 5,
+  horizonBars: 40,
   minHitRate: TRADE_VETO_HIT_RATE,
   minExpectancyR: TRADE_VETO_EXPECTANCY_R,
 };
@@ -334,6 +351,7 @@ export const SWING_PROFILE: HorizonProfile = {
 export const REFERENCE_PROFILE: HorizonProfile = {
   label: "參考價位",
   maxTargetAtr: 2,
+  horizonBars: 20,
   minHitRate: TRADE_VETO_HIT_RATE,
   minExpectancyR: TRADE_VETO_EXPECTANCY_R,
 };
@@ -550,7 +568,8 @@ function chooseGeometry(
       c.sl.price,
       c.tp.price,
       candles,
-      undefined,
+      // 波段 gets a longer clock than 當沖 — see HorizonProfile.horizonBars.
+      profile.horizonBars,
       input.symbol,
     );
   }
@@ -588,12 +607,38 @@ function chooseGeometry(
   const tied = pool.filter(
     (c) => c.backtest!.expectancyR! >= bestExpectancy - EXPECTANCY_EPSILON,
   );
-  const chosen = tied.reduce((best, c) =>
-    (c.backtest!.hitRate ?? 0) > (best.backtest!.hitRate ?? 0) ? c : best,
-  );
+  // 同分時比賠率結構，不比勝率。
+  //
+  // This tie-break used to prefer the higher hit rate, on the reasoning that
+  // two plans with the same edge are not the same plan to hold and the one
+  // that resolves in your favour more often is the one a person can follow.
+  // True as far as it goes — and it was quietly buying the exact profile the
+  // operator then reported: 「篩選出來的交易容易小獲利或是止損」. A hit rate
+  // is purchasable by moving the target in (see breakevenRr above), so among
+  // statistically indistinguishable geometries the rule reliably picked the
+  // nearest target — a small win when it worked and a full stop when it did
+  // not, over and over.
+  //
+  // Followability is still enforced, in the place it belongs: minHitRate is a
+  // veto line, and anything below it never reached this pool. Above that line
+  // the better plan is the one whose winners are worth more relative to its
+  // losers, which is what survives a losing streak and what the operator
+  // actually wants to see on the card.
+  const payoffOf = (c: Combo) => c.backtest!.payoffRatio ?? 0;
+  const chosen = tied.reduce((best, c) => (payoffOf(c) > payoffOf(best) ? c : best));
 
   const bt = chosen.backtest!;
   const hitPct = Math.round((bt.hitRate ?? 0) * 100);
+  // 賠率結構 — the shape behind the expectancy. Printed because the same
+  // +0.3R can be 60%×1.0R or 30%×2.6R, and those are not the same trade to
+  // hold; without this line the card could not answer "what does a win here
+  // actually look like".
+  const shape =
+    bt.avgWinR !== null && bt.avgLossR !== null
+      ? `賠率結構：平均一勝 +${bt.avgWinR}R、平均一敗 ${bt.avgLossR}R` +
+        `（${bt.payoffRatio !== null ? `一勝抵 ${bt.payoffRatio} 敗` : "—"}），` +
+        `另有 ${bt.scratches} 次打平。`
+      : "";
   const tier = isStrongBacktest(bt)
     ? "評級「強」（期望值 ≥ +0.35R 且勝率 ≥55%）"
     : "評級「合格」（統計未否決；未達「強」標籤的 0.35R／55%）";
@@ -610,10 +655,10 @@ function chooseGeometry(
     basis: allVetoed
       ? `在 ${combos.length} 組真實結構組合中無一通過統計附加審查：本組已是最佳，` +
         `${bt.resolved} 次中 ${bt.wins} 勝（勝率 ${hitPct}%，不含打平），` +
-        `每單位風險期望 ${bt.expectancyR}R${screen}${warn}`
+        `每單位風險期望 ${bt.expectancyR}R。${shape}${screen}${warn}`
       : `分析選出的結構組合，統計附加審查未否決（${floorText(profile)}）。` +
         `實測：${bt.resolved} 次中 ${bt.wins} 勝（勝率 ${hitPct}%，不含打平），` +
-        `每單位風險期望 ${bt.expectancyR}R，風報比 1:${chosen.rr}，${tier}${note}${screen}`,
+        `每單位風險期望 ${bt.expectancyR}R，風報比 1:${chosen.rr}，${tier}。${shape}${note}${screen}`,
     meetsFloor: !allVetoed,
   };
 }
@@ -945,15 +990,18 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
   // The same hit-rate floor the deterministic path enforces. Without it the
   // AI's pick was the one door around 未達門檻一律觀望 — the identical
   // geometry the fallback would refuse could walk in wearing "AI 判斷".
-  const aiBacktest =
-    input.candles && input.candles.length >= 60
-      ? backtestPlanGeometry(input.direction, entry.price, sl.price, tp.price, input.candles, undefined, input.symbol)
-      : null;
-  const aiHit = aiBacktest?.hitRate ?? null;
   const aiDayProfile = regimeAdjustedProfile(
     effectiveDayProfile(input.dayHitRateFloorBump),
     input.regimeMaxTargetAtr,
   );
+  const aiBacktest =
+    input.candles && input.candles.length >= 60
+      ? backtestPlanGeometry(
+          input.direction, entry.price, sl.price, tp.price, input.candles,
+          aiDayProfile.horizonBars, input.symbol,
+        )
+      : null;
+  const aiHit = aiBacktest?.hitRate ?? null;
   if (
     aiBacktest === null ||
     aiBacktest.resolved < MIN_RESOLVED_FOR_RANKING ||

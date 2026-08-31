@@ -357,7 +357,7 @@ export function formatAlert(
         SCALE_OUT_MIN_R
         ? "觸及停利先平一半保本追蹤"
         : "觸及停利整筆出場"
-    }｜1R 保本｜新 swing 移停｜反向 CHoCH 出場（監控自動提醒）`,
+    }｜2R 保本｜新 swing 移停｜反向 CHoCH 出場（監控自動提醒）`,
     // The swing variant rides along as levels, never as a second monitored
     // trade — one position at a time is the monitor's rule, so the message
     // says which plan the tracking follows.

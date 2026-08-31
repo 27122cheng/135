@@ -188,6 +188,29 @@ async function main() {
       g);
   }
 
+  // ── 持有上限也要分層 ─────────────────────────────────────────
+  //
+  // A flat 20-bar clock for both tiers made 波段 a label rather than a trade:
+  // the swing target may sit 5×ATR away and was given the same month to get
+  // there as a 2×ATR day target. A trade closed on the clock while in profit
+  // is a small win by construction, and that was a measurable share of the
+  // 「小獲利」 the operator reported.
+  check("the swing tier holds longer than the day tier",
+    SWING_PROFILE.horizonBars > DAY_PROFILE.horizonBars,
+    [DAY_PROFILE.horizonBars, SWING_PROFILE.horizonBars]);
+  check("the day tier's clock is unchanged — a 當沖 held two months is not a 當沖",
+    DAY_PROFILE.horizonBars === 20, DAY_PROFILE.horizonBars);
+  check("the reference tier measures on the day clock, like the plan it mirrors",
+    REFERENCE_PROFILE.horizonBars === DAY_PROFILE.horizonBars, REFERENCE_PROFILE.horizonBars);
+  // The reach and the clock must move together: a target allowed further away
+  // with the same time to get there is a target the sample cannot resolve.
+  check("further reach comes with more time, in the same proportion or better",
+    SWING_PROFILE.horizonBars / DAY_PROFILE.horizonBars >= 1.5,
+    SWING_PROFILE.horizonBars / DAY_PROFILE.horizonBars);
+  // The calibration bump must not quietly reset the clock.
+  check("the calibration bump preserves the day clock",
+    effectiveDayProfile(0.05).horizonBars === DAY_PROFILE.horizonBars);
+
   report("dual horizons");
 }
 

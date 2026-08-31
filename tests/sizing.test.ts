@@ -2,6 +2,7 @@ import { check, report } from "./_harness";
 import { positionSize } from "@/lib/analysis/sizing";
 import { upcomingHighImpactEvent, nfpTimeFor } from "@/lib/analysis/timing";
 import { advancePlan, INITIAL_MEMORY, type MonitorMemory } from "@/lib/monitor/plan-state";
+import { PROVEN_R } from "@/lib/analysis/lab-manage";
 import type { TradePlan } from "@/types/signal";
 
 /**
@@ -83,35 +84,42 @@ import type { TradePlan } from "@/types/signal";
   const step = (price: number, memory: MonitorMemory) =>
     advancePlan({ direction: "long", plan, price, priceAgeMinutes: 1, memory });
 
-  // Risk is 4; 1R in favour = 104.
-  const before = step(103.5, entered);
-  check("below 1R the stop stays put",
+  // Risk is 4; PROVEN_R (2R) in favour = 108. One R — 104 — is explicitly NOT
+  // enough any more: arming breakeven there washed out 13% of every managed
+  // trade at ±0R, which is the 「小獲利或止損」 profile the operator reported.
+  const before = step(104, entered);
+  check("at 1R the stop no longer moves — 1R is not proof",
     before.memory.activeStop === 96 && before.events.length === 0, before);
 
-  const at1R = step(104, entered);
-  check("at 1R the stop moves to the entry", at1R.memory.activeStop === 100, at1R.memory);
+  const proven = step(108, entered);
+  check(`at ${PROVEN_R}R the stop moves to the entry`, proven.memory.activeStop === 100,
+    proven.memory);
   check("announced as a stop_moved event with the arithmetic",
-    at1R.events.some((e) => e.kind === "stop_moved" && e.detail.includes("1R")), at1R.events);
-  check("and the state itself does not change", at1R.memory.state === "entered");
+    proven.events.some((e) => e.kind === "stop_moved" && e.detail.includes(`${PROVEN_R}R`)),
+    proven.events);
+  check("and says why the threshold is not 1R",
+    proven.events.some((e) => e.kind === "stop_moved" && e.detail.includes("日常波動")),
+    proven.events);
+  check("and the state itself does not change", proven.memory.state === "entered");
 
   // Idempotent: the next tick at the same price must not re-announce.
-  const again = step(104.5, at1R.memory);
+  const again = step(108.5, proven.memory);
   check("it cannot fire twice", again.events.length === 0, again.events);
 
   // After the move, a return to entry stops out at breakeven, not at −1R.
-  const scratched = step(100, at1R.memory);
+  const scratched = step(100, proven.memory);
   check("a pullback to entry now exits at breakeven",
     scratched.memory.state === "stop_hit" && scratched.memory.activeStop === 100,
     scratched.memory);
 
-  // A short mirrors: entry 100, stop 104, 1R = 96.
-  const shortPlan = { ...plan, stop_loss: 104, take_profit: 90 };
+  // A short mirrors: entry 100, stop 104, 2R = 92.
+  const shortPlan = { ...plan, stop_loss: 104, take_profit: 88 };
   const shortMove = advancePlan({
-    direction: "short", plan: shortPlan, price: 96, priceAgeMinutes: 1,
+    direction: "short", plan: shortPlan, price: 92, priceAgeMinutes: 1,
     memory: { state: "entered", addOnsFilled: 0, activeStop: 104 },
   });
-  check("a short's stop moves down to entry at 1R", shortMove.memory.activeStop === 100,
-    shortMove.memory);
+  check(`a short's stop moves down to entry at ${PROVEN_R}R`,
+    shortMove.memory.activeStop === 100, shortMove.memory);
 
   // Price beyond the TP scales out — half banked, remainder trailing at
   // breakeven — and the stop move folds into the scale_out event, not a
@@ -121,7 +129,7 @@ import type { TradePlan } from "@/types/signal";
     won.memory.state === "scaled" && won.memory.activeStop === 100, won.memory);
 
   // Waiting plans are untouched: no entry, no breakeven.
-  const waiting = step(104, INITIAL_MEMORY);
+  const waiting = step(108, INITIAL_MEMORY);
   check("a plan that never filled cannot move its stop",
     waiting.events.every((e) => e.kind !== "stop_moved"), waiting.events);
 }

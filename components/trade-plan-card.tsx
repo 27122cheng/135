@@ -3,6 +3,7 @@ import { SCALE_OUT_MIN_R } from "@/lib/analysis/lab-manage";
 import { TRADE_MIN_EXPECTANCY_R } from "@/lib/analysis/floors";
 import { formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { PayoffShape } from "./payoff-shape";
 
 const CONFIDENCE_LABEL: Record<TradePlan["confidence"], string> = {
   high: "信心高",
@@ -281,6 +282,13 @@ export function TradePlanCard({
               : ""}。
             {backtest.basis ? `樣本取法：${backtest.basis}。` : null}
           </p>
+          <PayoffShape
+            className="mt-3"
+            avgWinR={backtest.avgWinR}
+            avgLossR={backtest.avgLossR}
+            payoffRatio={backtest.payoffRatio}
+            scratches={backtest.scratches}
+          />
           {typeof backtest.costPct === "number" && backtest.costPct > 0 && (
             <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500">
               勝負是<span className="text-neutral-300">扣掉來回交易成本 {backtest.costPct}%</span>

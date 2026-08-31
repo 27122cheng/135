@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { check, report } from "./_harness";
 import { breakevenRr, buildTradePlan } from "@/lib/analysis/trade-plan";
 import { formatAlert, shouldAlert } from "@/lib/notify/alert";
@@ -275,6 +277,24 @@ async function main() {
     // consecutive losses is eight wins deep.
     const rr = breakevenRr(0.8);
     check("two losses at 80% cost eight wins", Math.round(2 / rr) === 8, [rr, 2 / rr]);
+  }
+
+  // ── 同分時比賠率，不比勝率 ───────────────────────────────────
+  //
+  // The tie-break among statistically indistinguishable geometries used to
+  // prefer the higher hit rate. breakevenRr (asserted just above) is the
+  // reason that was wrong: a hit rate is purchasable by moving the target
+  // in, so the rule reliably bought the nearest target — a small win when it
+  // worked and a full stop when it did not, which is 「篩選出來的交易容易小
+  // 獲利或是止損」 exactly. Followability is still enforced, as the veto line
+  // it was always meant to be. Structural, because the failure mode is a
+  // one-line revert that nothing else would notice.
+  {
+    const src = readFileSync(join(__dirname, "..", "lib", "analysis", "trade-plan.ts"), "utf8");
+    const tieBreak = src.slice(src.indexOf("const tied = pool.filter"));
+    const chosen = tieBreak.slice(0, tieBreak.indexOf("const bt = chosen"));
+    check("the tie-break ranks on the payoff ratio", chosen.includes("payoffRatio"), chosen);
+    check("and no longer ranks on the hit rate", !chosen.includes("hitRate"), chosen);
   }
 
   console.log("\nall assertions passed if no FAIL above");

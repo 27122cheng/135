@@ -293,6 +293,16 @@ export interface PlanBacktest {
   /** wins / (wins + losses), scratches excluded. */
   hitRate: number | null;
   expectancyR: number | null;
+  /**
+   * 賠率結構 — the average winner and the average loser in R, and their
+   * ratio. The same +0.3R expectancy can be 60%×1.0R or 30%×2.6R, and those
+   * are not the same trade to hold; without these the card cannot say what a
+   * win here actually looks like. Optional: rows written before the payoff
+   * measurement lack them, and a sample with no win (or no loss) has none.
+   */
+  avgWinR?: number | null;
+  avgLossR?: number | null;
+  payoffRatio?: number | null;
   horizonBars: number;
   lookbackBars: number;
   hadAmbiguousBars: boolean;
