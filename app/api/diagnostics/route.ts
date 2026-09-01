@@ -86,6 +86,15 @@ export async function GET() {
       "FMP 報價 (需金鑰)",
       "https://financialmodelingprep.com/api/v3/quote/EURUSD?apikey=demo",
     ),
+    // Added with the source itself: it was written against a documented
+    // response shape that could not be reached from the build environment, so
+    // the one thing the operator needs is a page that says plainly whether it
+    // answers. A green line here and a 「Swissquote 報價」 gap in the sweep
+    // together localise the problem to parsing rather than reachability.
+    probe(
+      "Swissquote 現貨報價 (免金鑰)",
+      "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD",
+    ),
     probe(
       "Binance 24 小時對照 (免金鑰)",
       "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1m&limit=1",

@@ -8,6 +8,7 @@ import { fetchJson } from "./http";
 import { fetchStooqText } from "./stooq-fetch";
 import { fetchTwelveDataQuote } from "./twelvedata";
 import { fetchFmpQuote } from "./fmp";
+import { fetchSwissquoteQuote } from "./swissquote";
 import { fetchTradingViewQuote } from "./tradingview";
 
 /**
@@ -175,6 +176,7 @@ export interface LatestPrice {
     | "binance"
     | "kraken"
     | "tradingview"
+    | "swissquote"
     | "proxy-bar"
     | "fred"
     | "er-api"
@@ -287,13 +289,19 @@ export async function fetchLatestPrice(
   // the slowest of the three, not their sum, and the freshest answer wins
   // exactly as before.
   const live: LatestPrice[] = direct ? [direct] : [];
-  const [stooq, td, fmp, tv] = await Promise.all([
+  const [stooq, td, fmp, tv, sq] = await Promise.all([
     stooqTicker ? fetchStooqQuote(stooqTicker, gaps).catch(() => null) : null,
     symbol ? fetchTwelveDataQuote({ symbol }, gaps).catch(() => null) : null,
     symbol ? fetchFmpQuote({ symbol }, gaps).catch(() => null) : null,
     symbol ? fetchTradingViewQuote({ symbol }, gaps).catch(() => null) : null,
+    // A regulated broker's own dealable BBO, keyless and spot-basis. Added
+    // after a sweep in which all four legs above failed at once on XAUUSD
+    // and the chain fell through to a 14.5-hour-old daily backup — past the
+    // monitor's 3-hour liveness bound, so gold stopped being tracked at all.
+    // Only answers for the spot-basis instruments; see swissquote.ts.
+    symbol ? fetchSwissquoteQuote({ symbol }, gaps).catch(() => null) : null,
   ]);
-  for (const candidate of [stooq, td, fmp, tv]) if (candidate) live.push(candidate);
+  for (const candidate of [stooq, td, fmp, tv, sq]) if (candidate) live.push(candidate);
 
   // Freshest live answer wins, and if it is genuinely recent nothing further
   // is asked. The daily sources below exist for when every live feed is dark.
