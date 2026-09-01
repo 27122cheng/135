@@ -123,29 +123,28 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
     open: 100, high, low, close: (high + low) / 2, volume: 1,
   });
 
-  // 分批止盈 needs a target worth ≥ SCALE_OUT_MIN_R (1R). A shelf nearer than
-  // that is banking half a crumb, so it exits the WHOLE position at the
-  // target. 101.5 on a 2-point risk is 0.75R.
-  const near = { ...base, target: 101.5 };
-  const won = resolveForwardTrade(near, [at(0, 100.5, 99), at(1, 100.5, 99), at(2, 102, 100)])!;
-  check("a sub-1R target exits in full", won.status === "win", won);
+  // 分批止盈 needs a target worth ≥ SCALE_OUT_MIN_R (2R). base's target sits
+  // 1.5R away — the typical day plan the floors admit — so the touch exits
+  // the WHOLE position. Halving it there caps a win at ≈0.85R blended while
+  // a loss still costs a full 1R, which needs a 54% hit rate to break even
+  // and these instruments measure 37–45%; see SCALE_OUT_MIN_R.
+  const won = resolveForwardTrade(base, [at(0, 101, 99), at(1, 101, 99), at(2, 104, 100)])!;
+  check("a 1.5R target exits in full", won.status === "win", won);
   check("recorded at the target price and the bar that reached it",
-    won.exitPrice === 101.5 && won.barsHeld === 3, won);
+    won.exitPrice === 103 && won.barsHeld === 3, won);
 
-  // base's target sits 1.5R away — the typical day plan the floors admit —
-  // and now earns the split: half banked, remainder rides at ≥ breakeven
-  // until stop/flip/horizon. It scales at 1R rather than 2R because the
-  // breakeven rule that used to strangle the runner now waits for PROVEN_R;
-  // see SCALE_OUT_MIN_R in lab-manage.ts for the measurement.
-  check("a ≥1R target touch alone does not close the trade",
-    resolveForwardTrade(base, [at(0, 101, 99), at(1, 103.5, 100)]) === null);
-  const farWon = resolveForwardTrade(base, [
-    at(0, 101, 99), at(1, 103.5, 100), at(2, 100.5, 100),
+  // A genuinely far target (105 on a 2-point risk = 2.5R) earns the split:
+  // half banked, remainder rides at ≥ breakeven until stop/flip/horizon.
+  const far = { ...base, target: 105 };
+  check("a ≥2R target touch alone does not close the trade",
+    resolveForwardTrade(far, [at(0, 101, 99), at(1, 105.5, 100)]) === null);
+  const farWon = resolveForwardTrade(far, [
+    at(0, 101, 99), at(1, 105.5, 100), at(2, 101, 100),
   ])!;
-  check("the remainder stopping at breakeven closes the scaled trade as a win",
+  check("the remainder stopping at breakeven closes the far-target trade as a win",
     farWon.status === "win", farWon);
-  check("recorded at the volume-weighted exit — half at 103, half at the 100 breakeven stop",
-    farWon.exitPrice === 101.5 && farWon.barsHeld === 3, farWon);
+  check("recorded at the volume-weighted exit — half at 105, half at the 100 breakeven stop",
+    farWon.exitPrice === 102.5 && farWon.barsHeld === 3, farWon);
 
   // And a sub-1R shelf, same rule, even more so.
   const nearShelf = resolveForwardTrade(
@@ -200,12 +199,12 @@ const meta = { symbol: "XAUUSD", category: "metal" as const };
     classifyR(0.11) === "win");
 
   const short = { ...base, direction: "short" as const, stop: 102, target: 97 };
-  check("a short's sub-1R target exits in full the other way up",
-    resolveForwardTrade({ ...short, target: 99 }, [at(0, 101, 98.5)])!.status === "win");
+  check("a short's 1.5R target exits in full the other way up",
+    resolveForwardTrade(short, [at(0, 101, 96)])!.status === "win");
   check("and stops out on a rise",
     resolveForwardTrade(short, [at(0, 103, 99)])!.status === "loss");
-  check("a short's ≥1R target scales out and stays open",
-    resolveForwardTrade(short, [at(0, 101, 96.5)]) === null);
+  check("a short's ≥2R target scales out and stays open",
+    resolveForwardTrade({ ...short, target: 95 }, [at(0, 101, 94.5)]) === null);
 }
 
 // ── one full advance ──────────────────────────────────────────────

@@ -16,7 +16,7 @@ import { SCRATCH_R, classifyR, walkManaged } from "./lab-manage";
  * that close in the signal's direction, places the stop and target at the
  * *same relative distances* as the current plan, and then runs the shared
  * exit engine (lib/analysis/lab-manage.ts): half banked at a target worth at
- * least 1R, breakeven once the trade has proven itself by 2R, the stop
+ * least 2R, breakeven once the trade has proven itself by 2R, the stop
  * trailed behind newly confirmed swings, exit on an opposite CHoCH, closed
  * at the market at the horizon. The monitor applies those same rules to the
  * live position, so the measured number describes the trade that will
@@ -465,7 +465,7 @@ function walk(
           `${FILL_WINDOW_BARS} 根內未成交就視同撤單：${sampled - unfilled} 筆成交、${unfilled} 筆未成交），`
         : `本計畫為現價進場，於訊號當根收盤成交，`) +
       `再依實際執行的管理規則模擬` +
-      `（停利 ≥1R 先平一半、不足則全出、走完 2R 才保本、結構移停、反向 CHoCH 出場、逾時以市價結束），` +
+      `（停利 ≥2R 先平一半、不足則全出、走完 2R 才保本、結構移停、反向 CHoCH 出場、逾時以市價結束），` +
       `勝率不含 |R|≤${SCRATCH_R} 的打平，已扣除來回交易成本 ${(costFraction * 100).toFixed(3)}%`,
   };
 }

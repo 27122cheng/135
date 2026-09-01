@@ -128,21 +128,35 @@ export const SCALE_OUT_FRACTION = 0.5;
  * wash is a small win; that is the 「小獲利或止損」 shape the operator saw.
  *
  * With the breakeven rule moved to {@link PROVEN_R} the runner survives, and
- * the same simulation that condemned scaling now favours it. Measured over
- * 10.8k managed trades across trending, ranging and high-volatility synthetic
- * regimes (real candles are not reachable from the build environment, so this
- * is a relative comparison of exit rules, not an edge claim):
+ * a simulation over 10.8k managed trades then favoured scaling at 1R again
+ * (+0.27R against +0.19R at the 2R gate). It was lowered to 1 on that basis.
+ * **That was wrong, and it is back at 2.** The simulation's series carry a
+ * persistent drift, which is exactly the condition a runner is paid under;
+ * daily FX and index candles mean-revert, and the runner mostly gives its
+ * half back. Three separate real-candle measurements say so — the two live
+ * sweeps above, and then the sweep after the change, in which EURUSD's best
+ * combination measured 37% at **−0.19R** and the board fell to zero trades.
  *
- * | rule                          |     E |  avg win | payoff | scratch |
- * |-------------------------------|-------|----------|--------|---------|
- * | scale ≥2R, breakeven at 1R    | .160R |    1.30R |   1.38 |     13% |
- * | scale ≥2R, breakeven at 2R    | .225R |    1.46R |   1.58 |      3% |
- * | scale ≥1R, breakeven at 2R    | .270R |    1.55R |   1.69 |      3% |
+ * The arithmetic is not subtle once written down. A typical admitted plan
+ * targets 1.5–1.7R. Scaling banks half there and the remainder, stopped at
+ * breakeven, contributes about nothing — so a win pays ≈0.85R while a loss
+ * still costs a full 1R, and the geometry needs a hit rate above 54% merely
+ * to break even. These instruments measure 37–45%. Taking the whole shelf
+ * pays 1.7R for the same 37% and is roughly flat; halving it is not.
  *
- * Average loss is −0.92R in every row: none of this is bought by widening
- * risk. It is bought by letting a proven trade finish.
+ * The rule the evidence supports: bank half only when the first target pays
+ * enough that half of it still beats the risk. That is 2R, and it is why the
+ * two live sweeps found what they found. A synthetic disagreeing with three
+ * real-candle measurements is a wrong synthetic.
+ *
+ * The {@link PROVEN_R} half of that change stands on its own evidence and
+ * stays: it removes manufactured ±0R scratches (13% of all managed trades),
+ * which is both what the operator reported seeing and a source of inflated
+ * statistics — a scratch leaves the hit-rate denominator entirely and costs
+ * ~0R instead of −1R, so a rule that manufactures them flatters every number
+ * measured through it.
  */
-export const SCALE_OUT_MIN_R = 1.0;
+export const SCALE_OUT_MIN_R = 2.0;
 
 /**
  * 交易「證明自己」的門檻 —— the advance that earns a trade its breakeven stop.
