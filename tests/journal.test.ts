@@ -3,7 +3,9 @@ import { computeSeverity } from "@/lib/journal/severity";
 import {
   applyGradePenalties,
   assertNeverLoosened,
+  computeCalibration,
   computeInterventions,
+  MAX_HIT_RATE_SHORTFALL,
   DEFAULT_EFFECTS,
   downgrade,
   isMainSession,
@@ -145,47 +147,76 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
   check("the primary layers are untouched", weightedNet(pureTechnical) === -4);
 }
 
-// ── 實績校準 — realized outcomes audit the backtest floor ─────────
+// ── 實績校準 — realized outcomes calibrate the predictor, never the gate ──
+//
+// This used to raise the hit-rate VETO to 50% once ten real trades resolved
+// under 45%. Measured hit rates here are 37–45%, so the first honest journal
+// would have vetoed nearly everything — a shutdown triggered by the numbers
+// finally being true, on the one metric the architecture calls supplementary.
+// The shortfall now haircuts each backtest's hit rate before its expectancy
+// is judged; see computeCalibration.
 {
   const real = (result: "win" | "loss") =>
     entry({ result, pnl_pct: result === "win" ? 1.5 : -1, review_note: "[自動追蹤] x" });
   const paper = (result: "win" | "loss") =>
     entry({ result, pnl_pct: 1, review_note: "[自動追蹤][參考價位紙上追蹤] x" });
 
-  // 4 wins / 8 losses = 33% realized against a 70% promise → +10 points.
-  const bad = computeInterventions([
+  // 4 wins / 8 losses = 33% against the 55% reference → 22-point gap, capped at 20.
+  const bad = computeCalibration([
     ...Array.from({ length: 4 }, () => real("win")),
     ...Array.from({ length: 8 }, () => real("loss")),
   ]);
-  check("a failing audit raises the day floor", bad.dayHitRateFloorBump === 0.1, bad.dayHitRateFloorBump);
-  check("and explains itself with the numbers",
-    bad.applied.some((a) => a.effect.includes("+10 個百分點") && a.evidence.includes("33%")),
-    bad.applied.map((a) => a.effect));
+  check("a failing audit produces a shortfall", bad.hitRateShortfall === 0.2, bad);
+  check("capped at MAX_HIT_RATE_SHORTFALL", bad.hitRateShortfall === MAX_HIT_RATE_SHORTFALL);
+  check("and explains itself as a calibration of the predictor, not a bar",
+    bad.applied?.effect.includes("校準的是預測，不是門檻") === true &&
+      bad.applied.evidence.includes("33%"),
+    bad.applied);
 
-  // 6/12 = 50% → the milder +5.
-  const mediocre = computeInterventions([
+  // 5/12 = 42% → 13-point gap → engages, uncapped.
+  const mediocre = computeCalibration([
+    ...Array.from({ length: 5 }, () => real("win")),
+    ...Array.from({ length: 7 }, () => real("loss")),
+  ]);
+  check("a mediocre audit produces a proportional shortfall",
+    mediocre.hitRateShortfall === 0.13, mediocre.hitRateShortfall);
+
+  // 6/12 = 50% — inside the 10-point noise band; no calibration.
+  const near = computeCalibration([
     ...Array.from({ length: 6 }, () => real("win")),
     ...Array.from({ length: 6 }, () => real("loss")),
   ]);
-  check("a mediocre audit raises it less", mediocre.dayHitRateFloorBump === 0.05);
+  check("a gap under ten points is noise, not a calibration", near.hitRateShortfall === 0);
+  check("but the realized rate is still reported", near.realizedHitRate === 0.5);
 
-  // 8/12 = 67% — close enough to the promise; no bump.
-  const fine = computeInterventions([
+  // 8/12 = 67% — better than promised; nothing to correct.
+  const fine = computeCalibration([
     ...Array.from({ length: 8 }, () => real("win")),
     ...Array.from({ length: 4 }, () => real("loss")),
   ]);
-  check("a healthy audit leaves the floor alone", fine.dayHitRateFloorBump === 0);
+  check("a healthy audit calibrates nothing", fine.hitRateShortfall === 0 && fine.applied === null);
 
-  // Under 10 resolved, the sample is noise and must not move the floor.
-  const thin = computeInterventions([
+  // Under 10 resolved, the sample is noise and must not move anything.
+  const thin = computeCalibration([
     ...Array.from({ length: 3 }, () => real("win")),
     ...Array.from({ length: 5 }, () => real("loss")),
   ]);
-  check("a thin sample does not calibrate", thin.dayHitRateFloorBump === 0);
+  check("a thin sample does not calibrate", thin.hitRateShortfall === 0 && thin.sample === 8);
 
-  // Paper fills are assumed perfect and never claimed the floor — excluded.
-  const paperOnly = computeInterventions(Array.from({ length: 12 }, () => paper("loss")));
-  check("paper tracking cannot move the real floor", paperOnly.dayHitRateFloorBump === 0);
+  // Paper fills are assumed perfect and never claimed a backtest — excluded.
+  const paperOnly = computeCalibration(Array.from({ length: 12 }, () => paper("loss")));
+  check("paper tracking cannot calibrate the real predictor", paperOnly.hitRateShortfall === 0);
+
+  // The per-symbol S-tag engine no longer carries the audit at all.
+  const effects = computeInterventions([
+    ...Array.from({ length: 4 }, () => real("win")),
+    ...Array.from({ length: 8 }, () => real("loss")),
+  ]);
+  // (S-tag tightenings may still fire from the tagged losses — that engine is
+  // untouched; what must be gone is the untagged, tag-null calibration row.)
+  check("the S-tag engine no longer raises any hit-rate bar",
+    !("dayHitRateFloorBump" in effects) && effects.applied.every((a) => a.tag !== null),
+    effects.applied);
 }
 
 // ── grade table ───────────────────────────────────────────────────

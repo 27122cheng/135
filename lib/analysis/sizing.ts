@@ -1,3 +1,4 @@
+import { streakFactor } from "./exposure";
 import type { SupportedSymbol } from "@/types/signal";
 
 /**
@@ -40,10 +41,18 @@ export interface SizingInput {
   stopLoss: number;
   symbol: string;
   /**
-   * Symbols currently held whose correlation with this one is at or beyond
-   * the cluster threshold (or sharing a USD side). Non-empty halves the size.
+   * Held symbols that are the same bet as this one — from
+   * lib/analysis/exposure.ts, which reads the sign of the correlation, both
+   * directions and the USD side. The n-th copy of one view risks 1/(n+1).
    */
   correlatedHeld?: string[];
+  /** Why each of them counts, for the note. Same order as correlatedHeld. */
+  correlatedReasons?: string[];
+  /**
+   * 連敗減碼 — consecutive real losses immediately before this trade. Two
+   * cuts the risk to three-quarters, three or more to half; a win resets.
+   */
+  lossStreak?: number;
 }
 
 export interface SizingResult {
@@ -57,8 +66,10 @@ export interface SizingResult {
   /** Notional exposure at entry, and as a multiple of the account. */
   notional: number;
   leverage: number;
-  /** 1 when no correlated position is held; 0.5 otherwise. */
+  /** 1 / (1 + number of held positions that are the same bet). */
   correlationFactor: number;
+  /** 1, 0.75 or 0.5 by the current loss streak — see streakFactor. */
+  streakFactor: number;
   /** Facts the number alone would hide. */
   notes: string[];
 }
@@ -83,17 +94,26 @@ export function positionSize(input: SizingInput): SizingResult | null {
   const stopDistance = direction === "long" ? entry - stopLoss : stopLoss - entry;
   if (!(stopDistance > 0)) return null;
 
-  const correlationFactor = (input.correlatedHeld?.length ?? 0) > 0 ? 0.5 : 1;
-  const riskAmount = (accountSize * riskPct) / 100 * correlationFactor;
+  const n = input.correlatedHeld?.length ?? 0;
+  const correlationFactor = 1 / (1 + n);
+  const streak = streakFactor(input.lossStreak ?? 0);
+  const riskAmount = ((accountSize * riskPct) / 100) * correlationFactor * streak;
   const units = riskAmount / stopDistance;
   const notional = units * entry;
   const leverage = notional / accountSize;
 
   const notes: string[] = [];
   if (correlationFactor < 1) {
+    const why = input.correlatedReasons?.length ? `（${input.correlatedReasons.join("；")}）` : "";
     notes.push(
-      `已持有高相關部位（${input.correlatedHeld!.join("、")}），建議尺寸減半 —— ` +
-        `兩個相關部位各承擔一半風險，合計才等於對這個觀點下 ${riskPct}%。`,
+      `已持有 ${n} 個與本單同一觀點的部位（${input.correlatedHeld!.join("、")}）${why}，` +
+        `本單風險降為 1/${n + 1} —— ${n + 1} 個同觀點部位各擔 1/${n + 1}，合計才等於對這個觀點下 ${riskPct}%。`,
+    );
+  }
+  if (streak < 1) {
+    notes.push(
+      `連敗減碼：最近連續 ${input.lossStreak} 筆停損，本單風險先降到 ${Math.round(streak * 100)}% —— ` +
+        `系統與行情明顯不同步時不用全額去驗證，賺一筆就恢復。`,
     );
   }
   if (input.symbol === "USDJPY") {
@@ -119,6 +139,7 @@ export function positionSize(input: SizingInput): SizingResult | null {
     notional: Math.round(notional),
     leverage: Math.round(leverage * 10) / 10,
     correlationFactor,
+    streakFactor: streak,
     notes,
   };
 }

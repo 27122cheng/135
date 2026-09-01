@@ -4,7 +4,9 @@ import {
   SWING_PROFILE,
   REFERENCE_PROFILE,
   TRADE_MIN_EXPECTANCY_R,
+  calibratedExpectancy,
   effectiveDayProfile,
+  floorText,
   meetsProfileFloor,
   profileHitFloor,
   buildTradePlan,
@@ -108,15 +110,30 @@ async function main() {
       meetsProfileFloor(REFERENCE_PROFILE, { hitRate: 0.45, expectancyR: 0.1 }) &&
       !meetsProfileFloor(REFERENCE_PROFILE, { hitRate: 0.45, expectancyR: -0.2 }),
       REFERENCE_PROFILE);
-    // 實績校準 raises the followability leg; the cap keeps it below certainty.
-    const bumped = effectiveDayProfile(0.1);
-    check("the calibration bump raises the veto line",
-      profileHitFloor(bumped) === 0.5 &&
-      !meetsProfileFloor(bumped, { hitRate: 0.45, expectancyR: 1.5 }),
-      profileHitFloor(bumped));
-    check("and caps below certainty",
-      profileHitFloor({ ...DAY_PROFILE, hitRateBump: 0.5 }) === 0.9,
-      profileHitFloor({ ...DAY_PROFILE, hitRateBump: 0.5 }));
+    // 實績校準 haircuts the backtest's hit rate before the EXPECTANCY leg is
+    // judged. The hit-rate veto line itself never moves — the old bump raised
+    // it to 50%, which at measured 37–45% hit rates was a shutdown on the
+    // supplementary metric.
+    const calibrated = effectiveDayProfile(0.15);
+    check("calibration never moves the hit-rate veto line",
+      profileHitFloor(calibrated) === profileHitFloor(DAY_PROFILE), profileHitFloor(calibrated));
+    // 45% × 2.5R: at a realistic 30% it still pays (+0.05R) — survives.
+    check("a geometry with real margin survives the haircut",
+      meetsProfileFloor(calibrated, { hitRate: 0.45, expectancyR: 0.58, avgWinR: 2.5, avgLossR: -1 }));
+    // 45% × 1.5R: at 30% it loses (−0.25R) — vetoed, though its raw expectancy is positive.
+    check("a geometry whose edge only existed at the promised rate is vetoed",
+      !meetsProfileFloor(calibrated, { hitRate: 0.45, expectancyR: 0.13, avgWinR: 1.5, avgLossR: -1 }));
+    check("the same geometry passes with no calibration",
+      meetsProfileFloor(DAY_PROFILE, { hitRate: 0.45, expectancyR: 0.13, avgWinR: 1.5, avgLossR: -1 }));
+    // A row without the payoff shape cannot be haircut honestly — fall back
+    // to its raw expectancy rather than inventing one.
+    check("a backtest without avgWin/avgLoss falls back to its raw expectancy",
+      meetsProfileFloor(calibrated, { hitRate: 0.45, expectancyR: 0.13 }));
+    check("calibratedExpectancy does the arithmetic it says",
+      calibratedExpectancy({ hitRate: 0.45, avgWinR: 2.5, avgLossR: -1 }, 0.15) === 0.05);
+    check("and the floor text names the calibration when it is active",
+      floorText(calibrated).includes("扣 15 點") && !floorText(DAY_PROFILE).includes("扣"));
+    check("the haircut is capped", (effectiveDayProfile(0.5).hitRateShortfall ?? 0) === 0.2);
   }
 
   // ── the swing may reach what the day plan excludes ──────────────

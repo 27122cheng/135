@@ -94,14 +94,6 @@ export interface InterventionEffects {
   noTradeOnFundamentalConflict: boolean;
   /** S8: force no-trade when COT is at an extreme opposing the signal. */
   noTradeOnPositioningConflict: boolean;
-  /**
-   * 實績校準 — extra hit rate demanded on top of the day floor when the
-   * realized win rate of auto-tracked real entries falls well short of what
-   * the backtest floor promised. Not tied to any S-tag: the trigger is the
-   * scoreboard itself. Only ever ≥ 0, and it releases on its own — a window
-   * whose realized rate recovers computes back to zero next scan.
-   */
-  dayHitRateFloorBump: number;
   /** For display: what was applied and why. */
   applied: AppliedIntervention[];
 }
@@ -116,7 +108,6 @@ export const DEFAULT_EFFECTS: InterventionEffects = {
   downgradeOutsideMainSession: false,
   noTradeOnFundamentalConflict: false,
   noTradeOnPositioningConflict: false,
-  dayHitRateFloorBump: 0,
   applied: [],
 };
 
@@ -187,38 +178,111 @@ export function computeInterventions(history: JournalEntry[]): InterventionEffec
     }
   }
 
-  // ── 實績校準 ─────────────────────────────────────────────────────
-  // Every real entry passed the managed-backtest floor (expectancy and
-  // hit rate ≥ 55%) — so the realized win rate of those same entries is a
-  // direct audit of the backtest's honesty. When enough have resolved and
-  // the audit fails, new
-  // entries must clear a higher bar until the scoreboard recovers. Real
-  // auto-tracked entries only: paper fills are assumed perfect and manual
-  // entries never claimed the floor.
-  const real = window.filter(
+  return effects;
+}
+
+/**
+ * 實績校準 —— realized results correcting the predictor, not gating on it.
+ *
+ * ## What it was, and why that was a time bomb
+ *
+ * Once ten real trades had resolved under a 45% win rate, this raised the
+ * hit-rate *veto line* from 40% to 50%. Measured hit rates on these
+ * instruments sit at 37–45%, so the first honest journal would have vetoed
+ * nearly every geometry on every symbol — a total shutdown, triggered by the
+ * statistics finally being true. And it gated on the one number the
+ * operator's architecture says is supplementary: a geometry paying 2.5R at
+ * 45% is +0.58R and unfollowable by that rule; a geometry paying 1.2R at
+ * 52% is +0.14R and fine by it. Backwards.
+ *
+ * ## What it is now
+ *
+ * The audit still asks the same question — are the backtests optimistic? —
+ * but the answer feeds the *expectancy* arithmetic instead of a gate. The
+ * shortfall between what backtests typically promise and what real entries
+ * deliver becomes a haircut on every backtest's hit rate, and the veto is
+ * then applied to the **calibrated** expectancy:
+ *
+ *     E' = (h − s) · avgWin − (1 − h + s) · |avgLoss|
+ *
+ * A geometry with real margin survives; one whose edge only existed at the
+ * promised hit rate is vetoed — and because the tie-break already prefers
+ * the higher payoff, the selection drifts toward the shapes that survive a
+ * realistic hit rate. Volume is lost only where the edge was fictional.
+ *
+ * ## The reference, stated plainly
+ *
+ * A paired comparison (each trade's own backtest promise against its own
+ * result) would be the honest measurement. The journal cannot pair them:
+ * its signal_id is the symbol for rows born from latest_signal, so the join
+ * back to the stored backtest is dead. The reference is therefore the 55%
+ * the backtests were historically tuned around — the same reference the
+ * old rule used, so no less honest, and made conservative in two ways: it
+ * only engages below 45% (a 10-point shortfall or more), and the haircut is
+ * capped at {@link MAX_HIT_RATE_SHORTFALL}.
+ *
+ * Global, not per symbol: optimism is a property of the *method*, and ten
+ * resolved real trades per symbol is months away while ten across the book
+ * is weeks. Real auto-tracked entries only — paper fills are assumed perfect
+ * and hand-written rows never claimed a backtest.
+ */
+export const CALIBRATION_REFERENCE_HIT_RATE = 0.55;
+export const CALIBRATION_MIN_TRADES = 10;
+export const MAX_HIT_RATE_SHORTFALL = 0.2;
+
+export interface Calibration {
+  /** Points of hit rate to subtract from every backtest before the veto. 0 = none. */
+  hitRateShortfall: number;
+  /** Real resolved trades the estimate rests on. */
+  sample: number;
+  realizedHitRate: number | null;
+  /** For display, in the same shape the S-tag interventions use. */
+  applied: AppliedIntervention | null;
+}
+
+export const NO_CALIBRATION: Calibration = {
+  hitRateShortfall: 0,
+  sample: 0,
+  realizedHitRate: null,
+  applied: null,
+};
+
+export function computeCalibration(history: JournalEntry[]): Calibration {
+  const real = history.filter(
     (e) =>
       e.review_note?.includes("[自動追蹤]") &&
       !e.review_note.includes("[參考價位紙上追蹤]") &&
       (e.result === "win" || e.result === "loss"),
   );
-  if (real.length >= 10) {
-    const wins = real.filter((e) => e.result === "win").length;
-    const realized = wins / real.length;
-    const bump = realized < 0.45 ? 0.1 : realized < 0.55 ? 0.05 : 0;
-    if (bump > 0) {
-      effects.dayHitRateFloorBump = bump;
-      effects.applied.push({
-        tag: null,
-        effect: `當沖回測勝率下限 +${Math.round(bump * 100)} 個百分點（55% → ${Math.round((0.55 + bump) * 100)}%）`,
-        evidence:
-          `實績校準：最近 ${real.length} 筆正式進場實際勝率僅 ${Math.round(realized * 100)}%，` +
-          `遠低於回測門檻要求的水準 —— 回測偏樂觀時，新進場需要更高的安全邊際`,
-        triggered_by: real.slice(0, 5).map((e) => e.closed_at.slice(0, 10)),
-      });
-    }
+  if (real.length < CALIBRATION_MIN_TRADES) {
+    return { ...NO_CALIBRATION, sample: real.length };
   }
-
-  return effects;
+  const wins = real.filter((e) => e.result === "win").length;
+  const realized = wins / real.length;
+  const rawShortfall = CALIBRATION_REFERENCE_HIT_RATE - realized;
+  // Engage only past a 10-point gap; below that the sample is arguing with
+  // noise. Cap so one bad month cannot turn every backtest into a refusal.
+  const shortfall =
+    rawShortfall >= 0.1 ? Math.round(Math.min(MAX_HIT_RATE_SHORTFALL, rawShortfall) * 100) / 100 : 0;
+  if (shortfall === 0) {
+    return { hitRateShortfall: 0, sample: real.length, realizedHitRate: realized, applied: null };
+  }
+  return {
+    hitRateShortfall: shortfall,
+    sample: real.length,
+    realizedHitRate: realized,
+    applied: {
+      tag: null,
+      effect:
+        `每個回測的勝率先扣 ${Math.round(shortfall * 100)} 個百分點再算期望值，` +
+        `校準後期望值 <0 的價位組合才否決 —— 校準的是預測，不是門檻`,
+      evidence:
+        `實績校準：最近 ${real.length} 筆正式進場實際勝率 ${Math.round(realized * 100)}%，` +
+        `比回測慣常宣稱的 ${Math.round(CALIBRATION_REFERENCE_HIT_RATE * 100)}% 低 ` +
+        `${Math.round(rawShortfall * 100)} 點 —— 回測偏樂觀，扣掉這段差距再判斷每組價位是否仍有邊際`,
+      triggered_by: real.slice(0, 5).map((e) => e.closed_at.slice(0, 10)),
+    },
+  };
 }
 
 /** 07:00–21:00 UTC covers the London and New York sessions and their overlap. */

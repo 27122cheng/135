@@ -38,7 +38,7 @@ import type { TradePlan } from "@/types/signal";
   const halved = positionSize({ ...base, correlatedHeld: ["EURUSD"] })!;
   check("a correlated held position halves the risk", halved.riskAmount === 50, halved.riskAmount);
   check("and says why, naming the position",
-    halved.notes.some((n) => n.includes("EURUSD") && n.includes("減半")), halved.notes);
+    halved.notes.some((n) => n.includes("EURUSD") && n.includes("1/2")), halved.notes);
   check("the factor only ever reduces", halved.correlationFactor === 0.5 && s.correlationFactor === 1);
 
   // FX: 1% of 10k over a 50-pip stop on EURUSD.

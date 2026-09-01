@@ -44,15 +44,15 @@ export interface TradePlanInput {
    */
   atr?: number | null;
   /**
-   * 校準加碼 — extra hit-rate demanded on top of the day floor, from the
-   * intervention engine's comparison of realized outcomes against what the
-   * floor promised. A backtest that promises 70% while the journal says 45%
-   * is an optimistic backtest, and the honest response is to demand more
-   * margin from it, not to keep trusting the number. Applied on top of the
-   * hit-rate floor (see profileHitFloor). Only ever ≥ 0 — the floors the
-   * operator set are minimums, never relaxed from here.
+   * 實績校準 — points of hit rate real entries have been delivering *below*
+   * what backtests promise, from lib/journal/interventions.ts. Subtracted
+   * from every backtest's hit rate before the expectancy veto is applied,
+   * so a geometry is vetoed when its edge only existed at the promised rate
+   * — never by a raised hit-rate bar, which is the supplementary metric and
+   * must not gate. Only ever ≥ 0 and capped; 0 or absent means no
+   * calibration (too few real trades, or they are delivering as promised).
    */
-  dayHitRateFloorBump?: number;
+  hitRateShortfall?: number;
   /**
    * 行情性質給的目標可及距離，in ATR — from the thesis's playbook.
    *
@@ -70,13 +70,13 @@ export interface TradePlanInput {
   aiBudgetMs?: number;
 }
 
-/** The day profile with the calibration bump applied, capped below certainty. */
-export function effectiveDayProfile(bump: number | undefined): HorizonProfile {
-  const extra = Math.max(0, Math.min(0.2, bump ?? 0));
-  if (extra === 0) return DAY_PROFILE;
-  // Carried as its own field rather than added into minHitRate, so the base
-  // floor and the audit's demand stay separately visible in every message.
-  return { ...DAY_PROFILE, hitRateBump: extra };
+/** The day profile with the realized-results calibration applied. */
+export function effectiveDayProfile(shortfall: number | undefined): HorizonProfile {
+  const s = Math.max(0, Math.min(0.2, shortfall ?? 0));
+  if (s === 0) return DAY_PROFILE;
+  // Carried as its own field so the veto line and the calibration stay
+  // separately visible in every message — the line never moves.
+  return { ...DAY_PROFILE, hitRateShortfall: s };
 }
 
 /**
@@ -296,8 +296,11 @@ export interface HorizonProfile {
    * is vetoed (it measurably loses money on this instrument's history).
    */
   minExpectancyR?: number;
-  /** 實績校準 — extra hit rate demanded on top of the veto line. Only ≥ 0. */
-  hitRateBump?: number;
+  /**
+   * 實績校準 — hit-rate points to subtract from a backtest before judging
+   * its expectancy. See meetsProfileFloor. Only ≥ 0; never moves minHitRate.
+   */
+  hitRateShortfall?: number;
 }
 
 /**
@@ -365,15 +368,34 @@ export function isStrongBacktest(bt: {
 }
 
 /**
- * The hit-rate leg of a profile's floor, with the calibration bump applied.
- * Capped at 90%: demanding near-certainty is indistinguishable from a
- * shutdown. Rounded so 0.55 + 0.1 prints as 65%, not 0.6499999….
+ * The hit-rate leg of a profile's veto line. It is the profile's own number
+ * and nothing else: the realized-results calibration used to be added here,
+ * which turned "the backtests are optimistic" into "veto everything under
+ * 50%" — a shutdown on the supplementary metric. Calibration now lives in
+ * the expectancy leg (see meetsProfileFloor); this line never moves.
  */
 export function profileHitFloor(profile: HorizonProfile): number {
-  return (
-    Math.round(Math.min(0.9, profile.minHitRate + Math.max(0, profile.hitRateBump ?? 0)) * 10000) /
-    10000
-  );
+  return Math.round(profile.minHitRate * 10000) / 10000;
+}
+
+/**
+ * 校準後期望值 — what this geometry is expected to pay once the backtest's
+ * hit rate is haircut by what real entries have actually been delivering.
+ *
+ *     E' = (h − s) · avgWin − (1 − h + s) · |avgLoss|
+ *
+ * Null when the backtest cannot supply the pieces (a sample with no win or
+ * no loss to average, or a row written before the payoff shape was
+ * measured) — the caller then falls back to the uncalibrated expectancy
+ * rather than inventing one.
+ */
+export function calibratedExpectancy(
+  bt: { hitRate: number | null; avgWinR?: number | null; avgLossR?: number | null },
+  shortfall: number,
+): number | null {
+  if (bt.hitRate === null || bt.avgWinR == null || bt.avgLossR == null) return null;
+  const h = Math.max(0, bt.hitRate - Math.max(0, shortfall));
+  return Math.round((h * bt.avgWinR - (1 - h) * Math.abs(bt.avgLossR)) * 100) / 100;
 }
 
 /**
@@ -387,11 +409,22 @@ export function profileHitFloor(profile: HorizonProfile): number {
  */
 export function meetsProfileFloor(
   profile: HorizonProfile,
-  bt: { hitRate: number | null; expectancyR: number | null },
+  bt: {
+    hitRate: number | null;
+    expectancyR: number | null;
+    avgWinR?: number | null;
+    avgLossR?: number | null;
+  },
 ): boolean {
   if ((bt.hitRate ?? 0) < profileHitFloor(profile)) return false;
-  if (profile.minExpectancyR != null && (bt.expectancyR ?? -Infinity) < profile.minExpectancyR) {
-    return false;
+  if (profile.minExpectancyR != null) {
+    // 實績校準 acts here, on the number that actually decides whether a
+    // trade pays: when real entries have been landing s points under what
+    // backtests promise, judge each backtest as if it had promised s less.
+    const shortfall = profile.hitRateShortfall ?? 0;
+    const judged =
+      shortfall > 0 ? (calibratedExpectancy(bt, shortfall) ?? bt.expectancyR) : bt.expectancyR;
+    if ((judged ?? -Infinity) < profile.minExpectancyR) return false;
   }
   return true;
 }
@@ -400,9 +433,12 @@ export function meetsProfileFloor(
 export function floorText(profile: HorizonProfile): string {
   const hit = Math.round(profileHitFloor(profile) * 100);
   if (profile.minExpectancyR == null) return `回測勝率 ≥${hit}%`;
+  const s = profile.hitRateShortfall ?? 0;
+  const calibrated =
+    s > 0 ? `（實績校準：回測勝率先扣 ${Math.round(s * 100)} 點再算期望值）` : "";
   return (
     `統計否決線：實測期望值 <${profile.minExpectancyR === 0 ? "0（虧錢）" : `+${profile.minExpectancyR}R`}` +
-    `或勝率 <${hit}%（不含打平）即排除 —— 附加審查，只擋明顯不利，不是資格門檻`
+    `${calibrated}或勝率 <${hit}%（不含打平）即排除 —— 附加審查，只擋明顯不利，不是資格門檻`
   );
 }
 
@@ -773,7 +809,7 @@ function fallbackPlan(input: TradePlanInput, why: string | null): TradePlan {
   }
 
   const dayProfile = regimeAdjustedProfile(
-    effectiveDayProfile(input.dayHitRateFloorBump),
+    effectiveDayProfile(input.hitRateShortfall),
     input.regimeMaxTargetAtr,
   );
   const picked = chooseGeometry(input, dayProfile);
@@ -797,14 +833,17 @@ function fallbackPlan(input: TradePlanInput, why: string | null): TradePlan {
   // combination measured as losing money or unfollowably low on this
   // instrument's own history. The analysis wanted the trade; the measured
   // record disqualified every way of expressing it, and that is worth a
-  // wait. The line quoted may sit higher when the calibration bump is
-  // active (realized results lagging promises tightens the veto).
+  // wait. When the realized-results calibration is active the expectancy
+  // quoted is the calibrated one — the number that actually failed.
   if (!picked.meetsFloor) {
-    const hit = picked.combo.backtest?.hitRate;
-    const exp = picked.combo.backtest?.expectancyR;
+    const bt = picked.combo.backtest;
+    const hit = bt?.hitRate;
+    const s = dayProfile.hitRateShortfall ?? 0;
+    const cal = bt && s > 0 ? calibratedExpectancy(bt, s) : null;
+    const exp = cal ?? bt?.expectancyR;
     const bumped =
-      (dayProfile.hitRateBump ?? 0) > 0
-        ? `（含實績校準：否決線 +${Math.round((dayProfile.hitRateBump ?? 0) * 100)} 個百分點）`
+      cal !== null && bt?.expectancyR != null
+        ? `（實績校準後：回測 ${bt.expectancyR >= 0 ? "+" : ""}${bt.expectancyR}R，扣 ${Math.round(s * 100)} 點勝率後 ${cal >= 0 ? "+" : ""}${cal}R）`
         : "";
     return waitPlan(
       `統計否決：最佳組合${
@@ -991,7 +1030,7 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
   // AI's pick was the one door around 未達門檻一律觀望 — the identical
   // geometry the fallback would refuse could walk in wearing "AI 判斷".
   const aiDayProfile = regimeAdjustedProfile(
-    effectiveDayProfile(input.dayHitRateFloorBump),
+    effectiveDayProfile(input.hitRateShortfall),
     input.regimeMaxTargetAtr,
   );
   const aiBacktest =
@@ -1074,14 +1113,25 @@ export function collectCandidates(
       label: `${signal.stop_loss.structure}｜${signal.stop_loss.reason}`,
     },
   ];
-  // A wider alternative: one ATR beyond the same structure, for noisier conditions.
+  // Wider alternatives beyond the same structure, for noisier conditions.
+  // Two steps rather than one: the managed backtest already measures every
+  // stop against this instrument's own candles, so the cheapest honest way
+  // to learn how much buffer a symbol needs is to offer the search the
+  // choice and let expectancy pick. A stop swept by routine noise (S3 in
+  // the journal) is exactly what the wider candidates exist to test, and
+  // they cost nothing in trade volume — a combination is only ever added
+  // to the menu, never removed from it.
   if (atr && atr > 0) {
-    const wider =
-      signal.direction === "long" ? signal.stop_loss.price - atr * 0.5 : signal.stop_loss.price + atr * 0.5;
-    slCandidates.push({
-      price: round(wider),
-      label: `同結構外再放寬 0.5×ATR（較不易被雜訊掃到，風險較大）`,
-    });
+    for (const mult of [0.5, 1.0]) {
+      const wider =
+        signal.direction === "long"
+          ? signal.stop_loss.price - atr * mult
+          : signal.stop_loss.price + atr * mult;
+      slCandidates.push({
+        price: round(wider),
+        label: `同結構外再放寬 ${mult}×ATR（較不易被雜訊掃到，風險較大）`,
+      });
+    }
   }
 
   const tpCandidates: Candidate[] = signal.take_profits.map((tp) => ({

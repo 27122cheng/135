@@ -46,9 +46,12 @@ import { fetchEconomicCalendar } from "./data-sources/finnhub";
 import {
   applyGradePenalties,
   assertNeverLoosened,
+  computeCalibration,
   computeInterventions,
   DEFAULT_EFFECTS,
   LOOKBACK,
+  NO_CALIBRATION,
+  type Calibration,
   type InterventionEffects,
 } from "./journal/interventions";
 import type { AppliedIntervention } from "@/types/journal";
@@ -86,6 +89,25 @@ async function loadInterventions(
       `讀取交易日誌失敗，本次未套用任何干涉規則（${err instanceof Error ? err.message : String(err)}）`,
     );
     return DEFAULT_EFFECTS;
+  }
+}
+
+/**
+ * 實績校準 — the whole book's real results, not one symbol's.
+ *
+ * Separate from loadInterventions on purpose: S-tag tightenings are scoped
+ * per symbol (a run of bad EURUSD entries says nothing about gold), but the
+ * backtests' optimism is a property of the method, and ten resolved real
+ * trades per symbol is months away while ten across the book is weeks.
+ */
+async function loadCalibration(gaps: string[]): Promise<Calibration> {
+  const store = getSignalStore();
+  if (!store) return NO_CALIBRATION;
+  try {
+    return computeCalibration(usableJournal(await store.listJournal({ limit: 60 })));
+  } catch (err) {
+    gaps.push(`讀取交易日誌失敗，本次未套用實績校準（${err instanceof Error ? err.message : String(err)}）`);
+    return NO_CALIBRATION;
   }
 }
 
@@ -252,6 +274,8 @@ async function buildSignalForSymbol(
   ]);
   // Journal history is independent of every market call, so it loads alongside them.
   const interventionsPromise = loadInterventions(meta.symbol, gaps);
+  // 實績校準 reads the whole book's real results — see loadCalibration.
+  const calibrationPromise = loadCalibration(gaps);
   // 實驗室已採用條件 — same story, and the settings cache makes nine symbols
   // in one scan cost one round trip.
   const adoptionsPromise = loadAdoptionsFor(meta.symbol, gaps);
@@ -271,10 +295,11 @@ async function buildSignalForSymbol(
     return { positioning, fundamentalItems, news, fundFlowItems };
   })();
 
-  const [[d1, h4, w1], nonTechnical, effects, adoptions, witness] = await Promise.all([
+  const [[d1, h4, w1], nonTechnical, effects, calibration, adoptions, witness] = await Promise.all([
     ohlcvPromise,
     nonTechnicalPromise,
     interventionsPromise,
+    calibrationPromise,
     adoptionsPromise,
     witnessPromise,
     // Costs before any backtest runs: every floor downstream is an expectancy
@@ -282,7 +307,10 @@ async function buildSignalForSymbol(
     applyStoredTradingCosts(),
   ]);
   const { positioning, fundamentalItems, news, fundFlowItems } = nonTechnical;
-  const interventions: AppliedIntervention[] = [...effects.applied];
+  const interventions: AppliedIntervention[] = [
+    ...effects.applied,
+    ...(calibration.applied ? [calibration.applied] : []),
+  ];
 
   const candlesByTf = {
     D1: d1?.candles,
@@ -684,10 +712,10 @@ async function buildSignalForSymbol(
       // Lets the geometry search reject a stop inside the noise and a target
       // the 20-bar horizon cannot reach — neither of which a ratio can express.
       atr: atrD1,
-      // 實績校準：realized outcomes auditing the backtest's promises. When
-      // the journal says the 70% floor has been delivering far less, the
-      // floor rises until the scoreboard recovers.
-      dayHitRateFloorBump: effects.dayHitRateFloorBump,
+      // 實績校準：realized outcomes auditing the backtests' promises. The
+      // shortfall haircuts every backtest's hit rate before its expectancy
+      // is judged — a calibration of the predictor, never a raised bar.
+      hitRateShortfall: calibration.hitRateShortfall,
       // One model call per symbol per cache window, not one per sweep: the
       // prompt embeds live prices, so hashing it made every hourly scan a
       // fresh question and the 4-hour cache never once hit.

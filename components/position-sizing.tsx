@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { correlatedExposure, type Exposure } from "@/lib/analysis/exposure";
 import { positionSize } from "@/lib/analysis/sizing";
 import { loadSizingConfig } from "@/lib/sizing-client";
 import type { CorrelationReport } from "@/lib/analysis/correlation";
@@ -25,6 +26,7 @@ interface HeldPosition {
   /** plan_monitor state — entered/added means genuinely held. */
   state: string;
   paper?: boolean;
+  direction?: "long" | "short" | null;
 }
 
 export function PositionSizing({
@@ -39,9 +41,11 @@ export function PositionSizing({
   stopLoss: number;
 }) {
   const [config, setConfig] = useState(() => loadSizingConfig());
-  const [correlatedHeld, setCorrelatedHeld] = useState<string[]>([]);
+  const [exposure, setExposure] = useState<Exposure>({ related: [], reasons: [], factor: 1 });
   /** 歷史最長連敗 — from the system's own settled trades, for the survival line. */
   const [lossStreak, setLossStreak] = useState<number | null>(null);
+  /** 目前連敗 — drives the anti-martingale cut; a win resets it to 0. */
+  const [currentLossStreak, setCurrentLossStreak] = useState<number>(0);
 
   useEffect(() => {
     setConfig(loadSizingConfig());
@@ -55,10 +59,21 @@ export function PositionSizing({
         // the streak-survival line, and sizing must render without it.
         void fetch("/api/review", { cache: "no-store" })
           .then((r) => (r.ok ? r.json() : null))
-          .then((body: { equityCurve?: { longestLossStreak?: number } } | null) => {
-            const n = body?.equityCurve?.longestLossStreak;
-            if (!cancelled && typeof n === "number" && n > 0) setLossStreak(n);
-          })
+          .then(
+            (
+              body: {
+                equityCurve?: {
+                  longestLossStreak?: number;
+                  currentStreak?: { kind: "win" | "loss" | "none"; length: number };
+                };
+              } | null,
+            ) => {
+              const n = body?.equityCurve?.longestLossStreak;
+              if (!cancelled && typeof n === "number" && n > 0) setLossStreak(n);
+              const cur = body?.equityCurve?.currentStreak;
+              if (!cancelled && cur?.kind === "loss") setCurrentLossStreak(cur.length);
+            },
+          )
           .catch(() => undefined);
         const [posRes, corrRes] = await Promise.all([
           fetch("/api/positions", { cache: "no-store" }),
@@ -69,21 +84,20 @@ export function PositionSizing({
         // says a position is genuinely running.
         const positions = (await posRes.json()) as { open?: HeldPosition[] };
         const corr = (await corrRes.json()) as { report?: CorrelationReport };
+        // Direction-aware and sign-aware — see lib/analysis/exposure.ts. The
+        // inline version this replaced cut the size for a hedge and let a
+        // same-side dollar stack through at full size.
         const held = (positions.open ?? [])
           .filter(
             (p) =>
               !p.paper &&
-              (p.state === "entered" || p.state === "added" || p.state === "scaled"),
+              (p.state === "entered" || p.state === "added" || p.state === "scaled") &&
+              p.symbol !== symbol &&
+              (p.direction === "long" || p.direction === "short"),
           )
-          .map((p) => p.symbol)
-          .filter((s) => s !== symbol);
+          .map((p) => ({ symbol: p.symbol, direction: p.direction as "long" | "short" }));
         const clusters = corr.report?.clusters ?? [];
-        const related = held.filter((h) =>
-          clusters.some(
-            (c) => (c.a === symbol && c.b === h) || (c.b === symbol && c.a === h),
-          ),
-        );
-        if (!cancelled) setCorrelatedHeld(related);
+        if (!cancelled) setExposure(correlatedExposure({ symbol, direction, held, clusters }));
       } catch {
         // Sizing still renders without the correlation refinement.
       }
@@ -91,7 +105,7 @@ export function PositionSizing({
     return () => {
       cancelled = true;
     };
-  }, [symbol]);
+  }, [symbol, direction]);
 
   if (config.accountSize === null) {
     return (
@@ -113,7 +127,9 @@ export function PositionSizing({
     entry,
     stopLoss,
     symbol,
-    correlatedHeld,
+    correlatedHeld: exposure.related,
+    correlatedReasons: exposure.reasons,
+    lossStreak: currentLossStreak,
   });
   if (!sizing) return null;
 
