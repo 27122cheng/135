@@ -1,6 +1,8 @@
 import { COMMODITIES, type AddOnLevel, type Grade, type SignalRow } from "@/types/signal";
 import { groupDataGaps } from "@/lib/data-gaps";
 import { summariseRegime } from "@/lib/analysis/regime-summary";
+import { breadthOf } from "@/lib/analysis/evidence";
+import { MIN_CONSENSUS_DIMENSIONS } from "@/lib/notify/alert";
 
 export interface BoardAddOn {
   sequence: number;
@@ -103,6 +105,25 @@ export interface BoardRow {
   summary: string | null;
   waitFor: string | null;
   /**
+   * 為什麼手機沒收到 —— why this row was not pushed, when it was not.
+   *
+   * The push bar is deliberately higher than the display bar: the grade
+   * measures how much evidence there is, the consensus bar measures how many
+   * independent dimensions it came from, and a phone interruption is reserved
+   * for the trades where several agree. Narrower trades still store and still
+   * show — the site is where you go looking, the push is what comes looking
+   * for you.
+   *
+   * That is defensible design and it was completely invisible, so what the
+   * operator saw was 「信號與網頁的信號不一致，有些沒有」: a signal on the
+   * board that Telegram had never mentioned, with nothing anywhere to say
+   * why. Now the row carries the reason, so the two views reconcile on screen
+   * instead of looking like a bug.
+   *
+   * Null when the row would be pushed (or has nothing to push).
+   */
+  notPushedReason: string | null;
+  /**
    * Structure-derived levels, present on every scanned row including the ones
    * that stood aside. Null only when the symbol has never been scanned.
    */
@@ -194,6 +215,7 @@ export function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | 
       addOns: [],
       summary: null,
       waitFor: null,
+      notPushedReason: null,
       reference: null,
       referenceNote: null,
       generatedAt: null,
@@ -226,6 +248,18 @@ export function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | 
     })),
     summary: plan?.summary ?? null,
     waitFor: plan?.wait_for ?? null,
+    // Only meaningful for a row that is actually a trade — a 觀望 row is not
+    // "withheld from the push", it simply is not a trade.
+    notPushedReason:
+      plan?.stance === "enter"
+        ? (() => {
+            const agreeing = breadthOf(row.direction, row.bias_items ?? []).agreeing.length;
+            return agreeing < MIN_CONSENSUS_DIMENSIONS
+              ? `同向面向僅 ${agreeing} 個（推播需 ≥ ${MIN_CONSENSUS_DIMENSIONS}），` +
+                `此訊號只在網站顯示，手機不會收到 —— 證據夠成立一筆交易，但還不夠打擾你`
+              : null;
+          })()
+        : null,
     reference: toReference(row),
     referenceNote: Array.isArray(row.data_gaps)
       ? ((row.data_gaps as string[]).find((g) => g.startsWith("本次不提供參考價位")) ?? null)

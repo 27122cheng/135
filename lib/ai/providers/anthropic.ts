@@ -61,7 +61,7 @@ export function anthropicProvider(): AIProvider {
         .join("");
       const parsed = schema.parse(text);
       if (parsed === null) {
-        throw new AIProviderError("anthropic", `回應不符合 ${schema.name} 格式`);
+        throw new AIProviderError("anthropic", `回應不符合 ${schema.name} 格式`, "content");
       }
       return parsed;
     },

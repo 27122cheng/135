@@ -251,7 +251,13 @@ export async function analyzeNews(
   const shown = articles.slice(0, PROMPT_LIMIT);
   const result = await completeAI(buildPrompt(shown), analysisSchema(shown.length), gaps, {
     cacheKey: aiCacheKey,
-    maxTokens: 900,
+    // 900 was the reason every sweep logged finishReason=MAX_TOKENS. The
+    // schema asks for a 100-character summary plus four 40-character points
+    // with citation arrays, in Traditional Chinese — which Gemini tokenises
+    // at roughly one token per character — so the budget was being spent
+    // before the JSON could close. Cheap to raise; the whole dimension was
+    // falling back to keyword scoring on all eleven symbols without it.
+    maxTokens: 1600,
   });
   if (!result) {
     // Every provider unconfigured, over quota, or failing — fall back to keyword

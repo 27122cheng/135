@@ -65,17 +65,19 @@ export function geminiProvider(): AIProvider {
         answered: false,
       };
       let lastModelError: string | null = null;
+      /** Which model actually answered — the one a truncation retry re-asks. */
+      let rememberedModel: string | null = null;
       const tried = new Set<string>();
       /** See CompleteOptions.budgetMs — bounds the walk, not just one call. */
       const deadline = Date.now() + (options.budgetMs ?? 20000);
-      const ask = (model: string, withThinking: boolean) =>
+      const ask = (model: string, withThinking: boolean, tokenScale = 1) =>
         postJson(
           `${ENDPOINT}/${encodeURIComponent(model)}:generateContent`,
           { "x-goog-api-key": apiKey },
           {
             contents: [{ parts: [{ text: `${prompt}\n\n${schema.instruction}` }] }],
             generationConfig: {
-              maxOutputTokens: options.maxTokens ?? 900,
+              maxOutputTokens: (options.maxTokens ?? 900) * tokenScale,
               temperature: options.temperature ?? 0.2,
               // 2.5 Flash is a thinking model: left on, reasoning tokens eat the
               // output budget and the reply can come back with an empty text
@@ -121,6 +123,7 @@ export function geminiProvider(): AIProvider {
         }
 
         rememberModel("gemini", model);
+        rememberedModel = model;
         answer.body = res.json as GeminiResponse | null;
         answer.answered = true;
         return;
@@ -148,14 +151,45 @@ export function geminiProvider(): AIProvider {
           `可用模型皆已下架或改名（${lastModelError ?? "無回應"}），可在設定頁以 GEMINI_MODEL 指定新型號`,
         );
       }
-      const body = answer.body;
-      const text = body?.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-      const parsed = schema.parse(text);
+      let body = answer.body;
+      const textOf = (b: GeminiResponse | null) =>
+        b?.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+      let parsed = schema.parse(textOf(body));
+
+      // 被截斷就多給一次預算，不要把整個供應商判死。
+      //
+      // Every scheduled sweep came back with 新聞面 dead on all eleven
+      // symbols and `finishReason=MAX_TOKENS` recorded as the reason: the
+      // model was still writing when its output budget ran out. That threw,
+      // the failure counted toward the circuit breaker, and five or six of
+      // them disabled Gemini for the rest of the sweep — one truncated answer
+      // on the first symbol took the AI out for every symbol after it.
+      //
+      // The parser now repairs a truncated object, so most of these recover
+      // without another call. When even the repair cannot satisfy the schema,
+      // one retry at triple the budget is worth far more than a dead
+      // dimension on eleven instruments, and the deadline still bounds it.
+      if (
+        parsed === null &&
+        body?.candidates?.[0]?.finishReason === "MAX_TOKENS" &&
+        Date.now() < deadline
+      ) {
+        const model = rememberedModel ?? [...tried][tried.size - 1];
+        if (model) {
+          const retry = await ask(model, true, 3);
+          if (retry.ok) {
+            body = retry.json as GeminiResponse | null;
+            parsed = schema.parse(textOf(body));
+          }
+        }
+      }
+
       if (parsed === null) {
         const finish = body?.candidates?.[0]?.finishReason;
         throw new AIProviderError(
           "gemini",
           `回應不符合 ${schema.name} 格式${finish ? `（finishReason=${finish}）` : ""}`,
+          "content",
         );
       }
       return parsed;

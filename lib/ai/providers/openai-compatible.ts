@@ -171,7 +171,7 @@ export function openAICompatibleProvider(config: OpenAICompatibleConfig): AIProv
       const text = answer.body?.choices?.[0]?.message?.content ?? "";
       const parsed = schema.parse(text);
       if (parsed === null) {
-        throw new AIProviderError(config.name, `回應不符合 ${schema.name} 格式`);
+        throw new AIProviderError(config.name, `回應不符合 ${schema.name} 格式`, "content");
       }
       return parsed;
     },

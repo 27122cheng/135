@@ -792,6 +792,16 @@ export default function BoardPage() {
                         )}
                       </p>
 
+                      {/* 為什麼手機沒收到。The push bar is higher than the
+                          display bar on purpose, and that was invisible —
+                          what it looked like was a signal on the site that
+                          Telegram never mentioned. */}
+                      {row.notPushedReason && (
+                        <p className="mt-1.5 rounded-lg bg-neutral-800/50 px-2 py-1.5 text-[11px] leading-relaxed text-neutral-400">
+                          🔕 {row.notPushedReason}
+                        </p>
+                      )}
+
                       {row.addOns.length > 0 ? (
                         <div className="mt-2.5 border-t border-neutral-800/60 pt-2">
                           <p className="mb-1 text-[11px] text-neutral-500">

@@ -79,6 +79,21 @@ export async function GET(request: Request) {
         fabricated: partition.fabricated.length,
         duplicates: partition.duplicates.length,
         note: quarantineNote(partition),
+        // The rows themselves, not just a count. Quarantine means "not
+        // counted", never "disappeared" — the operator opened the page to an
+        // empty 學習紀錄 and reasonably read that as data loss. Nothing was
+        // deleted; it is all still here, labelled.
+        entries: partition.fabricated.slice(0, 15).map((e) => ({
+          symbol: e.symbol,
+          direction: e.direction,
+          grade: e.grade,
+          result: e.result,
+          pnlPct: e.pnl_pct,
+          closedAt: e.closed_at,
+          tag: e.stop_reason_tag,
+          severity: e.severity,
+          note: e.review_note,
+        })),
       },
       // 學習紀錄 — the raw reviewed entries behind every aggregate above.
       // The stats existed for months while the entries themselves (the S-tag,

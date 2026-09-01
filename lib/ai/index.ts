@@ -279,7 +279,15 @@ export async function completeAI<T>(
       setCached(cacheKey, result, AI_CACHE_TTL_MS);
       return result;
     } catch (err) {
-      recordFailure(provider.name);
+      // Only a provider that could not be reached earns a backoff. A reply
+      // this schema could not use means the provider is up and answering —
+      // opening the breaker on it disables a working provider for the rest
+      // of the sweep and tells the reader it is 「連線不穩」, which is false.
+      // See AIFailureKind: that mistake is why every symbol after the first
+      // truncated reply ran with no AI at all.
+      if (!(err instanceof AIProviderError) || err.kind === "transport") {
+        recordFailure(provider.name);
+      }
       failures.push(err instanceof AIProviderError ? err.message : String(err));
     }
   }

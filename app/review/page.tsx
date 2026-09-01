@@ -66,7 +66,12 @@ interface ReviewResponse extends ReviewStats {
   activeInterventions: TagStat[];
   recentTagStats: TagStat[];
   riskAdvice?: RiskAdvice[];
-  quarantine?: { fabricated: number; duplicates: number; note: string | null };
+  quarantine?: {
+    fabricated: number;
+    duplicates: number;
+    note: string | null;
+    entries?: LearningEntry[];
+  };
   error?: string;
 }
 
@@ -163,6 +168,19 @@ export default function ReviewPage() {
               <p className="whitespace-pre-line text-[12px] leading-relaxed text-amber-200/80">
                 {stats.quarantine.note}
               </p>
+              {/* The rows themselves. Quarantine means "not counted", never
+                  "deleted" — an empty page reads as data loss, and this is
+                  the difference between the two. */}
+              {stats.quarantine.entries && stats.quarantine.entries.length > 0 && (
+                <details className="mt-2.5">
+                  <summary className="cursor-pointer text-[12px] text-amber-300/80">
+                    看被隔離的紀錄（資料仍在，只是不計入統計）
+                  </summary>
+                  <div className="mt-2 opacity-60">
+                    <LearningLog entries={stats.quarantine.entries} />
+                  </div>
+                </details>
+              )}
             </div>
           )}
           {/* The headline: how the system's own recommendations actually did.
