@@ -7,6 +7,7 @@ import {
   INITIAL_MEMORY,
   type MonitorMemory,
 } from "@/lib/monitor/plan-state";
+import { pushWorthiness } from "@/lib/notify/alert";
 import { buildAddOns } from "@/lib/analysis/add-on";
 import type { AddOnLevel, EntryStructure, Grade, PathObstacle, TradePlan } from "@/types/signal";
 
@@ -580,6 +581,61 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   check("a target is journalled at the target", call.includes("? plan.take_profit"), call);
   check("only a structure exit uses the spot price",
     (call.match(/quote\.price/g) ?? []).length === 1, call);
+}
+
+// ── 沒通知過你進場，就不會通知你成交 ─────────────────────────────
+//
+// The monitor pushed for any non-paper plan with no gate at all, while the
+// signal push required grade ≥ B and ≥2 agreeing dimensions. So a signal the
+// consensus bar had deliberately kept off the phone still announced 已觸及
+// 進場價 when it filled — and that was the first the reader had heard of the
+// trade. It reads as 「交易跟進場同時」 because there was no announcement:
+// the fill was the announcement.
+{
+  const src = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the monitor gates its pushes on whether the signal was announced",
+    /events\.length > 0 && !paper && announced/.test(src), "route.ts");
+  check("the decision is snapshotted when tracking starts, not re-derived each sweep",
+    /announced: paper \? false : pushWorthiness\(latest\)\.worthy/.test(src), "route.ts");
+  check("a pre-existing row defaults to announced so a live trade cannot go silent",
+    src.includes("tracked.announced ?? true"), "route.ts");
+  check("and the sweep log says why the phone stayed quiet", src.includes("muted:"), "route.ts");
+
+  // One predicate, three surfaces — the label, the signal push and the fill
+  // push must never disagree about the same signal.
+  const board = readFileSync(join(__dirname, "..", "lib", "board-row.ts"), "utf8");
+  check("the board label uses the same predicate", board.includes("pushWorthiness(row)"), "board-row");
+}
+
+// ── the predicate itself ──────────────────────────────────────────
+{
+  const sig = (over: Record<string, unknown> = {}) =>
+    ({
+      grade: "A",
+      direction: "long",
+      bias_items: [
+        { dimension: "技術面", direction: "long", weight: 2, factor: "" },
+        { dimension: "基本面", direction: "long", weight: 2, factor: "" },
+      ],
+      trade_plan: { stance: "enter", entry: 100, stop_loss: 98, take_profit: 104 },
+      ...over,
+    }) as unknown as Parameters<typeof pushWorthiness>[0];
+
+  check("a graded trade with two agreeing dimensions is push-worthy",
+    pushWorthiness(sig()).worthy === true, pushWorthiness(sig()));
+  check("one agreeing dimension is not, and says so",
+    pushWorthiness(sig({
+      bias_items: [{ dimension: "技術面", direction: "long", weight: 2, factor: "" }],
+    })).reason?.includes("只在網站顯示") === true);
+  check("a 觀望 signal is not a push at all",
+    pushWorthiness(sig({ trade_plan: { stance: "wait" } })).worthy === false);
+  check("a grade below the bar is refused by grade",
+    pushWorthiness(sig({ grade: "C" })).reason?.includes("低於推播門檻") === true);
+  check("a plan missing its levels is refused",
+    pushWorthiness(sig({
+      trade_plan: { stance: "enter", entry: 100, stop_loss: null, take_profit: 104 },
+    })).reason?.includes("缺少價位") === true);
+  check("a worthy signal carries no reason", pushWorthiness(sig()).reason === null);
 }
 
 report("monitor + add-ons");

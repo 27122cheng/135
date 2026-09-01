@@ -83,6 +83,56 @@ export interface AlertDecision {
  */
 export const MIN_CONSENSUS_DIMENSIONS = 2;
 
+/**
+ * 這個訊號值不值得吵你 —— the worthiness half of {@link shouldAlert}, on its own.
+ *
+ * `shouldAlert` answers two questions at once: is this signal worth a push at
+ * all, and has anything *changed* since the last one. Only the first half is
+ * a property of the signal, and three surfaces need it separately:
+ *
+ *  - the refresh route, deciding whether to announce a new signal;
+ *  - the board, labelling a row the phone will never mention;
+ *  - **the monitor**, which had no such check and is why this exists.
+ *
+ * The monitor pushed 已觸及進場價 for any non-paper plan, with no gate of any
+ * kind. A signal the consensus bar had deliberately kept off the phone was
+ * still tracked as a real plan, so the moment it filled the phone announced
+ * its entry — and that was the first the reader had ever heard of the trade.
+ * From the outside it looks exactly like 「交易跟進場同時」: there was no trade
+ * announcement, so the fill *was* the announcement. Worse, the two channels
+ * were contradicting each other about the same signal.
+ *
+ * The rule now is one rule: if you were never told to open the position, you
+ * are not told about its entry, its add-ons, its trailing stop or its exit
+ * either. It is still tracked, still journalled, still counted — 靜靜追蹤,
+ * which is what the paper stream has always done.
+ */
+export function pushWorthiness(
+  signal: Pick<TradeSignal, "trade_plan" | "grade" | "direction" | "bias_items">,
+  minGrade: Grade = DEFAULT_MIN_GRADE,
+): { worthy: boolean; reason: string | null } {
+  const plan = signal.trade_plan;
+  if (plan?.stance !== "enter") {
+    return { worthy: false, reason: "本次為觀望，不是可進場的訊號" };
+  }
+  if (rank(signal.grade) < rank(minGrade)) {
+    return { worthy: false, reason: `評等 ${signal.grade} 低於推播門檻 ${minGrade}` };
+  }
+  const agreeing = breadthOf(signal.direction, signal.bias_items ?? []).agreeing.length;
+  if (agreeing < MIN_CONSENSUS_DIMENSIONS) {
+    return {
+      worthy: false,
+      reason:
+        `同向面向僅 ${agreeing} 個（推播需 ≥ ${MIN_CONSENSUS_DIMENSIONS}），` +
+        `此訊號只在網站顯示，手機不會收到 —— 證據夠成立一筆交易，但還不夠打擾你`,
+    };
+  }
+  if (plan.entry === null || plan.stop_loss === null || plan.take_profit === null) {
+    return { worthy: false, reason: "進場計畫缺少價位，不發送" };
+  }
+  return { worthy: true, reason: null };
+}
+
 export function shouldAlert(
   current: TradeSignal,
   previous: SignalRow | null,

@@ -5,7 +5,7 @@ import { readLatest } from "@/lib/latest-signals";
 import { fetchLatestPrice } from "@/lib/data-sources/yfinance";
 import { notifyAll } from "@/lib/notify";
 import { EVENT_BLACKOUT_MS, upcomingHighImpactEvent } from "@/lib/analysis/timing";
-import { formatReleaseAlert } from "@/lib/notify/alert";
+import { formatReleaseAlert, pushWorthiness } from "@/lib/notify/alert";
 import { ingestReleases } from "@/lib/analysis/data-release";
 import { withUserKeys } from "@/lib/api-keys";
 import { storedApiKeys } from "@/lib/settings";
@@ -250,6 +250,11 @@ export async function GET(request: Request) {
               grade: latest.grade,
               plan,
               generatedAt: latest.generated_at,
+              // Decided once, when tracking starts, and carried for the life
+              // of the trade — a plan outlives the analysis that opened it,
+              // and re-deciding each sweep would start or stop the messages
+              // halfway through a position.
+              announced: paper ? false : pushWorthiness(latest).worthy,
             };
           })();
       if (!tracked) return { symbol: meta.symbol, skipped: "觀望且沒有可追蹤的參考價位" };
@@ -426,8 +431,21 @@ export async function GET(request: Request) {
         resolution = logged.outcome;
       }
 
+      // 沒通知過你進場，就不會通知你成交。
+      //
+      // This was `!paper` alone — no gate of any kind. A signal the consensus
+      // bar had deliberately kept off the phone was still tracked as a real
+      // plan, so the moment it filled the phone announced 已觸及進場價, and
+      // that was the first the reader had ever heard of the trade. From the
+      // outside it reads as 「交易跟進場同時」: there was no announcement, so
+      // the fill *was* the announcement — and the two channels were
+      // contradicting each other about the same signal.
+      //
+      // Undefined means a row written before this existed: treated as
+      // announced, so a trade already in flight cannot go silent mid-way.
+      const announced = tracked.announced ?? true;
       let notified: string[] = [];
-      if (events.length > 0 && !paper) {
+      if (events.length > 0 && !paper && announced) {
         const results = await notifyAll(
           formatMonitorAlert(meta.symbol, tracked.direction, events, quote.ageMinutes, appUrl, {
             entry: plan.entry,
@@ -452,6 +470,9 @@ export async function GET(request: Request) {
         state: next.state,
         events: events.map((e) => e.kind),
         notified,
+        // Why the phone stayed quiet about a real event, in the sweep log —
+        // otherwise a silent-but-tracked trade looks identical to a bug.
+        muted: !paper && !announced ? pushWorthiness(latest).reason : undefined,
         review,
       };
     }),

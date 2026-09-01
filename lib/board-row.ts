@@ -1,8 +1,7 @@
 import { COMMODITIES, type AddOnLevel, type Grade, type SignalRow } from "@/types/signal";
 import { groupDataGaps } from "@/lib/data-gaps";
 import { summariseRegime } from "@/lib/analysis/regime-summary";
-import { breadthOf } from "@/lib/analysis/evidence";
-import { MIN_CONSENSUS_DIMENSIONS } from "@/lib/notify/alert";
+import { pushWorthiness } from "@/lib/notify/alert";
 
 export interface BoardAddOn {
   sequence: number;
@@ -250,16 +249,9 @@ export function toBoardRow(meta: (typeof COMMODITIES)[number], row: SignalRow | 
     waitFor: plan?.wait_for ?? null,
     // Only meaningful for a row that is actually a trade — a 觀望 row is not
     // "withheld from the push", it simply is not a trade.
-    notPushedReason:
-      plan?.stance === "enter"
-        ? (() => {
-            const agreeing = breadthOf(row.direction, row.bias_items ?? []).agreeing.length;
-            return agreeing < MIN_CONSENSUS_DIMENSIONS
-              ? `同向面向僅 ${agreeing} 個（推播需 ≥ ${MIN_CONSENSUS_DIMENSIONS}），` +
-                `此訊號只在網站顯示，手機不會收到 —— 證據夠成立一筆交易，但還不夠打擾你`
-              : null;
-          })()
-        : null,
+    // The same predicate the refresh route and the monitor use, so the label,
+    // the signal push and the fill push cannot disagree about one signal.
+    notPushedReason: plan?.stance === "enter" ? pushWorthiness(row).reason : null,
     reference: toReference(row),
     referenceNote: Array.isArray(row.data_gaps)
       ? ((row.data_gaps as string[]).find((g) => g.startsWith("本次不提供參考價位")) ?? null)

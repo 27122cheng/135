@@ -207,6 +207,17 @@ export interface TrackedPlan {
   plan: TradePlan;
   /** Identity of the scan that produced the plan (ids are not stable). */
   generatedAt: string;
+  /**
+   * 這筆計畫的訊號有沒有被推播過。
+   *
+   * Decided once, when tracking starts, and carried for the life of the trade
+   * — because a plan outlives the analysis that opened it, and re-deciding on
+   * each sweep would let a later re-grade start or stop the messages halfway
+   * through a position. Undefined on rows written before this existed, and
+   * treated as "announced" there so an in-flight trade never goes silent
+   * mid-way through the migration.
+   */
+  announced?: boolean;
 }
 
 /** One row of `plan_monitor` — what was last reported, so it isn't repeated. */
