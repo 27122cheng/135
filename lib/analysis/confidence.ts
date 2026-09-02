@@ -1,3 +1,4 @@
+import { forwardEvidenceDelta } from "./forward-evidence";
 import type { PathObstacle, TradeSignal } from "@/types/signal";
 import { isInformational } from "@/lib/data-gaps";
 import { breadthOf } from "./evidence";
@@ -247,6 +248,17 @@ export function planConfidence(signal: TradeSignal): Confidence {
     }
   } else if (bt) {
     factors.push(`本地回測樣本僅 ${bt.resolved} 次，不足以調整信心度`);
+  }
+
+  // 前進驗證證據 — the lab's own scoreboard, which was being measured and
+  // then ignored unless a person pressed 採用. Bounded (+8 / −6), and only
+  // here: a condition's forward record is measured under the lab's protocol,
+  // not this plan's geometry, so it is evidence about direction and timing
+  // — confidence's business — and never the grade's or the veto's.
+  const fwd = forwardEvidenceDelta(signal.forward_evidence);
+  if (fwd.factor) {
+    score += fwd.delta;
+    factors.push(fwd.factor);
   }
 
   const final = clamp(score);

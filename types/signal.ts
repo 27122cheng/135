@@ -464,7 +464,37 @@ export interface TradeSignal {
    * what turned an entry into a wait.
    */
   lab_gate?: LabGate | null;
+  /**
+   * 前進驗證證據 — which of the lab's forward-tested conditions are firing on
+   * the newest bar, for and against this signal's direction, among those
+   * with enough resolved paper trades to mean anything. Feeds the confidence
+   * score (bounded), never the grade and never a gate. See
+   * lib/analysis/forward-evidence.ts. Null when the lab has nothing resolved
+   * for this symbol yet.
+   */
+  forward_evidence?: ForwardEvidence | null;
   data_gaps: string[];
+}
+
+/** One forward-tested condition that is firing right now. */
+export interface ForwardEvidenceItem {
+  id: string;
+  label: string;
+  direction: "long" | "short";
+  resolved: number;
+  hitRate: number | null;
+  expectancyR: number | null;
+}
+
+export interface ForwardEvidence {
+  /** Firing now, in the signal's direction, with a positive forward record. */
+  supporting: ForwardEvidenceItem[];
+  /** Firing now for the OPPOSITE direction, with a positive forward record. */
+  opposing: ForwardEvidenceItem[];
+  /** Conditions with enough resolved trades to be judged at all. */
+  verifiedCount: number;
+  /** The bar the conditions were evaluated on. */
+  barTime: string;
 }
 
 /** The live check of an adopted lab condition combination. */

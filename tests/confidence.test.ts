@@ -320,4 +320,26 @@ function obstacle(price: number, strength: 1 | 2 | 3): PathObstacle {
     (AI_LIMITS.gemini.perMinute ?? 99) <= 15 && (AI_LIMITS.groq.perMinute ?? 99) <= 30);
 }
 
+// ── 前進驗證證據 — bounded, and never a gate on its own ──────────
+{
+  const item = (k: number, direction: "long" | "short") =>
+    ({ id: `c${k}`, label: `條件 ${k}`, direction, resolved: 30, hitRate: 0.6, expectancyR: 0.4 });
+  const clean = planConfidence(signal()).score;
+  const backed = planConfidence(signal({
+    forward_evidence: { supporting: [item(0, "long"), item(1, "long")], opposing: [], verifiedCount: 2, barTime: "t" },
+  }));
+  check("two verified supporting conditions add four points", backed.score === clean + 4, [clean, backed.score]);
+  check("and are named among the factors", backed.factors.some((f) => f.includes("實驗室前進驗證（+4）")), backed.factors);
+
+  // The bound that keeps this volume-neutral: a clean B starts 15 above the
+  // bar, and the largest possible opposition is −6.
+  const bAgainst = planConfidence(signal({
+    grade: "B",
+    forward_evidence: { supporting: [], opposing: [0, 1, 2, 3, 4].map((k) => item(k, "short")), verifiedCount: 5, barTime: "t" },
+  }));
+  check("maximum opposition cannot push a clean B under the entry bar", clearsEntryBar(bAgainst.score), bAgainst.score);
+  check("no evidence leaves the score untouched",
+    planConfidence(signal({ forward_evidence: null })).score === clean);
+}
+
 report("confidence");

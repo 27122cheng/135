@@ -28,6 +28,11 @@ import {
   selectSwingVariant,
 } from "./analysis/trade-plan";
 import { buildAddOns } from "./analysis/add-on";
+import { buildContext } from "./analysis/lab-conditions";
+import { WARMUP } from "./analysis/lab";
+import { summariseForward } from "./analysis/lab-forward";
+import { forwardEvidence } from "./analysis/forward-evidence";
+import type { LabTradeRow } from "@/lib/db";
 import {
   adoptionEvidence,
   describeGate,
@@ -279,6 +284,19 @@ async function buildSignalForSymbol(
   // 實驗室已採用條件 — same story, and the settings cache makes nine symbols
   // in one scan cost one round trip.
   const adoptionsPromise = loadAdoptionsFor(meta.symbol, gaps);
+  // 前進驗證證據 — the lab's own resolved paper trades for this symbol. Best
+  // effort like the journal reads: no store or a failing read means no
+  // evidence, and the signal is still produced.
+  const labTradesPromise: Promise<LabTradeRow[]> = (async () => {
+    const store = getSignalStore();
+    if (!store) return [];
+    try {
+      return await store.listLabTrades({ symbol: meta.symbol, limit: 4000 });
+    } catch (err) {
+      gaps.push(`讀取實驗室前進測試失敗，本次信心度未納入前進證據（${err instanceof Error ? err.message : String(err)}）`);
+      return [];
+    }
+  })();
   // 24 小時對照證人 — a diagnostic, so it rides alongside the market calls
   // rather than after them. It was costing the critical path five seconds for
   // an answer nothing downstream waits on, inside a 60-second ceiling three
@@ -295,12 +313,14 @@ async function buildSignalForSymbol(
     return { positioning, fundamentalItems, news, fundFlowItems };
   })();
 
-  const [[d1, h4, w1], nonTechnical, effects, calibration, adoptions, witness] = await Promise.all([
+  const [[d1, h4, w1], nonTechnical, effects, calibration, adoptions, labTrades, witness] =
+    await Promise.all([
     ohlcvPromise,
     nonTechnicalPromise,
     interventionsPromise,
     calibrationPromise,
     adoptionsPromise,
+    labTradesPromise,
     witnessPromise,
     // Costs before any backtest runs: every floor downstream is an expectancy
     // net of these numbers, and the operator's own figures beat the defaults.
@@ -932,6 +952,28 @@ async function buildSignalForSymbol(
   // The gate below changes `trade_plan`, and several of the score's own inputs
   // live there — recomputing afterwards would show the reader a different
   // number from the one that made the decision.
+  // 前進驗證證據 goes on the signal BEFORE the score is computed — it is one
+  // of the score's inputs, and the card must show the same evidence the gate
+  // used. Evaluated on the newest completed D1 bar, the same instant the lab
+  // measured every condition at. Null when the lab has nothing resolved for
+  // this symbol yet, or the candles cannot support the context.
+  {
+    const candles = candlesByTf.D1;
+    const stats = labTrades.length > 0 ? summariseForward(labTrades) : [];
+    if (candles && candles.length > WARMUP && stats.length > 0) {
+      const i = candles.length - 1;
+      signal.forward_evidence = forwardEvidence({
+        direction: signal.direction,
+        stats,
+        ctx: buildContext(candles, [i]),
+        bar: i,
+        barTime: candles[i].time,
+      });
+    } else {
+      signal.forward_evidence = null;
+    }
+  }
+
   signal.confidence = planConfidence(signal);
 
   if (signal.trade_plan.stance === "enter" && !clearsEntryBar(signal.confidence.score)) {
