@@ -227,4 +227,93 @@ const idOf = (id: string) => CONDITIONS.find((c) => c.id === id)!;
   check("and rising price sits above it", idOf("week-open-side").test(wk, 39, "long"));
 }
 
+// ── ICT 入場模型：OTE / IDM / IFVG / 趨勢線 / MSS＋位移 ──────────────
+//
+// The models the operator brought (HTF POI + MSS + IDM + FVG + OTE, the
+// IFVG model, the two-touch trendline break). Each is a real condition on
+// real candles, forward-tested like every other, and adopted into the score
+// only after verification — never a gate on its own.
+{
+  // OTE: an up-leg from a confirmed low (idx 3) to a confirmed high (idx 9),
+  // then a pullback whose close sits at 70% of the leg.
+  const lows =  [100, 97, 94, 90, 93, 96, 99, 102, 105, 108, 106, 103, 100, 97.6];
+  const highs = [103, 100, 97, 93, 96, 99, 102, 105, 108, 111, 109, 106, 103, 100];
+  const ote = lows.map((l, i) => bar(l + 1, highs[i], l, i === 13 ? 97.4 + 0 : l + 2, i));
+  // leg: low 90 → high 111, range 21; 70% retrace from the high = 111 − 14.7 = 96.3.
+  ote[13] = bar(99, 100, 96, 96.3, 13);
+  const oteCtx = buildContext(ote);
+  check("a 70% pullback of the last up-leg is inside OTE", idOf("ote").test(oteCtx, 13, "long"));
+  check("and not a short OTE — the leg was up", !idOf("ote").test(oteCtx, 13, "short"));
+  const shallow = [...ote]; shallow[13] = bar(104, 105, 103, 104, 13); // 33% — too shallow
+  check("a shallow pullback is not OTE", !idOf("ote").test(buildContext(shallow), 13, "long"));
+
+  // IDM: structural low 90 at idx 3 (confirmed), lows then rise so no new
+  // pivot forms; the lowest of the five bars before the entry (93) is the
+  // inducement; the entry bar sweeps it and closes back above, structure intact.
+  const idmLows = [98, 95, 92, 90, 91, 92, 93, 94, 95, 96, 96, 92.5];
+  const idm = idmLows.map((l, i) => bar(l + 1, l + 3, l, i === 11 ? 94 : l + 2, i));
+  const idmCtx = buildContext(idm);
+  check("sweeping the inducement while the structural low holds is IDM",
+    idOf("idm-sweep").test(idmCtx, 11, "long"));
+  const through = [...idm]; through[11] = bar(93.5, 94, 89, 89.5, 11); // through the structure
+  check("breaking the structural low is not IDM — that is a failed structure",
+    !idOf("idm-sweep").test(buildContext(through), 11, "long"));
+
+  // IFVG: a bearish gap (bar 2's high under bar 0's low) that price then CLOSES
+  // above becomes support; a return into it is the long entry.
+  const ifvg = [
+    bar(101, 103, 100, 102, 0),
+    bar(100, 101, 97, 98, 1),
+    bar(96, 95, 92, 93, 2), // high 95 < bar 0 low 100 → bearish FVG 95–100
+    bar(94, 103, 93, 102, 3), // closes above 100 → the gap inverts to support
+    bar(101, 101.5, 97, 98, 4), // returns into 95–100
+  ];
+  const ifvgCtx = buildContext(ifvg);
+  check("a bearish gap closed above and retested is an IFVG long",
+    idOf("ifvg").test(ifvgCtx, 4, "long"));
+  check("before the inversion the same zone is not an IFVG",
+    !idOf("ifvg").test(ifvgCtx, 2, "long"));
+  check("it is not an IFVG short", !idOf("ifvg").test(ifvgCtx, 4, "short"));
+
+  // Trendline break: rising swing lows at idx 2 (90) and idx 8 (94); the line
+  // at idx 12 is ≈96.67. Bar 11 closes above it, bar 12 closes below → short.
+  const tlLows = [95, 92, 90, 92, 95, 97, 96, 95, 94, 95, 97, 97, 94.5];
+  const tl = tlLows.map((l, i) => bar(l + 1, l + 3, l, i === 12 ? 95 : l + 2, i));
+  const tlCtx = buildContext(tl);
+  check("a close through the two-touch up-trendline is a break (short)",
+    idOf("trendline-break").test(tlCtx, 12, "short"));
+  check("the bar before the break is not one", !idOf("trendline-break").test(tlCtx, 11, "short"));
+  check("an up-trendline break is not a long", !idOf("trendline-break").test(tlCtx, 12, "long"));
+
+  // MSS + displacement is a strict subset of CHoCH: every hit is a CHoCH, and
+  // a CHoCH with a small body is refused.
+  // Two frequencies, no drift: the slow wave moves the troughs and peaks
+  // both ways, so structure breaks in both directions and flips — a single
+  // drifting sine never breaks a prior trough and never produces a CHoCH.
+  const wave = series(300, (i) => 100 + 6 * Math.sin(i / 5) + 5 * Math.sin(i / 23));
+  const wCtx = buildContext(wave);
+  let choch = 0, mss = 0, subset = true;
+  for (let i = 0; i < wave.length; i++) {
+    for (const d of ["long", "short"] as const) {
+      const a = idOf("choch").test(wCtx, i, d);
+      const b = idOf("mss-displacement").test(wCtx, i, d);
+      if (a) choch++;
+      if (b) mss++;
+      if (b && !a) subset = false;
+    }
+  }
+  check("the wave produces CHoCHs to test against", choch > 0, choch);
+  check("MSS+displacement only ever fires on a CHoCH", subset);
+  check("and is stricter than CHoCH", mss < choch, [mss, choch]);
+
+  // The new context fields never throw across warm-up and edges.
+  for (const id of ["ote", "idm-sweep", "ifvg", "trendline-break", "mss-displacement"]) {
+    let threw = false;
+    try {
+      for (let i = 0; i < 25; i++) { idOf(id).test(buildContext(wave.slice(0, i + 1)), i, "long"); }
+    } catch { threw = true; }
+    check(`${id} is safe during warm-up`, !threw);
+  }
+}
+
 report("進場條件庫");

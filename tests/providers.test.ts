@@ -4,6 +4,7 @@ import { aiProviderStatus, completeAI, jsonSchema, textSchema } from "@/lib/ai";
 import { buildTradePlan, decideStance } from "@/lib/analysis/trade-plan";
 import { MIN_ENTRY_GRADE, gradeAllowsEntry } from "@/lib/scoring";
 import { __resetCacheForTests } from "@/lib/data-sources/cache";
+import { __resetProviderAffinityForTests } from "@/lib/ai";
 
 /**
  * The provider chain and the one guarantee that must survive swapping vendors:
@@ -31,6 +32,7 @@ async function main() {
   clearKeys();
   __resetQuotaForTests();
   __resetCacheForTests();
+  __resetProviderAffinityForTests();
   const g1: string[] = [];
   check("no keys returns null", (await completeAI("p", S, g1)) === null);
   check("no keys explains why", g1.some((g) => g.includes("GEMINI_API_KEY")), g1);
@@ -39,6 +41,7 @@ async function main() {
   clearKeys();
   __resetQuotaForTests();
   __resetCacheForTests();
+  __resetProviderAffinityForTests();
   process.env.GROQ_API_KEY = "x";
   let hit = stubFetch(() => ({ status: 200, json: groqOk }));
   const g2: string[] = [];
@@ -51,6 +54,7 @@ async function main() {
   clearKeys();
   __resetQuotaForTests();
   __resetCacheForTests();
+  __resetProviderAffinityForTests();
   process.env.GEMINI_API_KEY = "x";
   process.env.GROQ_API_KEY = "x";
   hit = stubFetch((u) =>
@@ -63,6 +67,7 @@ async function main() {
   // 429 (the free tier's usual answer) falls through.
   __resetQuotaForTests();
   __resetCacheForTests();
+  __resetProviderAffinityForTests();
   hit = stubFetch((u) =>
     u.includes("googleapis")
       ? { status: 429, json: { error: { message: "quota exceeded" } } }
@@ -75,6 +80,7 @@ async function main() {
   // A blank reply is a failure, not an answer.
   __resetQuotaForTests();
   __resetCacheForTests();
+  __resetProviderAffinityForTests();
   stubFetch((u) =>
     u.includes("googleapis")
       ? { status: 200, json: { candidates: [{ content: { parts: [{ text: "   " }] } }] } }
@@ -84,6 +90,7 @@ async function main() {
 
   __resetQuotaForTests();
   __resetCacheForTests();
+  __resetProviderAffinityForTests();
   stubFetch(() => ({ status: 500, json: { error: { message: "boom" } } }));
   const g6: string[] = [];
   check("all providers down returns null", (await completeAI("p", S, g6)) === null);
@@ -93,6 +100,7 @@ async function main() {
   clearKeys();
   __resetQuotaForTests();
   __resetCacheForTests();
+  __resetProviderAffinityForTests();
   process.env.GEMINI_API_KEY = "x";
   process.env.GROQ_API_KEY = "x";
   process.env.AI_PROVIDER_ORDER = "groq,gemini";
@@ -115,6 +123,7 @@ async function main() {
   clearKeys();
   __resetQuotaForTests();
   __resetCacheForTests();
+  __resetProviderAffinityForTests();
   process.env.GEMINI_API_KEY = "x";
   // A steady uptrend so the AI-picked geometry demonstrably clears the 70%
   // hit-rate floor — without candles the floor is unverifiable and the plan
@@ -158,6 +167,7 @@ async function main() {
 
   __resetQuotaForTests();
   __resetCacheForTests();
+  __resetProviderAffinityForTests();
   stubFetch(() => reply({ stance: "enter", entry_index: 99, sl_index: 0, tp_index: 0, summary: "s" }));
   const gp2: string[] = [];
   const p2 = await buildTradePlan(planInput, gp2);
@@ -166,6 +176,7 @@ async function main() {
 
   __resetQuotaForTests();
   __resetCacheForTests();
+  __resetProviderAffinityForTests();
   // A model trying to smuggle in its own price: there is no field for it.
   stubFetch(() =>
     reply({ stance: "enter", entry: 1234.5, entry_index: "0", sl_index: 0, tp_index: 0, summary: "s" }),
@@ -176,6 +187,7 @@ async function main() {
 
   __resetQuotaForTests();
   __resetCacheForTests();
+  __resetProviderAffinityForTests();
   stubFetch(() => reply({ stance: "enter", entry_index: 0, sl_index: 0, tp_index: 0, summary: "s" }));
   const gp4: string[] = [];
   const p4 = await buildTradePlan(
@@ -196,6 +208,7 @@ async function main() {
   // 觀望. Both were real; neither was reproducible.
   __resetQuotaForTests();
   __resetCacheForTests();
+  __resetProviderAffinityForTests();
   // A reply that begs to enter. It must not be able to.
   stubFetch(() => reply({ entry_index: 0, sl_index: 0, tp_index: 0, summary: "enter now" }));
   const cGrade = await buildTradePlan(
@@ -243,6 +256,7 @@ async function main() {
   // the model could hand back a trade risking more than it stood to make.
   __resetQuotaForTests();
   __resetCacheForTests();
+  __resetProviderAffinityForTests();
   stubFetch(() => reply({ entry_index: 0, sl_index: 0, tp_index: 1, summary: "s" }));
   const gpRr: string[] = [];
   const badRr = await buildTradePlan(
@@ -259,6 +273,7 @@ async function main() {
   // back — this is what exhausted a free daily budget.
   __resetQuotaForTests();
   __resetCacheForTests();
+  __resetProviderAffinityForTests();
   let calls = 0;
   stubFetch(() => {
     calls++;

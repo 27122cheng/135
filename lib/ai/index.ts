@@ -109,6 +109,32 @@ function buildRegistry(): Map<string, AIProvider> {
  * (a user can paste their own in /settings), so a provider captured once would
  * answer isConfigured() for whoever loaded the module first.
  */
+/**
+ * Per-process provider affinity — see the sort in completeAI. A promoted
+ * provider ranks first, a demoted one last, everything else keeps its
+ * configured position. Process-scoped on purpose: on the serverless host a
+ * process is one symbol's scan, which is exactly the span over which a
+ * timeout should be paid once rather than three times.
+ */
+const promoted = new Set<string>();
+const demoted = new Set<string>();
+function promote(name: string): void {
+  demoted.delete(name);
+  promoted.add(name);
+}
+function demote(name: string): void {
+  promoted.delete(name);
+  demoted.add(name);
+}
+function rank(name: string): number {
+  return promoted.has(name) ? -1 : demoted.has(name) ? 1 : 0;
+}
+/** Test seam. */
+export function __resetProviderAffinityForTests(): void {
+  promoted.clear();
+  demoted.clear();
+}
+
 function orderedProviders(): AIProvider[] {
   const registry = buildRegistry();
   const raw = getKey("AI_PROVIDER_ORDER");
@@ -229,7 +255,21 @@ export async function completeAI<T>(
   if (cached) return cached;
 
   const providers = orderedProviders();
-  const configured = providers.filter((p) => p.isConfigured());
+  // 剛失敗的排到最後，剛成功的排到最前。
+  //
+  // The chain is walked in a fixed order for every call, and one symbol makes
+  // three calls (narrative, news, plan). When the first provider is timing
+  // out — a live sweep logged gemini at 11–12 s per attempt — the fixed order
+  // paid that timeout on all three calls: ~36 s of a 60 s function spent
+  // learning the same thing three times, and the providers behind it were
+  // then squeezed into whatever budget was left (「openrouter: HTTP 0 逾時
+  // 8011ms」). The backoff breaker only opens after several failures, so it
+  // did not help inside one symbol. Within a process, a provider that just
+  // failed on transport goes to the back and one that just answered comes to
+  // the front; the configured order is otherwise preserved.
+  const configured = providers
+    .filter((p) => p.isConfigured())
+    .sort((a, b) => rank(a.name) - rank(b.name));
 
   /**
    * One clock for the whole chain, not one per provider.
@@ -275,6 +315,7 @@ export async function completeAI<T>(
         budgetMs: Math.min(options?.budgetMs ?? PER_PROVIDER_BUDGET_MS, left),
       });
       recordSuccess(provider.name);
+      promote(provider.name);
       const result = { value, provider: provider.name };
       setCached(cacheKey, result, AI_CACHE_TTL_MS);
       return result;
@@ -287,6 +328,7 @@ export async function completeAI<T>(
       // truncated reply ran with no AI at all.
       if (!(err instanceof AIProviderError) || err.kind === "transport") {
         recordFailure(provider.name);
+        demote(provider.name);
       }
       failures.push(err instanceof AIProviderError ? err.message : String(err));
     }

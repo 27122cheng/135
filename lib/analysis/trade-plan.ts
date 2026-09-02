@@ -407,6 +407,43 @@ export function calibratedExpectancy(
  * applies scale-out, breakeven, structure trailing and the CHoCH exit, so
  * the expectancy is the trade's real expectancy.
  */
+/**
+ * 跟單性否決線，隨賠率調整 —— the hit rate below which a geometry is judged
+ * unfollowable, given how much each of its wins pays.
+ *
+ * The line was a flat 40%, and a live sweep showed what that costs: WTI's
+ * AI-chosen combination measured **+1.08R** at 38% and was thrown out for
+ * the 2 points. A geometry paying 2.5R breaks even at 29%; 38% is nine
+ * points of margin, and any trader would sit through it. The flat line was
+ * pricing followability as if every win paid the same.
+ *
+ * So the line bends with payoff, in one direction only: it can drop below
+ * the profile's number when the wins are large enough, and it can never
+ * rise above it. A 1.5R geometry is judged at 40% exactly as before; a
+ * 2.5R one is judged at breakeven + 10 points ≈ 39%; a 4R one at ≈ 30%.
+ * Never below {@link FOLLOWABILITY_ABSOLUTE_MIN} — under that a positive
+ * expectancy is a lottery ticket, not a trade a person will keep taking.
+ *
+ * Volume-positive by construction: it only ever admits geometries the flat
+ * line refused. The expectancy leg — now calibrated by realized results —
+ * still catches the ones whose edge is thin.
+ */
+export const FOLLOWABILITY_MARGIN = 0.1;
+export const FOLLOWABILITY_ABSOLUTE_MIN = 0.25;
+
+export function followabilityFloor(
+  profile: HorizonProfile,
+  bt: { avgWinR?: number | null; avgLossR?: number | null },
+): number {
+  const flat = profileHitFloor(profile);
+  if (bt.avgWinR == null || bt.avgLossR == null || !(bt.avgWinR > 0)) return flat;
+  const loss = Math.abs(bt.avgLossR);
+  if (!(loss > 0)) return flat;
+  const breakeven = loss / (bt.avgWinR + loss);
+  const bent = Math.max(FOLLOWABILITY_ABSOLUTE_MIN, breakeven + FOLLOWABILITY_MARGIN);
+  return Math.round(Math.min(flat, bent) * 10000) / 10000;
+}
+
 export function meetsProfileFloor(
   profile: HorizonProfile,
   bt: {
@@ -416,7 +453,7 @@ export function meetsProfileFloor(
     avgLossR?: number | null;
   },
 ): boolean {
-  if ((bt.hitRate ?? 0) < profileHitFloor(profile)) return false;
+  if ((bt.hitRate ?? 0) < followabilityFloor(profile, bt)) return false;
   if (profile.minExpectancyR != null) {
     // 實績校準 acts here, on the number that actually decides whether a
     // trade pays: when real entries have been landing s points under what
@@ -438,7 +475,8 @@ export function floorText(profile: HorizonProfile): string {
     s > 0 ? `（實績校準：回測勝率先扣 ${Math.round(s * 100)} 點再算期望值）` : "";
   return (
     `統計否決線：實測期望值 <${profile.minExpectancyR === 0 ? "0（虧錢）" : `+${profile.minExpectancyR}R`}` +
-    `${calibrated}或勝率 <${hit}%（不含打平）即排除 —— 附加審查，只擋明顯不利，不是資格門檻`
+    `${calibrated}或勝率 <${hit}%（不含打平；賠率高時此線依損益兩平點下修）即排除 —— ` +
+    `附加審查，只擋明顯不利，不是資格門檻`
   );
 }
 

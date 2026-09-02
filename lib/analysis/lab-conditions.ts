@@ -87,6 +87,30 @@ export interface LabContext {
   fvgUpHigh: number[];
   fvgDownLow: number[];
   fvgDownHigh: number[];
+  /**
+   * 逆向 FVG — the newest fair-value gap that price has since closed THROUGH.
+   * A bullish gap violated downward flips to resistance, a bearish gap
+   * violated upward flips to support (ICT's inversion FVG). NaN when none.
+   * `ifvgUp*` is a former bearish gap now acting as support for longs;
+   * `ifvgDown*` a former bullish gap now acting as resistance for shorts.
+   */
+  ifvgUpLow: number[];
+  ifvgUpHigh: number[];
+  ifvgDownLow: number[];
+  ifvgDownHigh: number[];
+  /**
+   * Bar index at which the newest confirmed swing high / low sits — the
+   * pivot's own bar, not the bar that confirmed it. Lets a condition fit a
+   * line through pivots (trendlines) and measure the leg between them.
+   * NaN before one exists.
+   */
+  anchorHighAt: number[];
+  anchorLowAt: number[];
+  /** The confirmed swing low / high BEFORE the newest one, and its bar. */
+  prevAnchorLow: number[];
+  prevAnchorLowAt: number[];
+  prevAnchorHigh: number[];
+  prevAnchorHighAt: number[];
   /** Bounds of the active bullish/bearish order block; NaN when none. */
   obUpLow: number[];
   obUpHigh: number[];
@@ -195,10 +219,22 @@ export function buildContext(candles: Candle[], only?: number[]): LabContext {
   const bosDown = falses(n);
   const chochUp = falses(n);
   const chochDown = falses(n);
+  const anchorHighAt = NaNs(n);
+  const anchorLowAt = NaNs(n);
+  const prevAnchorLow = NaNs(n);
+  const prevAnchorLowAt = NaNs(n);
+  const prevAnchorHigh = NaNs(n);
+  const prevAnchorHighAt = NaNs(n);
   let curHigh = NaN;
   let curLow = NaN;
   let lastHigh = NaN;
   let lastLow = NaN;
+  let lastHighAt = NaN;
+  let lastLowAt = NaN;
+  let priorHigh = NaN;
+  let priorHighAt = NaN;
+  let priorLow = NaN;
+  let priorLowAt = NaN;
   let structDir = 0;
   for (let i = 0; i < n; i++) {
     const p = i - PIVOT;
@@ -210,18 +246,30 @@ export function buildContext(candles: Candle[], only?: number[]): LabContext {
         if (low[p] > low[p - k] || low[p] > low[p + k]) isLow = false;
       }
       if (isHigh) {
+        priorHigh = lastHigh;
+        priorHighAt = lastHighAt;
         curHigh = high[p];
         lastHigh = high[p];
+        lastHighAt = p;
       }
       if (isLow) {
+        priorLow = lastLow;
+        priorLowAt = lastLowAt;
         curLow = low[p];
         lastLow = low[p];
+        lastLowAt = p;
       }
     }
     swingHigh[i] = curHigh;
     swingLow[i] = curLow;
     anchorHigh[i] = lastHigh;
     anchorLow[i] = lastLow;
+    anchorHighAt[i] = lastHighAt;
+    anchorLowAt[i] = lastLowAt;
+    prevAnchorLow[i] = priorLow;
+    prevAnchorLowAt[i] = priorLowAt;
+    prevAnchorHigh[i] = priorHigh;
+    prevAnchorHighAt[i] = priorHighAt;
 
     if (Number.isFinite(curHigh) && close[i] > curHigh) {
       bosUp[i] = true;
@@ -247,11 +295,31 @@ export function buildContext(candles: Candle[], only?: number[]): LabContext {
   const fvgUpHigh = NaNs(n);
   const fvgDownLow = NaNs(n);
   const fvgDownHigh = NaNs(n);
+  // 逆向 FVG: a gap that price CLOSED through (not merely traded into) stops
+  // being an imbalance and becomes the opposite kind of level — ICT's
+  // inversion FVG. Filling (a wick into the gap) retires it silently; a close
+  // beyond its far edge promotes it. Only the newest inversion is kept, for
+  // the same reason only the newest open gap is.
+  const ifvgUpLow = NaNs(n);
+  const ifvgUpHigh = NaNs(n);
+  const ifvgDownLow = NaNs(n);
+  const ifvgDownHigh = NaNs(n);
   let upGap: { low: number; high: number } | null = null;
   let downGap: { low: number; high: number } | null = null;
+  let invUp: { low: number; high: number } | null = null;
+  let invDown: { low: number; high: number } | null = null;
   for (let i = 0; i < n; i++) {
-    if (upGap && low[i] <= upGap.low) upGap = null;
-    if (downGap && high[i] >= downGap.high) downGap = null;
+    if (upGap && close[i] < upGap.low) {
+      invDown = upGap; // a bullish gap closed below → resistance
+      upGap = null;
+    } else if (upGap && low[i] <= upGap.low) upGap = null;
+    if (downGap && close[i] > downGap.high) {
+      invUp = downGap; // a bearish gap closed above → support
+      downGap = null;
+    } else if (downGap && high[i] >= downGap.high) downGap = null;
+    // An inversion is itself retired once price closes back through it.
+    if (invUp && close[i] < invUp.low) invUp = null;
+    if (invDown && close[i] > invDown.high) invDown = null;
     if (i >= 2) {
       if (low[i] > high[i - 2]) upGap = { low: high[i - 2], high: low[i] };
       if (high[i] < low[i - 2]) downGap = { low: high[i], high: low[i - 2] };
@@ -260,6 +328,10 @@ export function buildContext(candles: Candle[], only?: number[]): LabContext {
     fvgUpHigh[i] = upGap?.high ?? NaN;
     fvgDownLow[i] = downGap?.low ?? NaN;
     fvgDownHigh[i] = downGap?.high ?? NaN;
+    ifvgUpLow[i] = invUp?.low ?? NaN;
+    ifvgUpHigh[i] = invUp?.high ?? NaN;
+    ifvgDownLow[i] = invDown?.low ?? NaN;
+    ifvgDownHigh[i] = invDown?.high ?? NaN;
   }
 
   // ── order blocks ─────────────────────────────────────────────────
@@ -428,6 +500,16 @@ export function buildContext(candles: Candle[], only?: number[]): LabContext {
     fvgUpHigh,
     fvgDownLow,
     fvgDownHigh,
+    ifvgUpLow,
+    ifvgUpHigh,
+    ifvgDownLow,
+    ifvgDownHigh,
+    anchorHighAt,
+    anchorLowAt,
+    prevAnchorLow,
+    prevAnchorLowAt,
+    prevAnchorHigh,
+    prevAnchorHighAt,
     obUpLow,
     obUpHigh,
     obDownLow,
@@ -643,6 +725,110 @@ export const CONDITIONS: Condition[] = [
   },
 
   // ── SMC / ICT ────────────────────────────────────────────────────
+  {
+    id: "ote",
+    label: "最優入場區 OTE（回撤 62–79%）",
+    rationale:
+      "價格回到最近一段推動腿的 0.62–0.79 斐波那契回撤 —— ICT 的 Optimal Trade Entry，" +
+      "折價區裡再細分出的高機率位置",
+    family: "位置",
+    test: (c, i, d) => {
+      const lo = c.anchorLow[i];
+      const hi = c.anchorHigh[i];
+      if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return false;
+      const range = hi - lo;
+      if (d === "long") {
+        // The impulse must be up: the low came first, and the high is the
+        // leg's end. Retracement is measured down from the high.
+        if (!(c.anchorLowAt[i] < c.anchorHighAt[i])) return false;
+        const r = (hi - c.close[i]) / range;
+        return r >= 0.62 && r <= 0.79;
+      }
+      if (!(c.anchorHighAt[i] < c.anchorLowAt[i])) return false;
+      const r = (c.close[i] - lo) / range;
+      return r >= 0.62 && r <= 0.79;
+    },
+  },
+  {
+    id: "idm-sweep",
+    label: "誘導流動性掃蕩 IDM",
+    rationale:
+      "先掃掉主結構前面那個較小的低點（多）／高點（空）——內部流動性、誘導——" +
+      "而主要結構仍未破，ICT 模型裡進場前的最後一步",
+    family: "SMC/ICT",
+    test: (c, i, d) => {
+      if (i < 6) return false;
+      if (d === "long") {
+        // The inducement: the lowest low of the last five bars, sitting
+        // ABOVE the structural low. This bar takes it out and closes back
+        // above it, while the structural low itself holds.
+        const struct = c.anchorLow[i];
+        if (!Number.isFinite(struct)) return false;
+        let idm = Infinity;
+        for (let k = i - 5; k < i; k++) if (c.low[k] < idm) idm = c.low[k];
+        if (!(idm > struct)) return false;
+        return c.low[i] < idm && c.close[i] > idm && c.low[i] > struct;
+      }
+      const struct = c.anchorHigh[i];
+      if (!Number.isFinite(struct)) return false;
+      let idm = -Infinity;
+      for (let k = i - 5; k < i; k++) if (c.high[k] > idm) idm = c.high[k];
+      if (!(idm < struct)) return false;
+      return c.high[i] > idm && c.close[i] < idm && c.high[i] < struct;
+    },
+  },
+  {
+    id: "ifvg",
+    label: "逆向 FVG 回測",
+    rationale:
+      "被收盤穿越的公平價值缺口翻轉為反向的支撐／壓力，價格回測時進場 —— " +
+      "IFVG 模型：流動性已被掃、反向缺口已成形、再回來確認",
+    family: "SMC/ICT",
+    test: (c, i, d) =>
+      d === "long"
+        ? inZone(c.close[i], c.ifvgUpLow[i], c.ifvgUpHigh[i]) ||
+          (Number.isFinite(c.ifvgUpHigh[i]) && c.low[i] <= c.ifvgUpHigh[i] && c.close[i] > c.ifvgUpHigh[i])
+        : inZone(c.close[i], c.ifvgDownLow[i], c.ifvgDownHigh[i]) ||
+          (Number.isFinite(c.ifvgDownLow[i]) && c.high[i] >= c.ifvgDownLow[i] && c.close[i] < c.ifvgDownLow[i]),
+  },
+  {
+    id: "trendline-break",
+    label: "趨勢線突破（兩觸點）",
+    rationale:
+      "連接最近兩個確認擺動低點的上升線被收盤跌破（空）／連接兩個擺動高點的下降線被收盤突破（多）" +
+      " —— 純結構的行動線，不靠指標",
+    family: "型態",
+    test: (c, i, d) => {
+      if (d === "short") {
+        const y1 = c.prevAnchorLow[i];
+        const x1 = c.prevAnchorLowAt[i];
+        const y2 = c.anchorLow[i];
+        const x2 = c.anchorLowAt[i];
+        if (![y1, x1, y2, x2].every(Number.isFinite) || x2 <= x1 || y2 <= y1) return false;
+        const slope = (y2 - y1) / (x2 - x1);
+        const lineNow = y2 + slope * (i - x2);
+        // Broken on this bar, not merely below it: yesterday's close held.
+        return c.close[i] < lineNow && c.close[i - 1] >= y2 + slope * (i - 1 - x2);
+      }
+      const y1 = c.prevAnchorHigh[i];
+      const x1 = c.prevAnchorHighAt[i];
+      const y2 = c.anchorHigh[i];
+      const x2 = c.anchorHighAt[i];
+      if (![y1, x1, y2, x2].every(Number.isFinite) || x2 <= x1 || y2 >= y1) return false;
+      const slope = (y2 - y1) / (x2 - x1);
+      const lineNow = y2 + slope * (i - x2);
+      return c.close[i] > lineNow && c.close[i - 1] <= y2 + slope * (i - 1 - x2);
+    },
+  },
+  {
+    id: "mss-displacement",
+    label: "結構轉變＋位移 MSS",
+    rationale:
+      "反向結構突破的那根 K 棒實體至少一個 ATR —— 有位移的 MSS 才是機構進場，" +
+      "勉強收過一點的不算",
+    family: "SMC/ICT",
+    test: (c, i, d) => (d === "long" ? c.chochUp[i] : c.chochDown[i]) && c.bodyAtr[i] >= 1,
+  },
   {
     id: "bos",
     label: "結構突破 BOS",

@@ -168,10 +168,47 @@ export function openAICompatibleProvider(config: OpenAICompatibleConfig): AIProv
             : `可用模型皆已下架或改名（${lastModelError ?? "無回應"}），可在設定頁以 ${config.modelKeyName} 指定新型號`,
         );
       }
-      const text = answer.body?.choices?.[0]?.message?.content ?? "";
-      const parsed = schema.parse(text);
+      let body = answer.body;
+      let text = body?.choices?.[0]?.message?.content ?? "";
+      let parsed = schema.parse(text);
+
+      // 空回應而且是被 max_tokens 截斷的，多給一次預算。
+      //
+      // OpenRouter's free ids are increasingly reasoning models, which spend
+      // the output budget thinking and return `content: ""` with
+      // finish_reason "length" — the live sweep logged this as 「openrouter:
+      // 回應不符合 text 格式」 on every symbol. That is not a broken model,
+      // it is a budget three times too small for the model that answered.
+      // One retry at triple the budget, on the id that just answered, inside
+      // the same deadline; mirrors the gemini MAX_TOKENS retry.
+      const cutOff =
+        (body?.choices?.[0] as { finish_reason?: string } | undefined)?.finish_reason === "length";
+      const answeredBy = [...tried].pop();
+      if (parsed === null && cutOff && answeredBy && Date.now() < deadline) {
+        const retry = await postJson(
+          `${config.baseUrl}/chat/completions`,
+          { authorization: `Bearer ${apiKey}`, ...config.extraHeaders },
+          {
+            model: answeredBy,
+            messages: [{ role: "user", content: `${prompt}\n\n${schema.instruction}` }],
+            max_tokens: (options.maxTokens ?? 900) * 3,
+            temperature: options.temperature ?? 0.2,
+          },
+          Math.max(3000, Math.min(options.timeoutMs ?? 15000, deadline - Date.now())),
+        );
+        if (retry.ok) {
+          body = retry.json as ChatResponse | null;
+          text = body?.choices?.[0]?.message?.content ?? "";
+          parsed = schema.parse(text);
+        }
+      }
+
       if (parsed === null) {
-        throw new AIProviderError(config.name, `回應不符合 ${schema.name} 格式`, "content");
+        throw new AIProviderError(
+          config.name,
+          `回應不符合 ${schema.name} 格式${cutOff ? "（finish_reason=length，輸出被截斷）" : ""}`,
+          "content",
+        );
       }
       return parsed;
     },

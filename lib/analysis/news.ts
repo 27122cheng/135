@@ -21,7 +21,16 @@ export interface NewsAnalysisResult {
 }
 
 /** How many headlines the model is shown. Also the size of the citable list. */
-const PROMPT_LIMIT = 20;
+/**
+ * Headlines shown to the model. Was 20; a live sweep put groq's request size
+ * at ~5,000 tokens against a free-tier ceiling of 8,000 tokens per MINUTE,
+ * so the second AI call inside any minute was refused (HTTP 429) and the
+ * provider's daily allowance burned on retries. Twelve headlines is still
+ * a full 48-hour read for one instrument, and it roughly halves the prompt
+ * — the output budget (maxTokens) is the other half and is what it needs
+ * to be; see the completeAI call below.
+ */
+const PROMPT_LIMIT = 12;
 
 function buildPrompt(articles: Article[]): string {
   const list = articles

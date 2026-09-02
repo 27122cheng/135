@@ -5,6 +5,8 @@ import {
   REFERENCE_PROFILE,
   TRADE_MIN_EXPECTANCY_R,
   calibratedExpectancy,
+  FOLLOWABILITY_ABSOLUTE_MIN,
+  followabilityFloor,
   effectiveDayProfile,
   floorText,
   meetsProfileFloor,
@@ -134,6 +136,26 @@ async function main() {
     check("and the floor text names the calibration when it is active",
       floorText(calibrated).includes("扣 15 點") && !floorText(DAY_PROFILE).includes("扣"));
     check("the haircut is capped", (effectiveDayProfile(0.5).hitRateShortfall ?? 0) === 0.2);
+
+    // 跟單性否決線隨賠率下修 — WTI: +1.08R at 38%, thrown out for 2 points
+    // under a flat 40%. A 2.5R geometry breaks even at 29%.
+    // WTI's +1.08R at 38% implies a payoff near 4.5R (0.38·W − 0.62 = 1.08);
+    // that geometry breaks even at 18% and the bent line sits at 28%.
+    check("a high-payoff geometry is judged at breakeven + margin, not the flat line",
+      followabilityFloor(DAY_PROFILE, { avgWinR: 4.5, avgLossR: -1 }) < 0.3 &&
+        meetsProfileFloor(DAY_PROFILE, { hitRate: 0.38, expectancyR: 1.08, avgWinR: 4.5, avgLossR: -1 }),
+      followabilityFloor(DAY_PROFILE, { avgWinR: 4.5, avgLossR: -1 }));
+    check("a 2.5R geometry bends the line to just under 40%",
+      followabilityFloor(DAY_PROFILE, { avgWinR: 2.5, avgLossR: -1 }) === 0.3857);
+    check("a 1.5R geometry is still judged at the flat line",
+      followabilityFloor(DAY_PROFILE, { avgWinR: 1.5, avgLossR: -1 }) === profileHitFloor(DAY_PROFILE) &&
+        !meetsProfileFloor(DAY_PROFILE, { hitRate: 0.38, expectancyR: 0.2, avgWinR: 1.5, avgLossR: -1 }));
+    check("the line only ever bends down, never up",
+      followabilityFloor(DAY_PROFILE, { avgWinR: 0.8, avgLossR: -1 }) === profileHitFloor(DAY_PROFILE));
+    check("and never below the absolute minimum — a lottery ticket is not a trade",
+      followabilityFloor(DAY_PROFILE, { avgWinR: 20, avgLossR: -1 }) === FOLLOWABILITY_ABSOLUTE_MIN);
+    check("without a payoff shape the flat line stands",
+      followabilityFloor(DAY_PROFILE, {}) === profileHitFloor(DAY_PROFILE));
   }
 
   // ── the swing may reach what the day plan excludes ──────────────
