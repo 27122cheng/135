@@ -63,6 +63,22 @@ export interface ResolveInput {
 }
 
 /**
+ * The `signal_id` a journal row may carry.
+ *
+ * `trade_journal.signal_id` is a uuid column with a foreign key into `signals`.
+ * The row the monitor resolves against comes from `latest_signal`, whose id is
+ * the SYMBOL, not a uuid (`latestPerSymbol` says so) — so every auto-written
+ * resolution on that path was rejected by the database with
+ * "invalid input syntax for type uuid" and swallowed into a note nobody reads.
+ * The `plan_monitor` write beside it already guards for exactly this; the
+ * journal write did not. Same rule here: a uuid is kept, anything else is
+ * null, which is what the column means by "not from a stored signal row".
+ */
+export function journalSignalId(id: string | null | undefined): string | null {
+  return typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? id : null;
+}
+
+/**
  * Best price seen in the trade's favour, from the candles rather than from
  * stored state.
  *
@@ -148,7 +164,7 @@ async function alreadyLogged(
     const recent = await store.listJournal({ symbol: signal.symbol, limit: 30 });
     return recent.some(
       (e) =>
-        (e.signal_id ?? "") === (signal.id ?? "") &&
+        (journalSignalId(e.signal_id) ?? "") === (journalSignalId(signal.id) ?? "") &&
         e.direction === signal.direction &&
         near(e.entry_price, entry) &&
         near(e.exit_price, exitPrice),
@@ -216,7 +232,7 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
     try {
       const written = await store.insertJournalEntry(
         {
-          signal_id: signal.id,
+          signal_id: journalSignalId(signal.id),
           symbol: signal.symbol,
           direction: signal.direction,
           grade: signal.grade,
@@ -257,7 +273,7 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
     try {
       const written = await store.insertJournalEntry(
         {
-          signal_id: signal.id,
+          signal_id: journalSignalId(signal.id),
           symbol: signal.symbol,
           direction: signal.direction,
           grade: signal.grade,
@@ -300,7 +316,7 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
     try {
       const written = await store.insertJournalEntry(
         {
-          signal_id: signal.id,
+          signal_id: journalSignalId(signal.id),
           symbol: signal.symbol,
           direction: signal.direction,
           grade: signal.grade,
@@ -337,7 +353,7 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
     try {
       const written = await store.insertJournalEntry(
         {
-          signal_id: signal.id,
+          signal_id: journalSignalId(signal.id),
           symbol: signal.symbol,
           direction: signal.direction,
           grade: signal.grade,
@@ -401,7 +417,7 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
   try {
     const written = await store.insertJournalEntry(
       {
-        signal_id: signal.id,
+        signal_id: journalSignalId(signal.id),
         symbol: signal.symbol,
         direction: signal.direction,
         grade: signal.grade,

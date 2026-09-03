@@ -4,8 +4,9 @@ import type { SignalRow, TradeSignal } from "@/types/signal";
  * 歷史列補遺 — the gate-evidence fields the history table did not originally
  * store, packed into one `extras` jsonb column.
  *
- * The history insert writes named columns, and five fields the signal type
- * grew later — confidence, lab_gate, downgrades, reference_plan, graded_as —
+ * The history insert writes named columns, and the fields the signal type
+ * grew later — confidence, lab_gate, downgrades, reference_plan, graded_as,
+ * then thesis, forward_evidence, direction_tie and the rest listed below —
  * were never added to it. Nothing noticed until the blocker census switched
  * from latestPerSymbol (the full payload) to a week of history rows: on those
  * rows classifyBlocker could never see the confidence gate, the lab gate, the
@@ -30,6 +31,22 @@ export function signalExtras(signal: TradeSignal): Record<string, unknown> {
     downgrades: signal.downgrades ?? null,
     reference_plan: signal.reference_plan ?? null,
     graded_as: signal.graded_as ?? null,
+    // The second wave of column-less fields. Each one had a reader that could
+    // never see it on a history row: `thesis` feeds the monitor's regime
+    // snapshot (and so the thesis exit) when the board falls back to the
+    // history table; `forward_evidence` is what the card's recomputed
+    // confidence reads, so without it the recomputed score differs from the
+    // one the gate used; `direction_tie` is the 中性 label /history renders
+    // and could never render; the rest were being defaulted to empty by
+    // completeSignal, which is a loss of record, not a correction.
+    thesis: signal.thesis ?? null,
+    forward_evidence: signal.forward_evidence ?? null,
+    direction_tie: signal.direction_tie ?? false,
+    chart_patterns: signal.chart_patterns ?? [],
+    news_digest: signal.news_digest ?? null,
+    interventions: signal.interventions ?? [],
+    market_closed: signal.market_closed ?? false,
+    market_closed_reason: signal.market_closed_reason ?? null,
   };
 }
 
