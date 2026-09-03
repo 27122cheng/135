@@ -988,6 +988,9 @@ export interface PatternContributions {
  * forming" and "a head-and-shoulders has been confirmed", and collapsing the
  * two is how pattern trading earns its reputation.
  */
+/** Appended to a confirmed pattern's factor so the reader sees why it does not vote. */
+export const PATTERN_UNVERIFIED_NOTE = "｜圖形未經實驗室驗證，僅顯示不投票";
+
 export function patternContributions(
   patterns: ChartPattern[],
   currentPrice: number,
@@ -1009,12 +1012,23 @@ export function patternContributions(
 
     biasItems.push({
       dimension: "技術面",
-      factor: `${p.timeframe} ${p.name}（${statusLabel}）`,
+      factor: `${p.timeframe} ${p.name}（${statusLabel}）${p.status === "confirmed" ? PATTERN_UNVERIFIED_NOTE : ""}`,
       // A failed pattern points the other way — a break that got rejected is
       // evidence for the side that rejected it — but it is not given weight,
       // because "the opposite of a failed signal" is not itself a signal.
       direction: p.status === "confirmed" ? p.direction : "neutral",
-      weight: p.status === "confirmed" ? (p.strength >= 2 ? 2 : 1) : 0,
+      // 未經驗證不投票. A confirmed pattern used to vote at weight 1–2 —
+      // the same as a measured COT extreme or a rate-spread turn. Nothing in
+      // this system has ever measured whether a D1 head-and-shoulders on
+      // these instruments predicts anything; the published evidence for
+      // classical patterns on daily bars is thin, and fifteen detectors
+      // voting on unmeasured shapes is fifteen sources of noise in the
+      // direction call. Every other technical condition earns its vote by
+      // surviving the lab's forward test; patterns get the same rule. They
+      // are still detected, still drawn, still supply necklines as entry
+      // structures — they simply do not move bias_score until the lab has
+      // a record for them.
+      weight: 0,
       evidence:
         `頸線／邊界 ${p.breakout_level}、目標 ${p.target}、失效 ${p.invalidation_level}；` +
         p.checks.map((c) => `${c.passed ? "✓" : "✗"} ${c.label}`).join("；"),

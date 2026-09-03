@@ -4,7 +4,7 @@ import { getSignalStore, type MonitorRow, type TrackedPlan } from "@/lib/db";
 import { readLatest } from "@/lib/latest-signals";
 import { fetchLatestPrice } from "@/lib/data-sources/yfinance";
 import { notifyAll } from "@/lib/notify";
-import { EVENT_BLACKOUT_MS, upcomingHighImpactEvent } from "@/lib/analysis/timing";
+import { EVENT_BLACKOUT_MS, highImpactEventsBetween, upcomingHighImpactEvent } from "@/lib/analysis/timing";
 import { formatReleaseAlert, pushWorthiness } from "@/lib/notify/alert";
 import { ingestReleases } from "@/lib/analysis/data-release";
 import { withUserKeys } from "@/lib/api-keys";
@@ -14,6 +14,7 @@ import {
   advancePlan,
   formatMonitorAlert,
   INITIAL_MEMORY,
+  regimeBrokenFor,
   type MonitorMemory,
 } from "@/lib/monitor/plan-state";
 import { recordResolvedPlan } from "@/lib/journal/auto-log";
@@ -37,7 +38,7 @@ async function structureFor(
   meta: CommodityMeta,
   direction: "long" | "short",
   gaps: string[],
-): Promise<{ trailStop: number | null; flipped: boolean } | null> {
+): Promise<{ trailStop: number | null; flipped: boolean; er: number | null } | null> {
   try {
     const d1 = await fetchOHLCV(meta, "D1", gaps);
     const candles = d1?.candles;
@@ -53,7 +54,7 @@ async function structureFor(
           : anchor + a * STOP_BUFFER_ATR
         : null;
     const flipped = direction === "long" ? ctx.chochDown[i] : ctx.chochUp[i];
-    return { trailStop, flipped };
+    return { trailStop, flipped, er: ctx.er[i] };
   } catch {
     // No structure read means no trailing this round — the levels and the
     // breakeven rule still run, so an outage degrades, never blinds.
@@ -255,6 +256,13 @@ export async function GET(request: Request) {
               // and re-deciding each sweep would start or stop the messages
               // halfway through a position.
               announced: paper ? false : pushWorthiness(latest).worthy,
+              // The regime the playbook needs, so the monitor can tell when
+              // it ends. Only the two regimes with a playbook that can end.
+              regime:
+                latest.thesis?.playbook.regime === "trending" ||
+                latest.thesis?.playbook.regime === "ranging"
+                  ? latest.thesis.playbook.regime
+                  : null,
             };
           })();
       if (!tracked) return { symbol: meta.symbol, skipped: "觀望且沒有可追蹤的參考價位" };
@@ -297,10 +305,16 @@ export async function GET(request: Request) {
       // 結構式管理 only applies to an open position; a waiting plan is watched
       // on its levels alone. Structure computed from D1 — the same anchors
       // the backtest measured this plan under.
-      const structure =
+      const read =
         memory.state === "entered" || memory.state === "added" || memory.state === "scaled"
           ? await structureFor(meta, tracked.direction, gaps)
           : null;
+      // 論點失效 — the thesis's own regime invalidation, checked against
+      // today's ER(20). Written on the card as 「什麼會證明我看錯」 and
+      // never checked by anything until now.
+      const structure = read
+        ? { ...read, regimeBroken: regimeBrokenFor(tracked.regime ?? null, read.er) }
+        : null;
 
       // Everything the market did while nobody was looking. Only for a plan
       // already being watched: a first sighting has no gap to cover, and
@@ -380,7 +394,11 @@ export async function GET(request: Request) {
       let review: string | null = null;
       let resolution: Awaited<ReturnType<typeof recordResolvedPlan>>["outcome"] = null;
       const resolved = events.find(
-        (e) => e.kind === "stop_hit" || e.kind === "target_hit" || e.kind === "structure_exit",
+        (e) =>
+          e.kind === "stop_hit" ||
+          e.kind === "target_hit" ||
+          e.kind === "structure_exit" ||
+          e.kind === "thesis_exit",
       );
       if (resolved && plan.entry !== null && plan.stop_loss !== null && plan.take_profit !== null) {
         const logged = await recordResolvedPlan({
@@ -412,7 +430,9 @@ export async function GET(request: Request) {
               ? "target_hit"
               : resolved.kind === "structure_exit"
                 ? "structure_exit"
-                : "stop_hit",
+                : resolved.kind === "thesis_exit"
+                  ? "thesis_exit"
+                  : "stop_hit",
           // The banked half's price, when this trade scaled out before its
           // final exit — either earlier (state remembered as scaled) or in
           // this very sweep (scale_out event ahead of the resolving one).
@@ -421,10 +441,15 @@ export async function GET(request: Request) {
               ? plan.take_profit
               : null,
           paper,
-          // Filled in below from this run's own release check — the releases
-          // are ingested in the same pass, so "landed while we held" is
-          // answerable without another call.
-          eventDuringHold: false,
+          // Whether NFP or FOMC landed between the plan's birth and its exit.
+          // This was `false` with a promise to fill it in; S4 could therefore
+          // never be assigned by the rules, and every release-driven stop was
+          // filed as a direction or entry error and tightened the wrong knob.
+          // The plan's generated_at bounds the window rather than the fill
+          // time (which is not stored): a release the analysis could not
+          // have known about is what S4 means.
+          eventDuringHold:
+            highImpactEventsBetween(new Date(tracked.generatedAt), new Date()).length > 0,
           gaps,
         });
         review = logged.note;

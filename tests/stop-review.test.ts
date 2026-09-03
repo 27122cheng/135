@@ -1,5 +1,5 @@
 import { check, report } from "./_harness";
-import { classifyByRules, describeConsequence, type StopContext } from "@/lib/journal/stop-review";
+import { classifyByRules, describeConsequence, S1_MAX_MFE_R, type StopContext } from "@/lib/journal/stop-review";
 import { computeSeverity } from "@/lib/journal/severity";
 import { computeInterventions, DEFAULT_EFFECTS } from "@/lib/journal/interventions";
 import { PREVENTABLE_TAGS, STOP_REASON_TAGS } from "@/types/journal";
@@ -175,6 +175,27 @@ function ctx(over: Partial<StopContext> = {}): StopContext {
   check("and nothing was loosened",
     effects.biasScoreThresholdBump >= DEFAULT_EFFECTS.biasScoreThresholdBump &&
       effects.entryZoneWidthFactor <= DEFAULT_EFFECTS.entryZoneWidthFactor);
+}
+
+// ── 方向有走、沒走遠 — the band that taught the wrong lesson ────────
+//
+// Anything under 1R fell through to S1（方向錯）, whose intervention raises
+// the bias threshold: a trade that went +0.6R and reversed through the stop
+// was teaching the system its DIRECTION calls were bad. The market agreed for
+// a while; what failed was timing or location, which is S2's lesson.
+{
+  const risk = 179; // entry 54150, stop 53971 in the shared fixture
+  const at = (r: number) => ctx({ bestPrice: 54150 + risk * r });
+  check("+0.6R then stopped is timing/location (S2), not direction (S1)",
+    classifyByRules(at(0.6)).tag === "S2", classifyByRules(at(0.6)));
+  check("and the note says the direction was right", classifyByRules(at(0.6)).note.includes("不是方向錯"));
+  check("+0.25R is still a direction call (S1)", classifyByRules(at(0.25)).tag === "S1");
+  check("the boundary is the exported constant", S1_MAX_MFE_R === 0.3 &&
+    classifyByRules(at(0.3)).tag === "S1" && classifyByRules(at(0.31)).tag === "S2");
+  check("≥1R is still stop sizing (S3)", classifyByRules(at(1.2)).tag === "S3");
+  // A release during the hold outranks all of it — the loss was the event's.
+  check("an event during the hold is S4 whatever the excursion",
+    classifyByRules({ ...at(0.6), eventDuringHold: true }).tag === "S4");
 }
 
 report("stop review");

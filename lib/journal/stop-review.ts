@@ -149,6 +149,26 @@ export function classifyByRules(ctx: StopContext): { tag: StopReasonTag; note: s
     };
   }
 
+  // 方向有走、沒走遠 — the band the old rules got wrong.
+  //
+  // Anything under 1R fell through to S1（方向錯）, and S1's intervention
+  // raises the bias threshold: a trade that went +0.6R in our favour and then
+  // reversed through the stop was teaching the system that its DIRECTION
+  // calls were bad. They were not — the market agreed for a while. What
+  // failed was timing or location: a deeper entry would have carried the same
+  // move at less risk, or would not have filled at all. That is S2's lesson
+  // (narrower zone, wait for confirmation), and S2 is where it goes. The
+  // boundary is 0.3R: below it the trade never really went our way and S1's
+  // reading is the honest one.
+  if (mfe !== null && mfe > S1_MAX_MFE_R && mfe < 1) {
+    return {
+      tag: "S2",
+      note:
+        `最大順向幅度 ${mfe}R —— 方向曾被市場認同，但走不到 1R 就反轉穿過停損。` +
+        `這不是方向錯，是進場時機／位置：更深的回測會用更少的風險換到同一段行情，或根本不會成交。`,
+    };
+  }
+
   return {
     tag: "S1",
     note:
@@ -157,6 +177,13 @@ export function classifyByRules(ctx: StopContext): { tag: StopReasonTag; note: s
         : `最大順向幅度僅 ${mfe}R，價格幾乎沒有往計畫方向走，屬結構誤判。`,
   };
 }
+
+/**
+ * Below this favourable excursion the trade never went our way and the loss
+ * is a direction call (S1); above it the direction had merit and the loss is
+ * timing or location (S2), up to the 1R at which it becomes stop sizing (S3).
+ */
+export const S1_MAX_MFE_R = 0.3;
 
 interface AiVerdict {
   tag_index?: number;

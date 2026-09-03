@@ -218,6 +218,14 @@ export interface TrackedPlan {
    * mid-way through the migration.
    */
   announced?: boolean;
+  /**
+   * 這筆計畫的打法需要的行情性質 — from the thesis's playbook at tracking
+   * time. The monitor checks ER(20) against it every sweep and exits an
+   * unproven position when the regime ends (lib/monitor/plan-state.ts,
+   * thesis_exit). Absent on rows written before this existed, and for plans
+   * whose thesis was transitional/unknown — those have no regime to lose.
+   */
+  regime?: "trending" | "ranging" | null;
 }
 
 /** One row of `plan_monitor` — what was last reported, so it isn't repeated. */

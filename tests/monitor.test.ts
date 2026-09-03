@@ -638,4 +638,42 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   check("a worthy signal carries no reason", pushWorthiness(sig()).reason === null);
 }
 
+// ── 論點失效就走，除非交易已經自己證明了 ─────────────────────────
+//
+// The thesis writes 「什麼會證明我看錯」 on the card and, for the regime
+// kind, says the regime ending 「應收緊目標或退出」. Nothing checked it. Now
+// the monitor does, with two bounds: only an open position, and not one that
+// has already proven itself (stop at/beyond entry, or scaled).
+{
+  const broken = { trigger: "ER(20) 已跌到 0.12", meaning: "順勢回踩失去前提。" };
+  const held: MonitorMemory = { state: "entered", addOnsFilled: 0, activeStop: 1980 };
+  const go = (memory: MonitorMemory, regimeBroken: typeof broken | null, price = 2010) =>
+    advancePlan({ direction: "long", plan: plan(), price, priceAgeMinutes: 5, memory,
+      structure: { trailStop: null, flipped: false, regimeBroken } });
+
+  const out = go(held, broken);
+  check("an unproven open position exits when its regime ends", out.memory.state === "thesis_exit", out.memory.state);
+  check("announced with the thesis's own trigger and meaning",
+    out.events.some((e) => e.kind === "thesis_exit" && e.detail.includes("ER(20)") && e.detail.includes("順勢回踩")), out.events);
+  check("it is terminal", go(out.memory, broken).events.length === 0);
+  check("a regime that still holds changes nothing", go(held, null).events.length === 0);
+  check("a waiting plan has nothing to exit", go(INITIAL_MEMORY, broken).memory.state === "waiting");
+  // Proven trades are left to the trail — the banked half has paid for the rest.
+  const proven: MonitorMemory = { state: "entered", addOnsFilled: 0, activeStop: 2000 };
+  check("a position whose stop is already at entry is not exited on regime",
+    go(proven, broken).events.length === 0);
+  const scaled: MonitorMemory = { state: "scaled", addOnsFilled: 0, activeStop: 2000 };
+  check("nor a scaled one", go(scaled, broken).events.length === 0);
+  // Stop still wins inside the same sweep — pessimistic ordering survives.
+  check("a stop breached in the same sweep reports the stop, not the thesis",
+    go(held, broken, 1975).memory.state === "stop_hit");
+  // Journalled like a structure exit: no S-tag, since it is not a stop-out.
+  const autoLog = readFileSync(join(__dirname, "..", "lib", "journal", "auto-log.ts"), "utf8");
+  check("auto-log treats a thesis exit like a structure exit — no stop taxonomy",
+    autoLog.includes('outcome === "structure_exit" || outcome === "thesis_exit"'));
+  const route = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the route derives the break from the snapshotted regime and today's ER",
+    route.includes("regimeBrokenFor(tracked.regime") && route.includes("regime:\n"));
+}
+
 report("monitor + add-ons");

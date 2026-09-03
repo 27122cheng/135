@@ -7,6 +7,8 @@ import {
   lastBusinessDay,
   nfpTimeFor,
   upcomingHighImpactEvent,
+  highImpactEventsBetween,
+  fomcTimes,
 } from "@/lib/analysis/timing";
 
 /**
@@ -118,6 +120,27 @@ const at = (iso: string) => new Date(iso);
   const monthEnd = analyzeTiming(at("2026-08-31T10:00:00Z"));
   check("the last business day carries the rebalancing note",
     monthEnd.items.some((i) => i.factor.includes("月底")), monthEnd.items.map((i) => i.factor));
+}
+
+// ── 持倉期間有沒有數據 — the fact S4 needed and never got ──────────
+{
+  // A window around one NFP: the first Friday of a month.
+  const nfp = nfpTimeFor(2026, 2); // March 2026
+  const before = new Date(nfp.getTime() - 3 * 86_400_000);
+  const after = new Date(nfp.getTime() + 3 * 86_400_000);
+  const hits = highImpactEventsBetween(before, after);
+  check("an NFP inside the hold window is found", hits.some((h) => h.label.includes("NFP")), hits);
+  check("stamped with the release time", hits.some((h) => h.at.getTime() === nfp.getTime()));
+  check("a window that ends before it finds nothing",
+    highImpactEventsBetween(new Date(nfp.getTime() - 5 * 86_400_000), before).length === 0);
+  check("an inverted window is empty, not an error", highImpactEventsBetween(after, before).length === 0);
+  const fomc = fomcTimes()[0];
+  const around = highImpactEventsBetween(new Date(fomc.getTime() - 3_600_000), new Date(fomc.getTime() + 3_600_000));
+  check("an FOMC decision inside the window is found", around.some((h) => h.label.includes("FOMC")), around);
+  // The route now computes eventDuringHold from this — it was hard-coded false.
+  const route = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the monitor derives eventDuringHold from the calendar, not a constant",
+    route.includes("highImpactEventsBetween(new Date(tracked.generatedAt)") && !route.includes("eventDuringHold: false"));
 }
 
 report("timing factors");

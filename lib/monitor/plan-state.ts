@@ -1,5 +1,6 @@
 import type { AddOnLevel, TradePlan } from "@/types/signal";
 import { PROVEN_R, SCALE_OUT_MIN_R } from "@/lib/analysis/lab-manage";
+import { ER_RANGING, ER_TRENDING } from "@/lib/analysis/thesis";
 
 /**
  * What the price has done to an active plan.
@@ -22,6 +23,7 @@ export type PlanState =
   | "stop_hit"
   | "target_hit"
   | "structure_exit" // closed at market on an opposite structure break
+  | "thesis_exit"    // closed at market because the regime the playbook needed ended
   | "invalidated"; // the plan is no longer the current recommendation
 
 export interface MonitorMemory {
@@ -57,6 +59,15 @@ export interface MonitorInput {
     trailStop: number | null;
     /** An opposite CHoCH confirmed on the newest completed D1 bar. */
     flipped: boolean;
+    /**
+     * 論點失效 — the regime the plan's playbook required has ended, per the
+     * thesis's own invalidation: a pullback plan built for a trend when
+     * ER(20) has fallen into ranging, or a range-fade plan when ER has broken
+     * out into trending. The thesis wrote this condition on the card as
+     * 「什麼會證明我看錯」 and nothing ever checked it. Null when the regime
+     * still holds or was never recorded.
+     */
+    regimeBroken?: { trigger: string; meaning: string } | null;
   } | null;
   /**
    * 補看漏掉的那段 —— the price range since the monitor last looked at this
@@ -90,7 +101,8 @@ export interface MonitorEvent {
     | "stop_hit"
     | "target_hit"
     | "scale_out"
-    | "structure_exit";
+    | "structure_exit"
+    | "thesis_exit";
   headline: string;
   detail: string;
   /** The stop that should now be in force, when this event changes it. */
@@ -162,7 +174,8 @@ export function advancePlan(input: MonitorInput): MonitorResult {
   if (
     memory.state === "stop_hit" ||
     memory.state === "target_hit" ||
-    memory.state === "structure_exit"
+    memory.state === "structure_exit" ||
+    memory.state === "thesis_exit"
   ) {
     return { memory, events };
   }
@@ -278,6 +291,39 @@ export function advancePlan(input: MonitorInput): MonitorResult {
             `日線出現反向 CHoCH（結構翻轉），進場理由已不成立。` +
             `以現價 ${fmt(price)} ${state === "scaled" ? "將剩餘半倉出場（前一半已在停利落袋）" : "出場"}，不等停損 ${fmt(activeStop)} —— ` +
             `技術面看法改變時出場是管理規則的一部分，和回測量的是同一種交易。`,
+          newStop: null,
+        },
+      ],
+    };
+  }
+
+  // 論點失效就走 —— unless the trade has already proven itself.
+  //
+  // The thesis names the regime its playbook needs and says, on the card,
+  // that the regime ending 「應收緊目標或退出」. Top traders leave when the
+  // reason is gone, not when the stop is hit; this is that rule, mechanised
+  // for the one invalidation the monitor can check from candles. Two bounds
+  // keep it from being trigger-happy: it fires only while a position is open,
+  // and not once the trade has proven itself (stop at or beyond entry, or
+  // scaled) — by then the structure trail is the better manager and the
+  // banked half has paid for the rest.
+  if (
+    (state === "entered" || state === "added") &&
+    input.structure?.regimeBroken &&
+    (direction === "long" ? activeStop < plan.entry : activeStop > plan.entry)
+  ) {
+    const why = input.structure.regimeBroken;
+    return {
+      memory: { state: "thesis_exit", addOnsFilled, activeStop },
+      events: [
+        ...events,
+        {
+          kind: "thesis_exit",
+          headline: "論點失效，出場",
+          detail:
+            `${why.trigger}。${why.meaning} ` +
+            `以現價 ${fmt(price)} 出場，不等停損 ${fmt(activeStop)} —— ` +
+            `進場的前提沒有了就不留在場內，這是計畫卡上寫明的失效條件，不是臨時決定。`,
           newStop: null,
         },
       ],
@@ -509,4 +555,31 @@ export function formatMonitorAlert(
   );
   if (appUrl) lines.push(appUrl);
   return lines.join("\n");
+}
+
+/**
+ * Whether the regime a plan's playbook required has ended, per the thesis's
+ * own thresholds. Null when there is nothing to lose (no regime recorded) or
+ * nothing to judge with (no ER on the bar).
+ */
+export function regimeBrokenFor(
+  regime: "trending" | "ranging" | null,
+  er: number | null,
+): { trigger: string; meaning: string } | null {
+  if (regime === null || er === null || !Number.isFinite(er)) return null;
+  if (regime === "trending" && er < ER_RANGING) {
+    return {
+      trigger: `趨勢效率比 ER(20) 已跌到 ${er}，低於盤整門檻 ${ER_RANGING}`,
+      meaning:
+        "行情從趨勢轉入盤整，順勢回踩的打法失去前提：盤整市裡回踩支撐會被反覆穿越。",
+    };
+  }
+  if (regime === "ranging" && er > ER_TRENDING) {
+    return {
+      trigger: `趨勢效率比 ER(20) 已升到 ${er}，高於趨勢門檻 ${ER_TRENDING}`,
+      meaning:
+        "區間被真突破，行情轉入趨勢。區間兩端反轉的打法失效 —— 在趨勢裡做反轉，就是站在持續買賣盤的對面。",
+    };
+  }
+  return null;
 }

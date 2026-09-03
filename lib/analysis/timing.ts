@@ -110,6 +110,36 @@ export function upcomingHighImpactEvent(
   };
 }
 
+/**
+ * The clock-derivable high-impact releases that landed inside [from, to].
+ *
+ * For the stop-loss review. `eventDuringHold` was a parameter the monitor
+ * always passed as `false` with a comment promising to fill it in later, so
+ * S4（事件衝擊）could never be assigned by the rules — every stop that a
+ * release caused was filed as S1（方向錯）or S2, and the intervention engine
+ * then tightened direction or entry rules for a loss that neither could have
+ * prevented. Misclassified losses teach the wrong lesson; this is the fact
+ * the classifier needed. Same two releases as the countdown, for the same
+ * reason: a wrong "CPI landed" is worse than none.
+ */
+export function highImpactEventsBetween(from: Date, to: Date): Array<{ label: string; at: Date }> {
+  if (!(to.getTime() > from.getTime())) return [];
+  const out: Array<{ label: string; at: Date }> = [];
+  // Every NFP whose month touches the window; nfpTimeFor handles overflow.
+  const start = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
+  for (let m = 0; m < 14; m++) {
+    const at = nfpTimeFor(start.getUTCFullYear(), start.getUTCMonth() + m);
+    if (at.getTime() > to.getTime()) break;
+    if (at.getTime() >= from.getTime()) out.push({ label: "美國非農就業（NFP）", at });
+  }
+  for (const at of fomcTimes()) {
+    if (at.getTime() >= from.getTime() && at.getTime() <= to.getTime()) {
+      out.push({ label: "FOMC 利率決策", at });
+    }
+  }
+  return out.sort((a, b) => a.at.getTime() - b.at.getTime());
+}
+
 export function fomcTimes(): Date[] {
   return FOMC_2026_DECISIONS.map(
     (m) => new Date(`${m.date}T${String(m.utcHour).padStart(2, "0")}:00:00Z`),

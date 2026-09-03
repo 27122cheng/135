@@ -265,6 +265,14 @@ function doubleBottom(tail: number[], range = 2, vol: number | null = 1000): Can
   );
   check("nothing unconfirmed carries weight", weightedUnconfirmed.length === 0,
     weightedUnconfirmed);
+  // 未經驗證不投票: a confirmed pattern is detected, drawn and labelled, but
+  // does not move bias_score until the lab has a forward record for it.
+  const confirmedVotes = contributions.biasItems.filter(
+    (b, i) => patterns[i].status === "confirmed" && b.weight > 0,
+  );
+  check("a confirmed pattern no longer votes either", confirmedVotes.length === 0, confirmedVotes);
+  check("and the factor says why",
+    contributions.biasItems.some((b, i) => patterns[i].status === "confirmed" && b.factor.includes("僅顯示不投票")));
   check("nor claims a direction",
     contributions.biasItems.every((b, i) =>
       patterns[i].status === "confirmed" || b.direction === "neutral"));

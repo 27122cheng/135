@@ -46,7 +46,7 @@ export interface ResolveInput {
   stopLoss: number;
   takeProfit: number;
   exitPrice: number;
-  outcome: "stop_hit" | "target_hit" | "structure_exit";
+  outcome: "stop_hit" | "target_hit" | "structure_exit" | "thesis_exit";
   /**
    * 分批止盈 — the price at which half the position was banked before the
    * final exit, or null when the trade never touched its target. When set,
@@ -248,7 +248,8 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
     }
   }
 
-  if (outcome === "structure_exit") {
+  if (outcome === "structure_exit" || outcome === "thesis_exit") {
+    const thesis = outcome === "thesis_exit";
     // Not a stop-out: the S1–S8 stop taxonomy classifies trades the market
     // took out at a level, and forcing a market exit into it would teach the
     // intervention engine the wrong lesson. Logged with the exit reason
@@ -267,13 +268,19 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
           closed_at: new Date().toISOString(),
           stop_reason_tag: null,
           review_note:
-            `${markers} 結構翻轉出場 ${exitPrice}（${result === "win" ? "獲利" : result === "breakeven" ? "打平" : "虧損"} ${pnlPct}%），` +
-            `未觸及停損停利：日線出現反向 CHoCH，進場理由失效，依管理規則以市價出場。` +
+            `${markers} ${thesis ? "論點失效出場" : "結構翻轉出場"} ${exitPrice}（${result === "win" ? "獲利" : result === "breakeven" ? "打平" : "虧損"} ${pnlPct}%），` +
+            (thesis
+              ? `未觸及停損停利：計畫所需的行情性質已結束（ER(20) 越過門檻），進場前提失效，依計畫卡上的失效條件以市價出場。`
+              : `未觸及停損停利：日線出現反向 CHoCH，進場理由失效，依管理規則以市價出場。`) +
             (paper ? "此為參考價位的紙上追蹤，假設在價位上成交、無滑價與點差。" : ""),
         },
         null,
       );
-      return { entry: written, tag: null, decidedBy: null, note: "結構翻轉出場，已記錄", outcome: plainOutcome("結構翻轉出場") };
+      return {
+        entry: written, tag: null, decidedBy: null,
+        note: thesis ? "論點失效出場，已記錄" : "結構翻轉出場，已記錄",
+        outcome: plainOutcome(thesis ? "論點失效出場" : "結構翻轉出場"),
+      };
     } catch (err) {
       return {
         entry: null,
