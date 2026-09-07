@@ -25,6 +25,7 @@ export type PlanState =
   | "structure_exit" // closed at market on an opposite structure break
   | "thesis_exit"    // closed at market because the regime the playbook needed ended
   | "expired"        // the pending entry was never filled inside its validity window
+  | "cancelled"      // the pending entry was pulled: the move happened without us
   | "invalidated"; // the plan is no longer the current recommendation
 
 /**
@@ -38,6 +39,20 @@ export type PlanState =
  * different market from the one the levels were drawn on.
  */
 export const PENDING_ENTRY_MAX_HOURS = 48;
+
+/**
+ * 沒回踩就跑掉了 — how far (in R) price may run in the trade's favour past a
+ * pending entry before the order is pulled.
+ *
+ * A pullback limit is a bet that price comes back to the level. Once it has
+ * travelled a full risk distance the other way without doing so, the
+ * pullback it would now need is the whole stop distance — the geometry the
+ * plan was drawn on is gone, and a fill from here is a chase dressed as a
+ * limit order. Reaching the take-profit first is the same fact at its
+ * extreme: the trade happened, we were not in it, and the level is now
+ * where a *reversal* would start.
+ */
+export const PENDING_MAX_RUNAWAY_R = 1.0;
 
 /**
  * 數據前保本 — the favourable excursion (in R) at which an open position gets
@@ -143,7 +158,8 @@ export interface MonitorEvent {
     | "scale_out"
     | "structure_exit"
     | "thesis_exit"
-    | "expired";
+    | "expired"
+    | "cancelled";
   headline: string;
   detail: string;
   /** The stop that should now be in force, when this event changes it. */
@@ -217,7 +233,8 @@ export function advancePlan(input: MonitorInput): MonitorResult {
     memory.state === "target_hit" ||
     memory.state === "structure_exit" ||
     memory.state === "thesis_exit" ||
-    memory.state === "expired"
+    memory.state === "expired" ||
+    memory.state === "cancelled"
   ) {
     return { memory, events };
   }
@@ -244,6 +261,41 @@ export function advancePlan(input: MonitorInput): MonitorResult {
             detail:
               `進場價 ${fmt(plan.entry)} 掛了 ${Math.round(age)} 小時仍未成交（有效期 ${PENDING_ENTRY_MAX_HOURS} 小時）。` +
               `回調沒有來，這張單所依據的結構已是兩個交易日前的市場 —— 撤單，等下一輪分析重新給價位。`,
+            newStop: null,
+          },
+        ],
+      };
+    }
+    // 沒進場就先到停利，或跑太遠 — pull the order. Judged on the favourable
+    // extreme of the unobserved window, and before the fill check: a window
+    // that both dipped to the entry and ran to the target cannot be ordered,
+    // and booking it as a win is how the fictional trades got in last time.
+    // Pessimistic means no trade, not an invented one.
+    const risk0 = Math.abs(plan.entry - plan.stop_loss);
+    const targetFirst =
+      plan.take_profit !== null && reached(direction, favourable, plan.take_profit);
+    const ranAway =
+      risk0 > 0 &&
+      reached(
+        direction,
+        favourable,
+        direction === "long"
+          ? plan.entry + risk0 * PENDING_MAX_RUNAWAY_R
+          : plan.entry - risk0 * PENDING_MAX_RUNAWAY_R,
+      );
+    if (targetFirst || ranAway) {
+      const moved = risk0 > 0 ? Math.abs(favourable - plan.entry) / risk0 : 0;
+      return {
+        memory: { state: "cancelled", addOnsFilled, activeStop },
+        events: [
+          {
+            kind: "cancelled",
+            headline: targetFirst ? "掛單取消：未成交就先到停利" : "掛單取消：價格沒回踩就跑掉了",
+            detail: targetFirst
+              ? `價格 ${fmt(caught ? favourable : price)} 已到停利 ${fmt(plan.take_profit ?? NaN)}${since}，但從未回到進場價 ${fmt(plan.entry)}。` +
+                `這筆行情走完了，我們不在場內 —— 現在的進場價是反轉才會回來的位置，不追。撤單，等下一輪分析。`
+              : `價格 ${fmt(caught ? favourable : price)} 已朝交易方向離進場價 ${fmt(plan.entry)} 走了 ${Math.round(moved * 100) / 100}R（上限 ${PENDING_MAX_RUNAWAY_R}R）${since}，回踩沒有來。` +
+                `從這裡要回到進場價等於整段停損距離的回撤，原本的結構已不成立 —— 撤單，不追價。`,
             newStop: null,
           },
         ],

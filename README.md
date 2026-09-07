@@ -1154,6 +1154,7 @@ SPDR 官方持倉 XML 有兩個問題：它會擋雲端機房 IP，而且**只�
 | 規則 | 在哪裡 | 內容 |
 |---|---|---|
 | 掛單有效期 | `lib/monitor/plan-state.ts` `PENDING_ENTRY_MAX_HOURS` | 等待進場的掛單超過 48 小時未成交 → `expired`，撤單並通知。以前掛單沒有時效，refresh 工作流一失敗，舊價位就永遠掛著。 |
+| 掛單取消 | `lib/monitor/plan-state.ts` `PENDING_MAX_RUNAWAY_R` | 未成交就先到停利，或價格已朝交易方向離進場價超過 1R 而沒回踩 → `cancelled`，撤單並通知。行情走完了我們不在場內，不追價；同一段觀察區間內既碰到進場又碰到停利的，一律視為未成交（悲觀讀法，不記成獲利）。 |
 | 停損後冷卻 | `lib/journal/risk-guard.ts` `stopCooldown` | 同商品同方向在真實虧損出場後 24 小時內，新訊號一律轉觀望。反方向不受限（那是反轉，不是報復）。 |
 | 帳戶熔斷 | `lib/journal/risk-guard.ts` `circuitBreaker` | 24 小時內 3 筆真實虧損 → 暫停新倉 24 小時；連續 5 筆真實虧損 → 暫停 48 小時。自最後一筆虧損起算，時間到自動解除。 |
 | 數據前處理 | `lib/monitor/plan-state.ts` `PRE_EVENT_PROTECT_R` | NFP／FOMC 前 2 小時內：已走完 1R 的持倉停損移至進場價；視窗內不回報任何加倉點；警告推播逐筆列出目前 R 與具體動作（已保本可持有／未保本建議減半）。 |

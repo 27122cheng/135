@@ -178,8 +178,9 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   // plan's levels below a risen market let one price be "entry touched" and
   // "target hit" at once. With fill semantics it is a contradiction.
   const pastTarget = step(2085, INITIAL_MEMORY);
-  check("a price already past the target fills nobody",
-    pastTarget.events.length === 0 && pastTarget.memory.state === "waiting", pastTarget.memory);
+  check("a price already past the target fills nobody — the order is cancelled instead",
+    !pastTarget.events.some((e) => e.kind === "entered" || e.kind === "target_hit") &&
+    pastTarget.memory.state === "cancelled", pastTarget.memory);
 
   const entered = step(2000, INITIAL_MEMORY);
   check("touching the entry fires once", entered.events.length === 1 && entered.events[0].kind === "entered");
@@ -543,12 +544,14 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
     filled.memory.state === "entered", filled.memory.state);
   check("which the spot price alone would have missed entirely",
     go(2015, INITIAL_MEMORY).memory.state === "waiting");
+  // 2060 is 3R past the entry: never a fill, and (new rule) the order is
+  // pulled because the move happened without us.
   check("and a window that never dipped to the entry does not fill",
-    go(2050, INITIAL_MEMORY, win(2060, 2005)).memory.state === "waiting");
+    go(2050, INITIAL_MEMORY, win(2060, 2005)).memory.state !== "entered");
   // The direction of the extreme matters: the window's HIGH must never fill
   // a long, or the fictional-trade bug walks straight back in.
   check("a window high above the entry cannot fill a long",
-    go(2100, INITIAL_MEMORY, win(2200, 2050)).events.length === 0);
+    !go(2100, INITIAL_MEMORY, win(2200, 2050)).events.some((e) => e.kind === "entered"));
 
   // Pessimistic ordering survives: a window that covers both levels reports
   // the stop, because bars cannot order intrabar events.
@@ -732,6 +735,43 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
     route.includes("const eventAhead = upcomingHighImpactEvent(") && route.includes("eventAhead: eventAhead ?"));
   check("the warning gives each position its own instruction",
     route.includes("尚未保本 —— 建議減半") && route.includes("停損已在進場價"));
+}
+
+// ── 掛單取消：沒進場就先到停利，或跑太遠 ─────────────────────────
+{
+  const { PENDING_MAX_RUNAWAY_R } = require("@/lib/monitor/plan-state") as typeof import("@/lib/monitor/plan-state");
+  // long: entry 2000, stop 1980 (1R = 20), target 2080.
+  const at = (price: number, window?: { high: number; low: number }) =>
+    advancePlan({ direction: "long", plan: plan(), price, priceAgeMinutes: 15, memory: INITIAL_MEMORY, window });
+  const target = at(2085);
+  check("a pending long whose target printed without a fill is cancelled",
+    target.memory.state === "cancelled" && target.events[0]?.kind === "cancelled", target);
+  check("and the message says the move happened without us",
+    target.events[0]?.headline.includes("先到停利") === true, target.events[0]);
+  const ran = at(2000 + 20 * PENDING_MAX_RUNAWAY_R);
+  check(`price ${PENDING_MAX_RUNAWAY_R}R past the entry in the trade's favour cancels`,
+    ran.memory.state === "cancelled" && ran.events[0]?.headline.includes("跑掉") === true, ran);
+  check("just short of that it keeps waiting", at(2000 + 20 * PENDING_MAX_RUNAWAY_R - 1).memory.state === "waiting");
+  check("a dip to the entry still fills", at(1995).memory.state === "entered");
+  check("the window's favourable extreme is what is judged",
+    at(2005, { high: 2030, low: 2003 }).memory.state === "cancelled");
+  check("a window that both dipped to entry and ran to target is cancelled, not booked as a win",
+    at(2050, { high: 2085, low: 1995 }).memory.state === "cancelled");
+  check("cancelled is terminal",
+    step(1990, { state: "cancelled", addOnsFilled: 0, activeStop: null }).events.length === 0);
+  // Shorts mirror: entry 2000, stop 2020, target 1920.
+  const short = (price: number) => advancePlan({
+    direction: "short", plan: plan({ entry: 2000, stop_loss: 2020, take_profit: 1920, add_ons: [] }),
+    price, priceAgeMinutes: 15, memory: INITIAL_MEMORY,
+  });
+  check("a short whose target printed first is cancelled", short(1915).memory.state === "cancelled");
+  check("a short that ran 1R down without a fill is cancelled", short(1980).memory.state === "cancelled");
+  check("a short still within reach keeps waiting", short(1990).memory.state === "waiting");
+  check("a rally to the short's entry fills it", short(2005).memory.state === "entered");
+  // An open position is never cancelled — the rule is for pending orders only.
+  check("an open position is not touched by the runaway rule",
+    advancePlan({ direction: "long", plan: plan(), price: 2050, priceAgeMinutes: 15,
+      memory: { state: "entered", addOnsFilled: 0, activeStop: 1980 } }).memory.state !== "cancelled");
 }
 
 report("monitor + add-ons");
