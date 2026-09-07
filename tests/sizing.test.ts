@@ -220,4 +220,40 @@ import type { TradePlan } from "@/types/signal";
     beforeFomc !== null && beforeFomc.label.includes("FOMC"), beforeFomc);
 }
 
+// ── 總曝險與同時持倉上限 ──────────────────────────────────────────
+{
+  const { MAX_OPEN_POSITIONS, MAX_OPEN_RISK_R, remainingRiskR } =
+    require("@/lib/analysis/sizing") as typeof import("@/lib/analysis/sizing");
+  const base = { accountSize: 10_000, riskPct: 1, direction: "long" as const, entry: 2000, stopLoss: 1980, symbol: "XAUUSD" };
+
+  check("a fresh position still risks all of its R",
+    remainingRiskR({ direction: "long", entry: 2000, stopLoss: 1980, activeStop: 1980 }) === 1);
+  check("a stop at entry risks nothing",
+    remainingRiskR({ direction: "long", entry: 2000, stopLoss: 1980, activeStop: 2000 }) === 0);
+  check("a stop beyond entry risks nothing, never negative",
+    remainingRiskR({ direction: "long", entry: 2000, stopLoss: 1980, activeStop: 2010 }) === 0);
+  check("a trailed stop risks the fraction",
+    remainingRiskR({ direction: "short", entry: 2000, stopLoss: 2020, activeStop: 2010 }) === 0.5);
+  check("no geometry, no number",
+    remainingRiskR({ direction: null, entry: 2000, stopLoss: 1980, activeStop: null }) === null);
+
+  const full = positionSize(base)!;
+  check("without book facts nothing is capped", full.heatFactor === 1 && full.blocked === null);
+  const atCount = positionSize({ ...base, openCount: MAX_OPEN_POSITIONS, openRiskR: 1 })!;
+  check("the position count cap refuses", atCount.blocked !== null && atCount.units === 0 && atCount.riskAmount === 0, atCount);
+  const belowCount = positionSize({ ...base, openCount: MAX_OPEN_POSITIONS - 1, openRiskR: 1 })!;
+  check("one below the count cap is sized in full", belowCount.blocked === null && belowCount.units === full.units);
+  const noRoom = positionSize({ ...base, openCount: 2, openRiskR: MAX_OPEN_RISK_R })!;
+  check("no risk headroom refuses", noRoom.blocked !== null && noRoom.units === 0, noRoom);
+  const half = positionSize({ ...base, openCount: 2, openRiskR: MAX_OPEN_RISK_R - 0.5 })!;
+  check("half an R of headroom sizes half a position",
+    half.blocked === null && half.heatFactor === 0.5 && half.riskAmount === full.riskAmount / 2, half);
+  check("and says so", half.notes.some((n) => n.includes("總曝險接近上限")));
+  const breakevenBook = positionSize({ ...base, openCount: 3, openRiskR: 0 })!;
+  check("three positions all at breakeven leave the full R free", breakevenBook.heatFactor === 1);
+  const stacked = positionSize({ ...base, openCount: 1, openRiskR: 3.5, correlatedHeld: ["EURUSD"] })!;
+  check("heat and correlation both apply, never one instead of the other",
+    stacked.riskAmount === Math.round(full.riskAmount * 0.5 * 0.5 * 100) / 100, stacked);
+}
+
 report("交易執行面");

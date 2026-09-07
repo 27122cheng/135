@@ -6,6 +6,7 @@ import { fetchLatestPrice } from "./data-sources/yfinance";
 import { atr as computeAtr } from "./analysis/indicators";
 import { analyzeTechnical } from "./analysis/technical";
 import { EVENT_BLACKOUT_MS, analyzeTiming, upcomingHighImpactEvent } from "./analysis/timing";
+import { circuitBreaker, stopCooldown } from "./journal/risk-guard";
 import { buildThesis, playbookFor } from "./analysis/thesis";
 import { detectAllPatterns, patternContributions } from "./analysis/patterns";
 import { dedupeBiasItems } from "./analysis/evidence";
@@ -59,7 +60,7 @@ import {
   type Calibration,
   type InterventionEffects,
 } from "./journal/interventions";
-import type { AppliedIntervention } from "@/types/journal";
+import type { AppliedIntervention, JournalEntry } from "@/types/journal";
 
 function round(n: number): number {
   return Math.round(n * 10000) / 10000;
@@ -76,9 +77,9 @@ function round(n: number): number {
 async function loadInterventions(
   symbol: string,
   gaps: string[],
-): Promise<InterventionEffects> {
+): Promise<{ effects: InterventionEffects; history: JournalEntry[] }> {
   const store = getSignalStore();
-  if (!store) return DEFAULT_EFFECTS;
+  if (!store) return { effects: DEFAULT_EFFECTS, history: [] };
   try {
     // 汙染隔離 first: the intervention engine's whole job is to tighten the
     // floors when realized results lag what they promised, and the fabricated
@@ -88,12 +89,13 @@ async function loadInterventions(
     const effects = computeInterventions(history);
     // Fails loudly if a future edit ever makes a knob looser than baseline.
     assertNeverLoosened(effects);
-    return effects;
+    // The same rows feed the same-symbol cooldown gate, so they ride along.
+    return { effects, history };
   } catch (err) {
     gaps.push(
       `讀取交易日誌失敗，本次未套用任何干涉規則（${err instanceof Error ? err.message : String(err)}）`,
     );
-    return DEFAULT_EFFECTS;
+    return { effects: DEFAULT_EFFECTS, history: [] };
   }
 }
 
@@ -105,14 +107,18 @@ async function loadInterventions(
  * backtests' optimism is a property of the method, and ten resolved real
  * trades per symbol is months away while ten across the book is weeks.
  */
-async function loadCalibration(gaps: string[]): Promise<Calibration> {
+async function loadCalibration(
+  gaps: string[],
+): Promise<{ calibration: Calibration; book: JournalEntry[] }> {
   const store = getSignalStore();
-  if (!store) return NO_CALIBRATION;
+  if (!store) return { calibration: NO_CALIBRATION, book: [] };
   try {
-    return computeCalibration(usableJournal(await store.listJournal({ limit: 60 })));
+    const book = usableJournal(await store.listJournal({ limit: 60 }));
+    // The book-wide rows also feed the circuit breaker — one read, two gates.
+    return { calibration: computeCalibration(book), book };
   } catch (err) {
     gaps.push(`讀取交易日誌失敗，本次未套用實績校準（${err instanceof Error ? err.message : String(err)}）`);
-    return NO_CALIBRATION;
+    return { calibration: NO_CALIBRATION, book: [] };
   }
 }
 
@@ -313,7 +319,7 @@ async function buildSignalForSymbol(
     return { positioning, fundamentalItems, news, fundFlowItems };
   })();
 
-  const [[d1, h4, w1], nonTechnical, effects, calibration, adoptions, labTrades, witness] =
+  const [[d1, h4, w1], nonTechnical, journal, bookRead, adoptions, labTrades, witness] =
     await Promise.all([
     ohlcvPromise,
     nonTechnicalPromise,
@@ -327,6 +333,8 @@ async function buildSignalForSymbol(
     applyStoredTradingCosts(),
   ]);
   const { positioning, fundamentalItems, news, fundFlowItems } = nonTechnical;
+  const { effects, history: symbolJournal } = journal;
+  const { calibration, book: bookJournal } = bookRead;
   const interventions: AppliedIntervention[] = [
     ...effects.applied,
     ...(calibration.applied ? [calibration.applied] : []),
@@ -998,6 +1006,38 @@ async function buildSignalForSymbol(
   }
 
   applyLabGate(signal, adoptions, { D1: d1?.candles, H4: h4?.candles });
+
+  // 帳戶層級的兩道閘 — before the event blackout, for the same reason it
+  // sits last: every analytical gate has passed, and what withdraws the trade
+  // here is the book, not the setup. Both only ever turn an enter into a
+  // wait; the reference levels stay so the paper bucket can measure what
+  // the gate cost. Same-symbol cooldown first (the more specific reason).
+  if (signal.trade_plan.stance === "enter") {
+    const cooldown = stopCooldown(symbolJournal, { symbol: meta.symbol, direction: signal.direction });
+    const breaker = cooldown.active ? null : circuitBreaker(bookJournal);
+    const guard = cooldown.active ? cooldown.note : breaker?.tripped ? breaker.note : null;
+    if (guard) {
+      signal.downgrades = [...(signal.downgrades ?? []), guard];
+      signal.trade_plan = {
+        ...signal.trade_plan,
+        stance: "wait",
+        summary:
+          `${guard}。分析全部通過（這不是訊號變弱），是帳戶層級的風險規則：` +
+          (cooldown.active
+            ? "同一個想法剛被市場否決過，一根日線之內再進同方向是報復性交易，不是新證據。"
+            : "系統與行情不同步時，先停下來比再驗證一次便宜。") +
+          `下方價位仍是分析算出的真實結構。`,
+        wait_for: cooldown.active
+          ? `等冷卻期結束（${cooldown.until?.slice(5, 16).replace("T", " ")} UTC），若結構仍成立再進場。`
+          : `等熔斷解除（${breaker?.until?.slice(5, 16).replace("T", " ")} UTC）後的下一輪分析。`,
+        entry: null,
+        stop_loss: null,
+        take_profit: null,
+        risk_reward: null,
+        add_ons: [],
+      };
+    }
+  }
 
   // 數據前禁入 — a hard blackout inside two hours of a clock-derivable
   // high-impact release (NFP / FOMC decision).

@@ -24,7 +24,34 @@ export type PlanState =
   | "target_hit"
   | "structure_exit" // closed at market on an opposite structure break
   | "thesis_exit"    // closed at market because the regime the playbook needed ended
+  | "expired"        // the pending entry was never filled inside its validity window
   | "invalidated"; // the plan is no longer the current recommendation
+
+/**
+ * 掛單有效期 — how long a pullback limit stays working before it is pulled.
+ *
+ * A waiting plan had no time bound. The hourly rescan normally replaces it,
+ * so in practice it aged an hour or four; but the moment the refresh
+ * workflow failed, the last plan stood forever, and a level computed on a
+ * market three days gone could still fill. Two days: the plans are H4/D1
+ * pullbacks, and a pullback that has not arrived in two daily bars is a
+ * different market from the one the levels were drawn on.
+ */
+export const PENDING_ENTRY_MAX_HOURS = 48;
+
+/**
+ * 數據前保本 — the favourable excursion (in R) at which an open position gets
+ * its stop moved to the entry ahead of NFP / FOMC.
+ *
+ * The regular breakeven rule waits for PROVEN_R (2R) because 1R is daily
+ * noise and locking in at 1R washes winners. A binary event two hours out is
+ * not daily noise: the print resolves the trade by coin flip, and a trade
+ * that has already paid 1R should not be allowed to become a −1R by it.
+ * Below 1R nothing mechanical is sound — moving the stop to entry on a
+ * position in loss manufactures an exit — so that case gets the advice
+ * (reduce), not a rule.
+ */
+export const PRE_EVENT_PROTECT_R = 1.0;
 
 export interface MonitorMemory {
   state: PlanState;
@@ -91,6 +118,19 @@ export interface MonitorInput {
    * falls back to the spot price and behaves exactly as before.
    */
   window?: { high: number; low: number } | null;
+  /**
+   * 掛單已掛多久 — hours since the tracked plan was generated. Only a waiting
+   * plan reads it (see PENDING_ENTRY_MAX_HOURS); absent means "unknown", and
+   * unknown never expires anything.
+   */
+  planAgeHours?: number | null;
+  /**
+   * 數據前 — a clock-derivable high-impact release inside the blackout
+   * window, when there is one. While set: a position ≥ PRE_EVENT_PROTECT_R
+   * in favour gets its stop moved to entry, and no add-on is reported —
+   * adding size into a print is the one thing every desk forbids.
+   */
+  eventAhead?: { label: string; minutesAway: number } | null;
 }
 
 export interface MonitorEvent {
@@ -102,7 +142,8 @@ export interface MonitorEvent {
     | "target_hit"
     | "scale_out"
     | "structure_exit"
-    | "thesis_exit";
+    | "thesis_exit"
+    | "expired";
   headline: string;
   detail: string;
   /** The stop that should now be in force, when this event changes it. */
@@ -175,7 +216,8 @@ export function advancePlan(input: MonitorInput): MonitorResult {
     memory.state === "stop_hit" ||
     memory.state === "target_hit" ||
     memory.state === "structure_exit" ||
-    memory.state === "thesis_exit"
+    memory.state === "thesis_exit" ||
+    memory.state === "expired"
   ) {
     return { memory, events };
   }
@@ -188,6 +230,25 @@ export function advancePlan(input: MonitorInput): MonitorResult {
   let activeStop = memory.activeStop ?? plan.stop_loss;
 
   if (state === "waiting") {
+    // 逾時撤單 — checked before the fill: a level this old is a level drawn
+    // on a market that no longer exists, and a fill on it would be a trade
+    // nobody would place by hand. Unknown age never expires.
+    const age = input.planAgeHours;
+    if (age != null && Number.isFinite(age) && age > PENDING_ENTRY_MAX_HOURS) {
+      return {
+        memory: { state: "expired", addOnsFilled, activeStop },
+        events: [
+          {
+            kind: "expired",
+            headline: "掛單逾時，撤單",
+            detail:
+              `進場價 ${fmt(plan.entry)} 掛了 ${Math.round(age)} 小時仍未成交（有效期 ${PENDING_ENTRY_MAX_HOURS} 小時）。` +
+              `回調沒有來，這張單所依據的結構已是兩個交易日前的市場 —— 撤單，等下一輪分析重新給價位。`,
+            newStop: null,
+          },
+        ],
+      };
+    }
     if (!entryFilled(direction, adverse, plan.entry)) {
       return { memory: { state, addOnsFilled, activeStop }, events };
     }
@@ -330,6 +391,37 @@ export function advancePlan(input: MonitorInput): MonitorResult {
     };
   }
 
+  // 數據前保本 — a binary event inside the blackout window, and the trade
+  // has already paid PRE_EVENT_PROTECT_R: lock the entry in before the print.
+  // Same idempotence as the 2R rule below (fires only while the stop is on
+  // the risk side, and moves it to the entry). Never below 1R — see the
+  // constant — so a position in loss gets the warning, not a manufactured
+  // exit.
+  if (
+    (state === "entered" || state === "added") &&
+    input.eventAhead &&
+    (direction === "long" ? activeStop < plan.entry : activeStop > plan.entry)
+  ) {
+    const risk = Math.abs(plan.entry - plan.stop_loss);
+    const protectAt =
+      direction === "long"
+        ? plan.entry + risk * PRE_EVENT_PROTECT_R
+        : plan.entry - risk * PRE_EVENT_PROTECT_R;
+    if (risk > 0 && reached(direction, favourable, protectAt)) {
+      const ev = input.eventAhead;
+      activeStop = plan.entry;
+      events.push({
+        kind: "stop_moved",
+        headline: `數據前保本：${ev.minutesAway} 分鐘後公布${ev.label}，停損移至進場價`,
+        detail:
+          `這筆已走完 ${PRE_EVENT_PROTECT_R}R 以上，數據公布會用擲硬幣決定它的結局 —— ` +
+          `在那之前先把停損收到進場價 ${fmt(plan.entry)}，最差打平。` +
+          `平時的保本門檻是 ${PROVEN_R}R，數據前提前到 ${PRE_EVENT_PROTECT_R}R 是刻意的。`,
+        newStop: plan.entry,
+      });
+    }
+  }
+
   // 保本移停 — at PROVEN_R in favour, the stop moves to the entry.
   //
   // The single biggest driver of the stop-out rate is trades that travel well
@@ -402,8 +494,11 @@ export function advancePlan(input: MonitorInput): MonitorResult {
   // fills at prices that were never offered in sequence, so each is reported.
   // A scaled position is in harvest mode — half is already banked and the
   // remainder is being trailed out, so adding size back on is off the table.
+  // 數據前不加倉 — inside the blackout window no add-on is even reported:
+  // adding size into a print is forbidden, and a reported level "reached"
+  // reads as an instruction. The level is still there next sweep.
   const pending: AddOnLevel[] =
-    state === "scaled"
+    state === "scaled" || input.eventAhead
       ? []
       : plan.add_ons
           .filter((level) => level.sequence > addOnsFilled)

@@ -676,4 +676,62 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
     route.includes("regimeBrokenFor(tracked.regime") && route.includes("regime:\n"));
 }
 
+// ── 掛單有效期 ───────────────────────────────────────────────────
+//
+// A waiting plan had no time bound: the hourly rescan normally replaced it,
+// but the moment the refresh workflow failed the last plan stood forever and
+// a level drawn on a market days gone could still fill.
+{
+  const { PENDING_ENTRY_MAX_HOURS } = require("@/lib/monitor/plan-state") as typeof import("@/lib/monitor/plan-state");
+  const at = (price: number, planAgeHours: number | null) =>
+    advancePlan({ direction: "long", plan: plan(), price, priceAgeMinutes: 15, memory: INITIAL_MEMORY, planAgeHours });
+  const stale = at(1990, PENDING_ENTRY_MAX_HOURS + 1);
+  check("a pending entry older than the validity window expires instead of filling",
+    stale.memory.state === "expired" && stale.events[0]?.kind === "expired", stale);
+  check("even though the price is at the entry", at(1990, 1).memory.state === "entered");
+  check("inside the window it fills as before", at(1990, PENDING_ENTRY_MAX_HOURS - 1).memory.state === "entered");
+  check("an unknown age never expires", at(1990, null).memory.state === "entered");
+  check("expired is terminal",
+    step(1990, { state: "expired", addOnsFilled: 0, activeStop: null }).events.length === 0);
+  check("an open position is never expired",
+    advancePlan({ direction: "long", plan: plan(), price: 2010, priceAgeMinutes: 15,
+      memory: { state: "entered", addOnsFilled: 0, activeStop: 1980 }, planAgeHours: 200 }).memory.state === "entered");
+  const route = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the route passes the plan's age from its own generatedAt",
+    route.includes("planAgeHours,") && route.includes("Date.parse(tracked.generatedAt)"));
+}
+
+// ── 數據前：保本與不加倉 ──────────────────────────────────────────
+{
+  const { PRE_EVENT_PROTECT_R } = require("@/lib/monitor/plan-state") as typeof import("@/lib/monitor/plan-state");
+  const held: MonitorMemory = { state: "entered", addOnsFilled: 0, activeStop: 1980 };
+  const nfp = { label: "美國非農就業（NFP）", minutesAway: 90 };
+  const p = plan({ add_ons: [addOn(1, 2015, 1995)] });
+  const go = (price: number, ev: typeof nfp | null) =>
+    advancePlan({ direction: "long", plan: p, price, priceAgeMinutes: 15, memory: held, eventAhead: ev });
+
+  // 1R = 20. At +1R with NFP ahead the stop goes to entry; without NFP it waits for 2R.
+  const protectedNow = go(2000 + 20 * PRE_EVENT_PROTECT_R, nfp);
+  check("≥1R in favour with an event ahead moves the stop to entry",
+    protectedNow.memory.activeStop === 2000 &&
+    protectedNow.events.some((e) => e.kind === "stop_moved" && e.headline.includes("數據前保本")), protectedNow);
+  check("the same price without an event does not lock the entry (2R rule; the add-on's 1995 stands)",
+    go(2020, null).memory.activeStop === 1995);
+  check("below 1R nothing mechanical happens — the warning covers it",
+    go(2010, nfp).memory.activeStop === 1980 && !go(2010, nfp).events.some((e) => e.kind === "stop_moved"));
+  check("no add-on is reported inside the window",
+    !go(2020, nfp).events.some((e) => e.kind === "add_on"));
+  check("the same level is an add-on once the window is gone",
+    go(2020, null).events.some((e) => e.kind === "add_on"));
+  check("a stop already at entry is not moved again",
+    !advancePlan({ direction: "long", plan: p, price: 2030, priceAgeMinutes: 15,
+      memory: { state: "entered", addOnsFilled: 0, activeStop: 2000 }, eventAhead: nfp })
+      .events.some((e) => e.kind === "stop_moved"));
+  const route = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the route computes the event once and hands it to every plan",
+    route.includes("const eventAhead = upcomingHighImpactEvent(") && route.includes("eventAhead: eventAhead ?"));
+  check("the warning gives each position its own instruction",
+    route.includes("尚未保本 —— 建議減半") && route.includes("停損已在進場價"));
+}
+
 report("monitor + add-ons");

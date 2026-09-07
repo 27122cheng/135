@@ -196,6 +196,10 @@ export async function GET(request: Request) {
   const roster = await allInstruments().catch(() => COMMODITIES);
   const targets = requested ? roster.filter((c) => c.symbol === requested) : roster;
 
+  // 數據前 — computed once for the sweep; every held position reads it (stop
+  // to entry at ≥1R, no add-ons) and the book-wide warning below reuses it.
+  const eventAhead = upcomingHighImpactEvent(new Date(), EVENT_BLACKOUT_MS);
+
   // One read for all nine, not one per symbol: this is the same query the board
   // makes, and it answers for every instrument at once.
   const current = await readLatest(store)
@@ -323,6 +327,11 @@ export async function GET(request: Request) {
         ? await missedWindow(meta, previous?.updatedAt, tracked.generatedAt, gaps)
         : null;
 
+      // 掛單已掛多久 — from the snapshot's own birth, which is the only stable
+      // identity a plan has here.
+      const generatedMs = Date.parse(tracked.generatedAt);
+      const planAgeHours = Number.isFinite(generatedMs) ? (Date.now() - generatedMs) / 3_600_000 : null;
+
       const { memory: next, events } = advancePlan({
         direction: tracked.direction,
         plan,
@@ -331,6 +340,8 @@ export async function GET(request: Request) {
         memory,
         structure,
         window,
+        planAgeHours,
+        eventAhead: eventAhead ? { label: eventAhead.label, minutesAway: eventAhead.minutesAway } : null,
       });
 
       // No memory, no mouth. If this state cannot be persisted, the next
@@ -487,6 +498,17 @@ export async function GET(request: Request) {
         notified = results.filter((r) => r.ok).map((r) => r.channel);
       }
 
+      // Where the trade stands, for the pre-event warning: R against the
+      // original risk, and whether the stop already protects the entry.
+      const risk0 = plan.entry !== null && plan.stop_loss !== null ? Math.abs(plan.entry - plan.stop_loss) : 0;
+      const openR =
+        plan.entry !== null && risk0 > 0
+          ? Math.round(((tracked.direction === "long" ? quote.price - plan.entry : plan.entry - quote.price) / risk0) * 100) / 100
+          : null;
+      const protectedAtEntry =
+        plan.entry !== null && next.activeStop !== null &&
+        (tracked.direction === "long" ? next.activeStop >= plan.entry : next.activeStop <= plan.entry);
+
       return {
         symbol: meta.symbol,
         paper,
@@ -495,6 +517,8 @@ export async function GET(request: Request) {
         state: next.state,
         events: events.map((e) => e.kind),
         notified,
+        openR,
+        protectedAtEntry,
         // Why the phone stayed quiet about a real event, in the sweep log —
         // otherwise a silent-but-tracked trade looks identical to a bug.
         muted: !paper && !announced ? pushWorthiness(latest).reason : undefined,
@@ -524,9 +548,9 @@ export async function GET(request: Request) {
   // naming all held symbols beats nine phones buzzing separately.
   let eventWarning: string | null = null;
   try {
-    const event = upcomingHighImpactEvent(new Date(), EVENT_BLACKOUT_MS);
+    const event = eventAhead;
     const held = results.filter(
-      (r): r is typeof r & { symbol: string; state: string; paper: boolean } =>
+      (r): r is typeof r & { symbol: string; state: string; paper: boolean; openR?: number | null; protectedAtEntry?: boolean } =>
         "state" in r &&
         (r.state === "entered" || r.state === "added" || r.state === "scaled") &&
         "paper" in r &&
@@ -543,11 +567,21 @@ export async function GET(request: Request) {
       if (receipt.isNew) {
         const hours = Math.floor(event.minutesAway / 60);
         const minutes = event.minutesAway % 60;
+        // Per position, the concrete instruction — not a generic "consider".
+        // ≥1R has already had its stop moved to entry by the monitor (see
+        // PRE_EVENT_PROTECT_R); what is left is the positions that have not
+        // paid yet, and for those the only sound mechanical answer is size.
+        const lines = held.map((h) => {
+          const r = h.openR != null ? `${h.openR > 0 ? "+" : ""}${h.openR}R` : "R 未知";
+          const advice = h.protectedAtEntry
+            ? "停損已在進場價，最差打平，可持有"
+            : "尚未保本 —— 建議減半，或以現價出場後等公布再看";
+          return `・${h.symbol} ${r}：${advice}`;
+        });
         eventWarning =
-          `⚠️ ${hours > 0 ? `${hours} 小時 ` : ""}${minutes} 分鐘後公布${event.label}。` +
-          `目前持倉中：${held.map((h) => h.symbol).join("、")}。` +
-          `數據前後的行情不是技術面能預測的 —— 考慮減半部位或把停損收緊到保本，` +
-          `不要在公布前加倉。`;
+          `⚠️ ${hours > 0 ? `${hours} 小時 ` : ""}${minutes} 分鐘後公布${event.label}。\n` +
+          `目前持倉：\n${lines.join("\n")}\n` +
+          `數據前後的行情不是技術面能預測的。公布前系統不會回報任何加倉點。`;
         await notifyAll(eventWarning);
       }
     }

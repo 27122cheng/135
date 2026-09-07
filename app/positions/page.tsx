@@ -48,6 +48,8 @@ const STATE_LABEL: Record<string, string> = {
   stop_hit: "已停損",
   target_hit: "已停利",
   structure_exit: "結構翻轉出場",
+  thesis_exit: "論點失效出場",
+  expired: "掛單逾時撤單",
   invalidated: "已失效",
 };
 
