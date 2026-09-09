@@ -101,6 +101,30 @@ async function main() {
     const out = await resolveTarget(store, "XAUUSD");
     check("a resolution already written is not written twice", written.length === 0 && out.entry === null, out.note);
   }
+
+  // ── 提早出場的虧損也要有原因 ─────────────────────────────────────
+  {
+    // No candles (fetch fails) → bestPrice null → the rules still classify.
+    globalThis.fetch = (async () => { throw new Error("offline"); }) as typeof fetch;
+    const { store, written } = fakeStore();
+    const out = await recordResolvedPlan({
+      store, meta, signal: signal("XAUUSD"), entry: 2000, stopLoss: 1980, takeProfit: 2060,
+      exitPrice: 1990, outcome: "structure_exit", paper: false, eventDuringHold: false, gaps: [],
+    });
+    check("a losing structure exit is journalled", out.entry !== null, out.note);
+    check("with an S-tag, so it reaches 停損原因分布 and the interventions",
+      typeof written[0]?.stop_reason_tag === "string" && /^S[1-8]$/.test(written[0].stop_reason_tag), written[0]);
+    check("and the note still names the exit kind", written[0]?.review_note?.includes("結構翻轉出場") === true, written[0]?.review_note);
+    check("the push carries the classification", out.outcome?.tag !== null && out.outcome?.kind === "結構翻轉出場", out.outcome);
+
+    const win = fakeStore();
+    const w = await recordResolvedPlan({
+      store: win.store, meta, signal: signal("XAUUSD"), entry: 2000, stopLoss: 1980, takeProfit: 2060,
+      exitPrice: 2030, outcome: "thesis_exit", paper: false, eventDuringHold: false, gaps: [],
+    });
+    check("a winning early exit stays untagged — nothing to fix",
+      w.entry !== null && win.written[0]?.stop_reason_tag === null, win.written[0]);
+  }
 }
 
 main().then(() => report("auto-log signal_id"));

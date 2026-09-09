@@ -4,6 +4,10 @@ import { allInstruments } from "@/lib/server-symbols";
 import type { JournalEntry } from "@/types/journal";
 import { usableJournal } from "@/lib/journal/quarantine";
 import { computeEquityCurve, computeTrackRecord, type TrackBucket } from "@/lib/journal/stats";
+import { summariseTags, triggeredTags } from "@/lib/journal/interventions";
+import { TAG_GUIDANCE } from "@/lib/journal/advice";
+import { exitKindAdvice, splitStreams, summariseExitKinds } from "@/lib/journal/exit-kind";
+import { STOP_REASON_LABELS, type StopReasonTag } from "@/types/journal";
 import { notifyAll } from "@/lib/notify";
 
 /**
@@ -106,6 +110,25 @@ export function buildWeeklyDigest(
       const line = bucketLine(label, bucket);
       if (line) lines.push(line);
     }
+    // 獲利與虧損，分開報 — the win rate alone hides both sides.
+    const real = splitStreams(entries).real;
+    if (real.length > 0) {
+      const won = real.filter((e) => e.result === "win").reduce((s, e) => s + e.pnl_pct, 0);
+      const lost = real.filter((e) => e.result === "loss").reduce((s, e) => s + e.pnl_pct, 0);
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      lines.push(`正式訊號損益：獲利 +${r2(won)}%，虧損 ${r2(lost)}%，淨 ${r2(won + lost) > 0 ? "+" : ""}${r2(won + lost)}%`);
+    }
+    // 出場方式 — every ending, early exits included. A trade the rules
+    // closed before its stop is part of the week's story, not a footnote.
+    const kinds = summariseExitKinds(real);
+    if (kinds.length > 0) {
+      lines.push(
+        "出場方式：" +
+          kinds
+            .map((k) => `${k.label} ${k.trades} 筆（${k.wins}勝${k.losses}負${k.breakeven > 0 ? `${k.breakeven}平` : ""}，${k.totalPnlPct > 0 ? "+" : ""}${k.totalPnlPct}%）`)
+            .join("；"),
+      );
+    }
     // The costliest lesson of the week, by stop-reason tag.
     const tagLoss = new Map<string, number>();
     for (const e of entries) {
@@ -115,7 +138,20 @@ export function buildWeeklyDigest(
     }
     const worst = [...tagLoss.entries()].sort((a, b) => b[1] - a[1])[0];
     if (worst) {
-      lines.push(`本週最痛的停損原因：${worst[0]}（合計 -${Math.round(worst[1] * 100) / 100}%）`);
+      const tag = worst[0] as StopReasonTag;
+      lines.push(`本週最痛的停損原因：${tag} ${STOP_REASON_LABELS[tag]}（合計 -${Math.round(worst[1] * 100) / 100}%）`);
+      // 建議 — the same line the review page carries for this cause, and
+      // whether the engine has already tightened for it.
+      const active = triggeredTags(summariseTags(entries)).some((t) => t.tag === tag);
+      lines.push(
+        `建議：${TAG_GUIDANCE[tag].detail}` +
+          (TAG_GUIDANCE[tag].automated
+            ? `（系統${active ? "已自動套用" : "達門檻後會自動套用"}：${TAG_GUIDANCE[tag].automated}）`
+            : ""),
+      );
+    }
+    for (const a of exitKindAdvice(kinds).slice(0, 2)) {
+      lines.push(`${a.title}：${a.detail}（${a.basedOn}）`);
     }
     if (openPositions.length > 0) {
       lines.push(`另有 ${openPositions.length} 筆持倉中：${held}`);

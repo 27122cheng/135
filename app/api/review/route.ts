@@ -2,6 +2,7 @@ import { getSignalStore, type LabTradeRow } from "@/lib/db";
 import { censusOf } from "@/lib/analysis/blockers";
 import { summariseForward } from "@/lib/analysis/lab-forward";
 import { buildRiskAdvice } from "@/lib/journal/advice";
+import { exitKindAdvice, splitStreams, summariseExitKinds } from "@/lib/journal/exit-kind";
 import { computeEquityCurve, computeReviewStats, computeTrackRecord } from "@/lib/journal/stats";
 import { summariseTags, triggeredTags } from "@/lib/journal/interventions";
 import { partitionJournal, quarantineNote } from "@/lib/journal/quarantine";
@@ -71,6 +72,7 @@ export async function GET(request: Request) {
     // the live consequence of the history above it.
     const tagStats = summariseTags(entries);
     const active = triggeredTags(tagStats);
+    const streams = splitStreams(entries);
     return json({
       ...stats,
       // Stated on the page, not silently applied: a system that reports its
@@ -120,6 +122,13 @@ export async function GET(request: Request) {
       activeInterventions: active,
       recentTagStats: tagStats,
       riskAdvice: buildRiskAdvice(tagStats, active),
+      // 出場方式 — every ending side by side, early exits included, per
+      // stream. The advice reads the real stream: paper fills are perfect.
+      exitKinds: {
+        real: summariseExitKinds(streams.real),
+        paper: summariseExitKinds(streams.paper),
+      },
+      exitAdvice: exitKindAdvice(summariseExitKinds(streams.real)),
       blockers: { census, scanned: scoped.length, windowDays: censusWindowDays },
       forward: {
         conditions: labStats.slice(0, 8),

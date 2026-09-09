@@ -266,10 +266,79 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
 
   if (outcome === "structure_exit" || outcome === "thesis_exit") {
     const thesis = outcome === "thesis_exit";
-    // Not a stop-out: the S1–S8 stop taxonomy classifies trades the market
-    // took out at a level, and forcing a market exit into it would teach the
-    // intervention engine the wrong lesson. Logged with the exit reason
-    // instead — the win/loss still counts toward the realized-rate audit.
+    const kind = thesis ? "論點失效出場" : "結構翻轉出場";
+    const why = thesis
+      ? `未觸及停損停利：計畫所需的行情性質已結束（ER(20) 越過門檻），進場前提失效，依計畫卡上的失效條件以市價出場。`
+      : `未觸及停損停利：日線出現反向 CHoCH，進場理由失效，依管理規則以市價出場。`;
+    const paperNote = paper ? "此為參考價位的紙上追蹤，假設在價位上成交、無滑價與點差。" : "";
+
+    // 提早出場的虧損也要有原因. These used to carry no S-tag on the theory
+    // that the taxonomy is for stop-outs; the effect was that a losing trade
+    // the rules closed early vanished from 停損原因分布 and from the
+    // intervention engine — a loss with no lesson. The classifier reads the
+    // excursion and the event window, neither of which cares whether the
+    // final tick was a stop or a market order, so a losing early exit is
+    // classified exactly like a stop-out. Wins and scratches stay untagged:
+    // there is nothing to fix.
+    if (result === "loss") {
+      const bestPrice = await bestPriceSince(input.meta, signal.direction, signal.generated_at, input.gaps);
+      const review = await reviewStop(
+        { signal, entry, stopLoss, takeProfit, exitPrice, bestPrice, eventDuringHold: input.eventDuringHold },
+        input.gaps,
+      );
+      const history = usableJournal(
+        await store.listJournal({ symbol: signal.symbol, limit: 30 }).catch(() => []),
+      );
+      const severity = computeSeverity({ tag: review.tag, pnlPct, history }).severity;
+      try {
+        const written = await store.insertJournalEntry(
+          {
+            signal_id: journalSignalId(signal.id),
+            symbol: signal.symbol,
+            direction: signal.direction,
+            grade: signal.grade,
+            entry_price: entry,
+            exit_price: exitPrice,
+            result,
+            pnl_pct: pnlPct,
+            closed_at: new Date().toISOString(),
+            stop_reason_tag: review.tag,
+            review_note:
+              `${markers} ${kind} ${exitPrice}（虧損 ${pnlPct}%），${why}` +
+              `分類 ${review.tag}（由${review.decidedBy === "ai" ? " AI 複核" : "規則判定"}）：${review.note} ` +
+              describeConsequence(review.tag) +
+              paperNote,
+          },
+          severity,
+        );
+        return {
+          entry: written,
+          tag: review.tag,
+          decidedBy: review.decidedBy,
+          note: `${kind}（虧損），已分類 ${review.tag} 並記錄`,
+          outcome: {
+            result,
+            pnlPct,
+            tag: review.tag,
+            label: STOP_REASON_LABELS[review.tag],
+            decidedBy: review.decidedBy,
+            why: review.note,
+            consequence: describeConsequence(review.tag),
+            severity,
+            kind,
+          },
+        };
+      } catch (err) {
+        return {
+          entry: null,
+          tag: null,
+          decidedBy: null,
+          note: `寫入交易日誌失敗：${err instanceof Error ? err.message : String(err)}`,
+          outcome: null,
+        };
+      }
+    }
+
     try {
       const written = await store.insertJournalEntry(
         {
@@ -284,18 +353,14 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
           closed_at: new Date().toISOString(),
           stop_reason_tag: null,
           review_note:
-            `${markers} ${thesis ? "論點失效出場" : "結構翻轉出場"} ${exitPrice}（${result === "win" ? "獲利" : result === "breakeven" ? "打平" : "虧損"} ${pnlPct}%），` +
-            (thesis
-              ? `未觸及停損停利：計畫所需的行情性質已結束（ER(20) 越過門檻），進場前提失效，依計畫卡上的失效條件以市價出場。`
-              : `未觸及停損停利：日線出現反向 CHoCH，進場理由失效，依管理規則以市價出場。`) +
-            (paper ? "此為參考價位的紙上追蹤，假設在價位上成交、無滑價與點差。" : ""),
+            `${markers} ${kind} ${exitPrice}（${result === "win" ? "獲利" : "打平"} ${pnlPct}%），` + why + paperNote,
         },
         null,
       );
       return {
         entry: written, tag: null, decidedBy: null,
-        note: thesis ? "論點失效出場，已記錄" : "結構翻轉出場，已記錄",
-        outcome: plainOutcome(thesis ? "論點失效出場" : "結構翻轉出場"),
+        note: `${kind}，已記錄`,
+        outcome: plainOutcome(kind),
       };
     } catch (err) {
       return {

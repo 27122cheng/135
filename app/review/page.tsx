@@ -15,6 +15,7 @@ import type { TagStat } from "@/types/journal";
 import { SeverityTrend, StopReasonDonut, TAG_COLORS } from "@/components/review-charts";
 import { JournalForm } from "@/components/journal-form";
 import type { RiskAdvice } from "@/lib/journal/advice";
+import type { ExitAdvice, ExitKindStat } from "@/lib/journal/exit-kind";
 import { SiteNav } from "@/components/site-nav";
 
 interface BlockerRow {
@@ -66,6 +67,8 @@ interface ReviewResponse extends ReviewStats {
   activeInterventions: TagStat[];
   recentTagStats: TagStat[];
   riskAdvice?: RiskAdvice[];
+  exitKinds?: { real: ExitKindStat[]; paper: ExitKindStat[] };
+  exitAdvice?: ExitAdvice[];
   quarantine?: {
     fabricated: number;
     duplicates: number;
@@ -197,6 +200,32 @@ export default function ReviewPage() {
               </p>
             )}
           </Section>
+
+          {/* 出場方式 — every ending side by side, early exits included. The
+              track record says whether the book paid; this says *how* each
+              trade ended and what each ending cost, which is where a losing
+              structure exit and a scratched winner stop being invisible. */}
+          {stats.exitKinds && (stats.exitKinds.real.length > 0 || stats.exitKinds.paper.length > 0) && (
+            <Section title="出場方式（含提早出場，每種各自的勝負與損益）">
+              <ExitKindTable label="正式訊號" rows={stats.exitKinds.real} />
+              {stats.exitKinds.paper.length > 0 && (
+                <div className="mt-3">
+                  <ExitKindTable label="參考價位（紙上追蹤）" rows={stats.exitKinds.paper} />
+                </div>
+              )}
+              {stats.exitAdvice && stats.exitAdvice.length > 0 && (
+                <ul className="mt-3 space-y-2">
+                  {stats.exitAdvice.map((a) => (
+                    <li key={a.kind} className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                      <p className="text-xs font-medium text-amber-300">{a.title}</p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-neutral-300">{a.detail}</p>
+                      <p className="mt-1 text-[11px] text-neutral-500">依據：{a.basedOn}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Section>
+          )}
 
           {/* 權益曲線 — the running sum of real trades' pnl, with the deepest
               drawdown named. The one chart a desk reads before any win rate:
@@ -649,6 +678,53 @@ function LearningLog({ entries }: { entries: LearningEntry[] }) {
         獲利單只記錄不復盤：S1–S8 是虧損的分類法。
       </p>
     </div>
+  );
+}
+
+function ExitKindTable({ label, rows }: { label: string; rows: ExitKindStat[] }) {
+  if (rows.length === 0) {
+    return <p className="text-xs text-neutral-500">{label}：尚無結算紀錄。</p>;
+  }
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-left text-[11px] text-neutral-500">
+          <th className="py-1 font-normal">{label}</th>
+          <th className="py-1 text-right font-normal">筆數</th>
+          <th className="py-1 text-right font-normal">佔比</th>
+          <th className="py-1 text-right font-normal">勝/敗/平</th>
+          <th className="py-1 text-right font-normal">勝率</th>
+          <th className="py-1 text-right font-normal">合計%</th>
+          <th className="py-1 text-right font-normal">平均%</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.kind} className="border-t border-neutral-800">
+            <td className="py-1.5 text-neutral-300">{r.label}</td>
+            <td className="py-1.5 text-right font-mono text-neutral-400">{r.trades}</td>
+            <td className="py-1.5 text-right font-mono text-neutral-500">{r.sharePct}%</td>
+            <td className="py-1.5 text-right font-mono text-neutral-400">
+              {r.wins}/{r.losses}/{r.breakeven}
+            </td>
+            <td className="py-1.5 text-right font-mono text-neutral-200">
+              {r.winRate === null ? "—" : `${r.winRate}%`}
+            </td>
+            <td
+              className={`py-1.5 text-right font-mono ${
+                r.totalPnlPct > 0 ? "text-emerald-400" : r.totalPnlPct < 0 ? "text-red-400" : "text-neutral-400"
+              }`}
+            >
+              {r.totalPnlPct > 0 ? "+" : ""}
+              {r.totalPnlPct}
+            </td>
+            <td className="py-1.5 text-right font-mono text-neutral-400">
+              {r.avgPnlPct === null ? "—" : r.avgPnlPct}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

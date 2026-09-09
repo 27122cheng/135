@@ -113,4 +113,22 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
     !buildWeeklyDigest([], "2026-W35", [], null).includes("累計"));
 }
 
+// ── 每一種出場都算數 ─────────────────────────────────────────────
+{
+  const week = [
+    entry({ result: "win", pnl_pct: 3, stop_reason_tag: null, review_note: "[自動追蹤] 觸及停利 2060，未經人工複核。" }),
+    entry({ result: "loss", pnl_pct: -1, stop_reason_tag: "S3", review_note: "[自動追蹤] 觸及停損 1980" }),
+    entry({ result: "loss", pnl_pct: -0.6, stop_reason_tag: "S2", review_note: "[自動追蹤] 結構翻轉出場 1988（虧損 -0.6%）" }),
+    entry({ result: "breakeven", pnl_pct: 0, stop_reason_tag: null, review_note: "[自動追蹤] 保本出場 2000" }),
+  ];
+  const msg = buildWeeklyDigest(week, "2026-W36");
+  check("profit and loss are reported apart", msg.includes("獲利 +3%") && msg.includes("虧損 -1.6%"), msg);
+  check("and netted", msg.includes("淨 +1.4%"), msg);
+  check("the exit-kind line lists every ending", msg.includes("出場方式：") && msg.includes("結構翻轉提早出場 1 筆"), msg);
+  check("including the scratch", msg.includes("保本出場 1 筆"), msg);
+  check("the worst stop reason is named with its label", msg.includes("S3 停損過窄被掃"), msg);
+  check("and comes with the advice for it", msg.includes("建議：") && msg.includes("結構外加緩衝"), msg);
+  check("and says whether the engine has tightened yet", msg.includes("達門檻後會自動套用") || msg.includes("已自動套用"), msg);
+}
+
 report("weekly digest");
