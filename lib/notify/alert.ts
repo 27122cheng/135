@@ -147,6 +147,16 @@ export function shouldAlert(
      * is exactly what an interruption is for.
      */
     openTrade?: boolean;
+    /**
+     * True when the monitor already ran the previous signal's plan to its end
+     * — filled and stopped, targeted, structure- or thesis-exited, or pulled
+     * as expired/cancelled — and announced that. The signal's lifecycle is
+     * over; a withdrawal on top would say 「尚未成交，視為取消掛單」 about a
+     * trade the reader watched enter and exit an hour earlier. The live
+     * sequence: 已觸及進場價 14:30, 結構翻轉出場 15:00, then 先前的進場訊號
+     * 已失效／此訊號尚未成交 at 18:46 from the next rescan.
+     */
+    resolvedTrade?: boolean;
   } = {},
 ): AlertDecision {
   const plan = current.trade_plan;
@@ -193,6 +203,13 @@ export function shouldAlert(
       // this: 已觸及進場價 at 20:16, followed minutes later by 先前的進場訊號
       // 已失效 — the reader asked, reasonably, why their filled trade was
       // "cancelled". It wasn't; the message just couldn't say so.
+      if (options.resolvedTrade) {
+        // Nothing left to withdraw: the trade this signal opened has already
+        // been closed and reported by the monitor. Three messages tell the
+        // whole story (建議 → 進場 → 出場); a fourth saying it never filled
+        // is false.
+        return { alert: false, reason: "先前訊號的交易已由監控結算並通知，不另發取消" };
+      }
       if (options.openTrade) {
         // Named so the route can dedupe: a setup sitting right on the
         // geometry floor can flip enter→wait→enter→wait across consecutive

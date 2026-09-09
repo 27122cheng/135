@@ -112,7 +112,19 @@ export async function GET(request: Request) {
         monitorState?.state === "entered" ||
         monitorState?.state === "added" ||
         monitorState?.state === "scaled";
-      const decision = shouldAlert(signal, previous ?? null, minGrade, { openTrade });
+      // The previous signal's own plan, already run to its end by the
+      // monitor: identity is the snapshot's generatedAt, the only stable id
+      // a plan has here. A terminal state on a *different* plan (an older
+      // one the monitor never replaced) says nothing about this signal.
+      const RESOLVED = new Set([
+        "stop_hit", "target_hit", "structure_exit", "thesis_exit", "expired", "cancelled",
+      ]);
+      const resolvedTrade =
+        monitorState != null &&
+        RESOLVED.has(monitorState.state) &&
+        monitorState.tracked?.generatedAt != null &&
+        monitorState.tracked.generatedAt === previous?.generated_at;
+      const decision = shouldAlert(signal, previous ?? null, minGrade, { openTrade, resolvedTrade });
       let notified: string[] = [];
       let sendIt = decision.alert;
       if (sendIt && decision.dedupeCategory === "held-weakened") {

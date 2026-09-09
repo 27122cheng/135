@@ -85,6 +85,23 @@ function stored(s: TradeSignal): SignalRow {
 
   check("with no open trade the same signal alerts",
     shouldAlert(signal(), null, "A", { openTrade: false }).alert);
+
+  // 建議 → 進場 → 出場 is the whole story. The rescan after the exit found
+  // 觀望 and, seeing no open trade, sent 「此訊號尚未成交，視為取消掛單」
+  // about a trade the reader had watched enter and exit. A resolved plan is
+  // not a pending order.
+  const done = shouldAlert(withdrawn, prev, "A", { openTrade: false, resolvedTrade: true });
+  check("a withdrawal after the monitor already closed the trade is silent", !done.alert, done);
+  check("and says why", done.reason.includes("已由監控結算"), done.reason);
+  check("a genuinely pending order still gets its cancellation",
+    shouldAlert(withdrawn, prev, "A", { openTrade: false, resolvedTrade: false }).alert);
+  const { readFileSync } = require("node:fs") as typeof import("node:fs");
+  const { join } = require("node:path") as typeof import("node:path");
+  const route = readFileSync(join(__dirname, "..", "app", "api", "refresh", "route.ts"), "utf8");
+  check("the route ties 'resolved' to the previous signal's own plan identity",
+    route.includes("monitorState.tracked.generatedAt === previous?.generated_at"));
+  check("and treats every terminal state as resolved, expiry and cancellation included",
+    /"stop_hit", "target_hit", "structure_exit", "thesis_exit", "expired", "cancelled"/.test(route));
 }
 
 // ── the floor ─────────────────────────────────────────────────────
