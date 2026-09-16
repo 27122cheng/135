@@ -110,6 +110,15 @@ const YAHOO_HOSTS = ["query1", "query2"] as const;
 export async function fetchYahooChart(
   pathAndQuery: string,
   freshEnoughMs: number,
+  /**
+   * Set `answered` when either host returned a parseable chart document —
+   * including an empty one or Yahoo's own "no data" error. That is the
+   * server's answer, not a transport failure, and the caller uses the
+   * distinction to keep an empty ticker from putting the whole Yahoo source
+   * into backoff (which was silently killing every fallback request that
+   * followed it within the same call).
+   */
+  diag?: { answered: boolean },
 ): Promise<YahooChartResult | null> {
   let best: { res: YahooChartResult; newest: number } | null = null;
   for (const host of YAHOO_HOSTS) {
@@ -118,6 +127,7 @@ export async function fetchYahooChart(
       { headers: { "User-Agent": "Mozilla/5.0" } },
       8000,
     );
+    if (data && diag) diag.answered = true;
     const res = data?.chart?.result?.[0];
     const ts = res?.timestamp;
     if (!res || !Array.isArray(ts) || ts.length === 0) continue;
@@ -431,6 +441,11 @@ export async function fetchViaProxy(
   const base = INTERVALS[timeframe];
   const cfg = rangeOverride ? { ...base, range: rangeOverride } : base;
 
+  // An empty chart is Yahoo's answer about THIS ticker, not a Yahoo outage.
+  // Recording it as a failure put the shared source into backoff, and the
+  // very next request — a fallback range, an alias ticker, the next symbol
+  // — was refused before it was tried. Gold's lab history died this way.
+  const diag = { answered: false };
   const result = await fetchFree<Candle[]>({
     source: "yahoo",
     label: `行情代理 (${ticker} ${timeframe})`,
@@ -441,12 +456,14 @@ export async function fetchViaProxy(
     staleMs: CANDLE_STALE_MS,
     limit: YAHOO_LIMIT,
     gaps,
+    wasTransportFailure: () => !diag.answered,
     fn: async () => {
       // Candles are fresh for five hours (an H4 bucket plus slack); beyond
       // that the second host is asked and the freshest series wins.
       const res = await fetchYahooChart(
         `${encodeURIComponent(ticker)}?interval=${cfg.interval}&range=${cfg.range}`,
         5 * 60 * 60 * 1000,
+        diag,
       );
       if (!res || !Array.isArray(res.timestamp)) return null;
 

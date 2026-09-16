@@ -128,6 +128,17 @@ export function tryConsume(source: string, limit: QuotaLimit): QuotaDecision {
   return { ok: true };
 }
 
+/**
+ * Milliseconds until this source may be called again; 0 when it is free.
+ * For a deliberate fallback chain (a second range, an alias ticker) that
+ * would otherwise be refused by the backoff its own first attempt caused.
+ */
+export function backoffRemainingMs(source: string): number {
+  const s = states.get(source);
+  if (!s) return 0;
+  return Math.max(0, s.blockedUntil - Date.now());
+}
+
 /** Clears the backoff — the source is healthy again. */
 export function recordSuccess(source: string): void {
   const s = stateFor(source);
