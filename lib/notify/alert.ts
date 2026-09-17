@@ -1,6 +1,6 @@
 import { breadthOf } from "@/lib/analysis/evidence";
 import { SCALE_OUT_MIN_R } from "@/lib/analysis/lab-manage";
-import type { Grade, SignalRow, TradeSignal } from "@/types/signal";
+import type { Grade, SignalRow, TradePlan, TradeSignal } from "@/types/signal";
 import { getSetting } from "@/lib/settings";
 
 /**
@@ -56,6 +56,37 @@ function samePrice(a: number | null, b: number | null, reference: number): boole
   if (!(reference > 0)) return a === b;
   return Math.abs(a - b) / reference <= PRICE_TOLERANCE;
 }
+
+/**
+ * 同一張單 — two plans that describe the same trade within the price
+ * tolerance the re-announcement check uses. The hourly rescan rewrites the
+ * plan with a new generatedAt every hour; the levels drifting by less than
+ * PRICE_TOLERANCE is the same recommendation, not a new one, and whatever
+ * was already said about the first applies to the second.
+ */
+export function equivalentPlans(
+  a: { direction: "long" | "short"; plan: Pick<TradePlan, "entry" | "stop_loss" | "take_profit"> } | null | undefined,
+  b: { direction: "long" | "short"; plan: Pick<TradePlan, "entry" | "stop_loss" | "take_profit"> } | null | undefined,
+): boolean {
+  if (!a || !b || a.direction !== b.direction) return false;
+  const ref = b.plan.entry ?? a.plan.entry ?? 0;
+  return (
+    samePrice(a.plan.entry, b.plan.entry, ref) &&
+    samePrice(a.plan.stop_loss, b.plan.stop_loss, ref) &&
+    samePrice(a.plan.take_profit, b.plan.take_profit, ref)
+  );
+}
+
+/**
+ * The first-writer-wins key that says "this plan's recommendation has been
+ * pushed". Written by whichever route sends it first — the refresh sweep in
+ * the normal case, the monitor when it starts tracking a plan the refresh
+ * had to keep quiet about (market closed, another position open on the
+ * symbol, or a rescan that judged it "unchanged" from one that was never
+ * sent). Keyed by the plan's generatedAt; equivalent plans across rescans
+ * inherit the flag on the tracked snapshot instead (see equivalentPlans).
+ */
+export const recommendationKey = (symbol: string) => `signal-pushed:${symbol}`;
 
 export interface AlertDecision {
   alert: boolean;

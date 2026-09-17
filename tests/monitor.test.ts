@@ -599,7 +599,7 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   check("the monitor gates its pushes on whether the signal was announced",
     /events\.length > 0 && !paper && announced/.test(src), "route.ts");
   check("the decision is snapshotted when tracking starts, not re-derived each sweep",
-    /announced: paper \? false : pushWorthiness\(latest\)\.worthy/.test(src), "route.ts");
+    src.includes("const worthy = !paper && pushWorthiness(latest).worthy") && src.includes("announced: worthy && fresh"), "route.ts");
   check("a pre-existing row defaults to announced so a live trade cannot go silent",
     src.includes("tracked.announced ?? true"), "route.ts");
   check("and the sweep log says why the phone stayed quiet", src.includes("muted:"), "route.ts");

@@ -1,6 +1,6 @@
 import { check, report } from "./_harness";
 import { clearSettingsCache, isSecretSetting, isSettableKey } from "@/lib/settings";
-import { formatAlert, MIN_CONSENSUS_DIMENSIONS, shouldAlert } from "@/lib/notify/alert";
+import { formatAlert, MIN_CONSENSUS_DIMENSIONS, shouldAlert, equivalentPlans, recommendationKey } from "@/lib/notify/alert";
 import { notifyStatus } from "@/lib/notify";
 import type { SignalRow, TradeSignal, Grade } from "@/types/signal";
 
@@ -281,4 +281,39 @@ async function channelTests() {
   check("the alert threshold is not a secret", !isSecretSetting("ALERT_MIN_GRADE"));
 }
 
+// ── 先建議，再進場 ───────────────────────────────────────────────
+//
+// The fill push says 「此單來自 09-04 的訊號」; that signal must have been
+// sent. The refresh keeps a recommendation quiet in three legitimate cases
+// and the monitor then tracked the plan as announced — so the reader's first
+// word of the trade was its fill. The monitor now catches up at tracking
+// start, keyed first-writer-wins, and equivalent plans across rescans
+// inherit the flag instead of re-announcing.
+{
+  const a = { direction: "long" as const, plan: { entry: 2000, stop_loss: 1980, take_profit: 2080 } };
+  check("the same levels are the same plan", equivalentPlans(a, { ...a }));
+  check("a hair of drift is still the same plan",
+    equivalentPlans(a, { direction: "long", plan: { entry: 2000.2, stop_loss: 1980.1, take_profit: 2080.3 } }));
+  check("a moved entry is a new plan",
+    !equivalentPlans(a, { direction: "long", plan: { entry: 2010, stop_loss: 1980, take_profit: 2080 } }));
+  check("the other direction is a new plan",
+    !equivalentPlans(a, { direction: "short", plan: { entry: 2000, stop_loss: 1980, take_profit: 2080 } }));
+  check("nothing is equivalent to nothing", !equivalentPlans(null, a) && !equivalentPlans(a, undefined));
+  check("the key is per symbol", recommendationKey("XAUUSD") === "signal-pushed:XAUUSD");
+
+  const { readFileSync } = require("node:fs") as typeof import("node:fs");
+  const { join } = require("node:path") as typeof import("node:path");
+  const refresh = readFileSync(join(__dirname, "..", "app", "api", "refresh", "route.ts"), "utf8");
+  const monitor = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the refresh records the push before sending, and yields if the monitor got there first",
+    refresh.includes("seriesId: recommendationKey(meta.symbol)") && refresh.includes("if (!receipt.isNew) sendIt = false;"));
+  check("the monitor sends the recommendation itself when tracking starts on an unsent plan",
+    monitor.includes("訊號補發") && monitor.includes("seriesId: recommendationKey(meta.symbol)"));
+  check("an equivalent plan already tracked inherits the flag instead of re-announcing",
+    monitor.includes("existingRow?.tracked?.recommended === true && equivalentPlans(existingRow.tracked, next)"));
+  check("a stale plan is tracked silently — it expires next line anyway",
+    monitor.includes("announced: worthy && fresh"));
+}
+
 void channelTests().then(() => report("alerts"));
+

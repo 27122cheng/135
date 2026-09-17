@@ -5,7 +5,7 @@ import { readLatest } from "@/lib/latest-signals";
 import { fetchLatestPrice } from "@/lib/data-sources/yfinance";
 import { notifyAll } from "@/lib/notify";
 import { EVENT_BLACKOUT_MS, highImpactEventsBetween, upcomingHighImpactEvent } from "@/lib/analysis/timing";
-import { formatReleaseAlert, pushWorthiness } from "@/lib/notify/alert";
+import { equivalentPlans, formatAlert, formatReleaseAlert, pushWorthiness, recommendationKey } from "@/lib/notify/alert";
 import { ingestReleases } from "@/lib/analysis/data-release";
 import { withUserKeys } from "@/lib/api-keys";
 import { storedApiKeys } from "@/lib/settings";
@@ -14,6 +14,7 @@ import {
   advancePlan,
   formatMonitorAlert,
   INITIAL_MEMORY,
+  PENDING_ENTRY_MAX_HOURS,
   regimeBrokenFor,
   type MonitorMemory,
 } from "@/lib/monitor/plan-state";
@@ -245,11 +246,54 @@ export async function GET(request: Request) {
         if (inFlight(openPaper)) previous = openPaper;
       }
 
+      // The row this plan will live in, read before the snapshot is built:
+      // an equivalent plan already sitting there carries whether its
+      // recommendation was sent, and that must not be re-decided.
+      const stateKeyEarly = paper ? `${meta.symbol}:ref` : meta.symbol;
+      const existingRow = previous ?? (await store.getMonitorState(stateKeyEarly).catch(() => null));
+
+      // 先建議，再進場 — the fill push names 「此單來自 09-04 的訊號」, and
+      // that signal must have reached the phone first. The refresh sweep
+      // keeps a recommendation quiet in three legitimate cases (market
+      // closed, another position open on the symbol, "unchanged" from one
+      // that was itself never sent) and the monitor then started tracking
+      // it as announced — so the first thing the reader heard about the
+      // trade was its fill. Catch up here, once, at tracking start.
+      let catchUp: string[] = [];
       const tracked: TrackedPlan | null = previous?.tracked
         ? previous.tracked
-        : (() => {
+        : await (async () => {
             const plan = paper ? shadowPlan(latest) : latest.trade_plan;
             if (!plan) return null;
+            const worthy = !paper && pushWorthiness(latest).worthy;
+            const ageMs = Date.now() - Date.parse(latest.generated_at);
+            const fresh = Number.isFinite(ageMs) && ageMs <= PENDING_ENTRY_MAX_HOURS * 3_600_000;
+            const next = { direction: latest.direction, plan };
+            const inherited =
+              existingRow?.tracked?.recommended === true && equivalentPlans(existingRow.tracked, next);
+            let recommended = inherited;
+            if (worthy && fresh && !inherited) {
+              const receipt = await store
+                .recordRelease({
+                  seriesId: recommendationKey(meta.symbol),
+                  period: latest.generated_at,
+                  value: 0,
+                  previousValue: null,
+                  estimate: null,
+                })
+                .catch(() => ({ isNew: false }));
+              if (receipt.isNew) {
+                const results = await notifyAll(
+                  formatAlert(
+                    latest,
+                    "訊號補發：開始追蹤此單時尚未推播過（產生時休市、或當時另有持倉）",
+                    appUrl,
+                  ),
+                );
+                catchUp = results.filter((r) => r.ok).map((r) => r.channel);
+              }
+              recommended = true;
+            }
             return {
               direction: latest.direction,
               grade: latest.grade,
@@ -258,8 +302,12 @@ export async function GET(request: Request) {
               // Decided once, when tracking starts, and carried for the life
               // of the trade — a plan outlives the analysis that opened it,
               // and re-deciding each sweep would start or stop the messages
-              // halfway through a position.
-              announced: paper ? false : pushWorthiness(latest).worthy,
+              // halfway through a position. A plan too old to be worth a
+              // recommendation is tracked silently: it expires on the next
+              // line anyway, and 掛單逾時 about an order nobody was told to
+              // place is noise.
+              announced: worthy && fresh,
+              recommended,
               // The regime the playbook needs, so the monitor can tell when
               // it ends. Only the two regimes with a playbook that can end.
               regime:
@@ -516,7 +564,7 @@ export async function GET(request: Request) {
         priceAgeMinutes: Math.round(quote.ageMinutes),
         state: next.state,
         events: events.map((e) => e.kind),
-        notified,
+        notified: [...catchUp.map((c) => `${c}:建議補發`), ...notified],
         openR,
         protectedAtEntry,
         // Why the phone stayed quiet about a real event, in the sweep log —

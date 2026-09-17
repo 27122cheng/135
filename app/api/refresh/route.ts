@@ -6,7 +6,7 @@ import { notifyAll } from "@/lib/notify";
 import type { IngestedRelease } from "@/lib/analysis/data-release";
 import { runScan, storeScan } from "@/lib/scan";
 import { advanceLedger } from "@/lib/lab-forward-runner";
-import { configuredMinGrade, formatAlert, shouldAlert } from "@/lib/notify/alert";
+import { configuredMinGrade, formatAlert, recommendationKey, shouldAlert } from "@/lib/notify/alert";
 import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
@@ -149,6 +149,23 @@ export async function GET(request: Request) {
           })
           .catch(() => ({ isNew: true }));
         sendIt = receipt.isNew;
+      }
+      if (sendIt && signal.trade_plan.stance === "enter") {
+        // 先記再發 — the monitor can also send this plan's recommendation
+        // (when it starts tracking one the refresh had kept quiet). First
+        // writer wins; a lost race costs one duplicate at worst, never a
+        // silence. Fails open: a record that cannot be written must not
+        // silence a real recommendation.
+        const receipt = await store
+          .recordRelease({
+            seriesId: recommendationKey(meta.symbol),
+            period: signal.generated_at,
+            value: 0,
+            previousValue: null,
+            estimate: null,
+          })
+          .catch(() => ({ isNew: true }));
+        if (!receipt.isNew) sendIt = false;
       }
       if (sendIt) {
         // A failing alert must not fail the refresh that produced it — the
