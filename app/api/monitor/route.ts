@@ -13,6 +13,7 @@ import { json } from "@/lib/json-response";
 import {
   advancePlan,
   formatMonitorAlert,
+  ENTRY_ARM_MS,
   INITIAL_MEMORY,
   PENDING_ENTRY_MAX_HOURS,
   regimeBrokenFor,
@@ -272,6 +273,11 @@ export async function GET(request: Request) {
             const inherited =
               existingRow?.tracked?.recommended === true && equivalentPlans(existingRow.tracked, next);
             let recommended = inherited;
+            // When the recommendation went out — the fill is armed one
+            // minute after it. Inherited from an equivalent plan; stamped
+            // now for a catch-up; read back from the first-writer record
+            // when the refresh sent it (its first_seen_at is the push time).
+            let recommendedAt: string | null = inherited ? (existingRow?.tracked?.recommendedAt ?? null) : null;
             if (worthy && fresh && !inherited) {
               const receipt = await store
                 .recordRelease({
@@ -291,6 +297,12 @@ export async function GET(request: Request) {
                   ),
                 );
                 catchUp = results.filter((r) => r.ok).map((r) => r.channel);
+                recommendedAt = new Date().toISOString();
+              } else {
+                const sent = (await store.recentReleases(PENDING_ENTRY_MAX_HOURS + 24).catch(() => [])).find(
+                  (r) => r.seriesId === recommendationKey(meta.symbol) && r.period === latest.generated_at,
+                );
+                recommendedAt = sent?.firstSeenAt ?? new Date().toISOString();
               }
               recommended = true;
             }
@@ -308,6 +320,7 @@ export async function GET(request: Request) {
               // place is noise.
               announced: worthy && fresh,
               recommended,
+              recommendedAt,
               // The regime the playbook needs, so the monitor can tell when
               // it ends. Only the two regimes with a playbook that can end.
               regime:
@@ -371,8 +384,17 @@ export async function GET(request: Request) {
       // Everything the market did while nobody was looking. Only for a plan
       // already being watched: a first sighting has no gap to cover, and
       // treating one as if it did would fill plans on history.
+      // 建議發出後一分鐘 — the fill may only be judged on price seen after
+      // the recommendation had a minute to be acted on; the catch-up window
+      // is bounded the same way so a dip before the push never fills.
+      const recommendedMs = tracked.recommendedAt ? Date.parse(tracked.recommendedAt) : NaN;
+      const armedFromMs = Number.isFinite(recommendedMs) ? recommendedMs + ENTRY_ARM_MS : NaN;
+      const entryArmed = !Number.isFinite(armedFromMs) || Date.now() >= armedFromMs;
+      const windowFrom = Number.isFinite(armedFromMs)
+        ? new Date(Math.max(Date.parse(tracked.generatedAt), armedFromMs)).toISOString()
+        : tracked.generatedAt;
       const window = samePlan
-        ? await missedWindow(meta, previous?.updatedAt, tracked.generatedAt, gaps)
+        ? await missedWindow(meta, previous?.updatedAt, windowFrom, gaps)
         : null;
 
       // 掛單已掛多久 — from the snapshot's own birth, which is the only stable
@@ -389,6 +411,7 @@ export async function GET(request: Request) {
         structure,
         window,
         planAgeHours,
+        entryArmed,
         eventAhead: eventAhead ? { label: eventAhead.label, minutesAway: eventAhead.minutesAway } : null,
       });
 

@@ -127,6 +127,14 @@ function PositionCard({ row }: { row: PositionRow }) {
         </div>
       </dl>
 
+      {row.state === "waiting" && (
+        <p className="mt-2 text-[11px] text-neutral-500">
+          等待回踩到進場價。
+          {row.recommendedAt ? `建議已於 ${row.recommendedAt.slice(5, 16).replace("T", " ")} UTC 推播，一分鐘後開始判定成交。` : "建議尚未推播。"}
+          {row.validUntil ? `掛單有效至 ${row.validUntil.slice(5, 16).replace("T", " ")} UTC，未回踩自動撤單。` : ""}
+        </p>
+      )}
+
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-neutral-500">
         {row.addOnsFilled > 0 && <span>已加倉 {row.addOnsFilled} 段</span>}
         {row.openedAt && <span>計畫時間 {new Date(row.openedAt).toLocaleString("zh-TW")}</span>}

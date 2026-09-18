@@ -43,6 +43,28 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
   };
 }
 
+// ── 紙上追蹤不教方向 ─────────────────────────────────────────────
+//
+// A paper stop-out proves the gate was right to stand aside; letting it
+// raise the direction threshold punishes a signal already refused. Its
+// entry/stop/event lessons transfer; its direction lessons do not.
+{
+  const paper = (tag: "S1" | "S3" | "S7") =>
+    entry({ stop_reason_tag: tag, severity: 4, review_note: "[自動追蹤][參考價位紙上追蹤] 觸及停損" });
+  const real = (tag: "S1" | "S3") =>
+    entry({ stop_reason_tag: tag, severity: 4, review_note: "[自動追蹤] 觸及停損" });
+  const s1Paper = summariseTags([paper("S1"), paper("S1"), paper("S1")]);
+  check("three paper S1 stop-outs count for nothing", !s1Paper.some((t) => t.tag === "S1"), s1Paper);
+  check("and trigger no direction intervention",
+    computeInterventions([paper("S1"), paper("S1"), paper("S1")]).biasScoreThresholdBump === 0);
+  const s3Paper = summariseTags([paper("S3"), paper("S3"), paper("S3")]);
+  check("three paper S3 stop-outs still teach the stop buffer", s3Paper.find((t) => t.tag === "S3")?.count === 3, s3Paper);
+  check("a paper S7 does not force no-trade on macro conflict",
+    !summariseTags([paper("S7"), paper("S7"), paper("S7")]).some((t) => t.tag === "S7"));
+  const mixed = summariseTags([real("S1"), real("S1"), paper("S1"), real("S1")]);
+  check("real S1 rows count, the paper one among them does not", mixed.find((t) => t.tag === "S1")?.count === 3, mixed);
+}
+
 // ── 期望值 — the number 勝率 gets mistaken for ────────────────────
 {
   const auto = (result: "win" | "loss", pnl: number) =>

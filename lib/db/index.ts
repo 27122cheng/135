@@ -227,6 +227,12 @@ export interface TrackedPlan {
    */
   recommended?: boolean;
   /**
+   * 建議推播的時間（ISO）— the fill is judged only on price seen at least
+   * ENTRY_ARM_MS after this (lib/monitor/plan-state.ts). Null for paper
+   * plans and for plans nobody was told about.
+   */
+  recommendedAt?: string | null;
+  /**
    * 這筆計畫的打法需要的行情性質 — from the thesis's playbook at tracking
    * time. The monitor checks ER(20) against it every sweep and exits an
    * unproven position when the regime ends (lib/monitor/plan-state.ts,

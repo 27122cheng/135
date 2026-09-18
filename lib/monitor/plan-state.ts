@@ -41,6 +41,14 @@ export type PlanState =
 export const PENDING_ENTRY_MAX_HOURS = 48;
 
 /**
+ * 建議發出後一分鐘內不成交 — the operator's rule. A recommendation and its
+ * fill arriving in the same breath reads as one event described twice, and
+ * leaves no time to actually place the order. The fill is judged only on
+ * price seen at least this long after the recommendation went out.
+ */
+export const ENTRY_ARM_MS = 60_000;
+
+/**
  * 沒回踩就跑掉了 — how far (in R) price may run in the trade's favour past a
  * pending entry before the order is pulled.
  *
@@ -139,6 +147,13 @@ export interface MonitorInput {
    * unknown never expires anything.
    */
   planAgeHours?: number | null;
+  /**
+   * 掛單已就位 — false while the recommendation went out less than
+   * ENTRY_ARM_MS ago (or has not gone out yet). A waiting plan then does not
+   * fill this sweep; everything else (expiry, cancellation) still applies.
+   * Absent means armed.
+   */
+  entryArmed?: boolean;
   /**
    * 數據前 — a clock-derivable high-impact release inside the blackout
    * window, when there is one. While set: a position ≥ PRE_EVENT_PROTECT_R
@@ -301,7 +316,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
         ],
       };
     }
-    if (!entryFilled(direction, adverse, plan.entry)) {
+    if (input.entryArmed === false || !entryFilled(direction, adverse, plan.entry)) {
       return { memory: { state, addOnsFilled, activeStop }, events };
     }
     state = "entered";
@@ -637,7 +652,7 @@ export function formatMonitorAlert(
     } | null;
   } = {},
 ): string {
-  const lines = [`<b>${symbol} ${direction === "long" ? "做多 ▲" : "做空 ▼"}</b>`];
+  const lines = [`${direction === "long" ? "🟢" : "🔴"} <b>${symbol} ${direction === "long" ? "做多 ▲" : "做空 ▼"}</b>`];
 
   // Which trade this is about. A push that names a level without naming the
   // position it belongs to reads as a recommendation out of nowhere —
@@ -696,10 +711,7 @@ export function formatMonitorAlert(
     lines.push(`<i>已寫入交易日誌，下一次訊號會帶著這個結論建立。</i>`);
   }
 
-  lines.push(
-    "",
-    `<i>價格延遲約 ${Math.round(priceAgeMinutes)} 分鐘（免費資料源），僅適用 H4/D1 級別的部位管理</i>`,
-  );
+  lines.push("", `<i>⏱ 價格延遲約 ${Math.round(priceAgeMinutes)} 分鐘｜H4/D1 級別部位管理</i>`);
   if (appUrl) lines.push(appUrl);
   return lines.join("\n");
 }

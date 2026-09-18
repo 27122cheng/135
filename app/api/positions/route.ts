@@ -4,6 +4,7 @@ import { getSignalStore, type MonitorRow } from "@/lib/db";
 import { readLatest } from "@/lib/latest-signals";
 import { usdExposure } from "@/lib/board-row";
 import { json } from "@/lib/json-response";
+import { PENDING_ENTRY_MAX_HOURS } from "@/lib/monitor/plan-state";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,10 @@ export interface PositionRow {
   /** 紙上追蹤 — a reference plan nobody was told to take. */
   paper: boolean;
   openedAt: string | null;
+  /** 掛單有效至 — a waiting plan is pulled after PENDING_ENTRY_MAX_HOURS. */
+  validUntil: string | null;
+  /** When the recommendation was pushed; the fill arms one minute later. */
+  recommendedAt: string | null;
 }
 
 function toRow(
@@ -88,6 +93,11 @@ function toRow(
     openR,
     paper,
     openedAt: tracked.generatedAt ?? null,
+    validUntil: (() => {
+      const t = tracked.generatedAt ? Date.parse(tracked.generatedAt) : NaN;
+      return Number.isFinite(t) ? new Date(t + PENDING_ENTRY_MAX_HOURS * 3_600_000).toISOString() : null;
+    })(),
+    recommendedAt: tracked.recommendedAt ?? null,
   };
 }
 

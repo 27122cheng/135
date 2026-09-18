@@ -205,6 +205,14 @@ function stored(s: TradeSignal): SignalRow {
   // monitor will do at every branch, not just where three prices sit.
   check("spells out the management playbook",
     text.includes("先平一半") && text.includes("2R 保本") && text.includes("CHoCH"), text);
+  // 乾淨、簡單、該有的一眼看到 — and the two rules the reader must know
+  // before touching the order.
+  check("says not to enter inside the first minute", text.includes("60 秒內不進場"), text);
+  check("names the order's validity deadline", text.includes("掛單有效至") && text.includes("UTC"), text);
+  check("gives the stop distance for sizing", text.includes("停損距離 20.00"), text);
+  check("prices carry their percent from entry", text.includes("-1.00%") && text.includes("+2.50%"), text);
+  check("the card opens with a direction marker", text.startsWith("🟢"), text.slice(0, 20));
+  check("a short opens red", formatAlert(signal({ direction: "short" }), "r").startsWith("🔴"));
 
   // 實測證據 rides with the recommendation when the plan carries a backtest.
   const backed = signal();

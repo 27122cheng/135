@@ -774,4 +774,26 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
       memory: { state: "entered", addOnsFilled: 0, activeStop: 1980 } }).memory.state !== "cancelled");
 }
 
+// ── 建議發出後一分鐘內不成交 ──────────────────────────────────────
+{
+  const { ENTRY_ARM_MS } = require("@/lib/monitor/plan-state") as typeof import("@/lib/monitor/plan-state");
+  const at = (armed: boolean | undefined) =>
+    advancePlan({ direction: "long", plan: plan(), price: 1995, priceAgeMinutes: 15, memory: INITIAL_MEMORY, entryArmed: armed });
+  check("a price at the entry does not fill while the order is not yet armed", at(false).memory.state === "waiting");
+  check("and reports nothing", at(false).events.length === 0);
+  check("armed, the same price fills", at(true).memory.state === "entered");
+  check("absent means armed", at(undefined).memory.state === "entered");
+  check("the arm is one minute", ENTRY_ARM_MS === 60_000);
+  // Expiry and cancellation still apply to an unarmed order.
+  const stale = advancePlan({ direction: "long", plan: plan(), price: 1995, priceAgeMinutes: 15, memory: INITIAL_MEMORY, entryArmed: false, planAgeHours: 100 });
+  check("an unarmed but stale order still expires", stale.memory.state === "expired");
+  const route = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the route arms the fill one minute after the recommendation",
+    route.includes("recommendedMs + ENTRY_ARM_MS") && route.includes("entryArmed,"));
+  check("and bounds the catch-up window the same way, so a dip before the push never fills",
+    route.includes("Math.max(Date.parse(tracked.generatedAt), armedFromMs)"));
+  check("the recommendation time is stamped on the tracked plan",
+    route.includes("recommendedAt,") && route.includes("recommendedAt = new Date().toISOString()"));
+}
+
 report("monitor + add-ons");
