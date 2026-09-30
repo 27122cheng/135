@@ -7,6 +7,7 @@ import type { AppliedIntervention } from "./journal";
 // Type-only, so it is erased at compile time and the modules stay acyclic at
 // runtime: thesis.ts imports this file's types, this file imports only its type.
 import type { Thesis } from "@/lib/analysis/thesis";
+import type { ContextRecord } from "@/lib/journal/context-record";
 
 /**
  * H4 / D1 / W1 only. Intraday below 4h is deliberately out of scope: the free
@@ -473,6 +474,13 @@ export interface TradeSignal {
    * for this symbol yet.
    */
   forward_evidence?: ForwardEvidence | null;
+  /**
+   * 情境實績 — what the system's own real trades in this signal's situation
+   * (confidence band, regime, session, grade) have paid, and whether that
+   * record forbids the entry. See lib/journal/context-record.ts. Null until
+   * the journal holds real rows with context markers.
+   */
+  context_record?: ContextRecord | null;
   data_gaps: string[];
 }
 
@@ -519,6 +527,13 @@ export interface LabGate {
   out_of_sample_trades: number;
   /** True when this gate is what withdrew an otherwise-enterable plan. */
   blocked: boolean;
+  /**
+   * 採用後的實績 — the condition's own forward record since it was adopted.
+   * `probation` means that record has turned negative over a real sample:
+   * the gate then stops blocking on it and it stops voting, until it is
+   * re-verified. Absent when the ledger holds nothing since adoption.
+   */
+  health?: { resolved: number; hitRate: number | null; expectancyR: number | null; probation: boolean } | null;
 }
 
 /** Shape of a row in the Supabase `signals` table (see supabase/schema.sql). */

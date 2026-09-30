@@ -1414,6 +1414,27 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
           />
         )}
 
+      {/* 情境實績 — one glance: have trades like this one paid? */}
+      {signal.context_record && signal.context_record.lines.length > 0 && (
+        <div
+          className={`rounded-xl border p-3 ${
+            signal.context_record.veto ? "border-red-500/40 bg-red-500/5" : "border-neutral-800 bg-neutral-900/40"
+          }`}
+        >
+          <p className="text-xs font-medium text-neutral-200">
+            情境實績{signal.context_record.veto && <span className="ml-2 text-red-300">— 此情境實測在賠錢，本次不進場</span>}
+          </p>
+          <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-neutral-400">
+            {signal.context_record.lines.map((l, i) => (
+              <li key={i}>{l}</li>
+            ))}
+          </ul>
+          <p className="mt-1 text-[11px] text-neutral-600">
+            系統自己的真實交易，依信心區間、行情性質、時段、評等分桶的每筆期望值。只會否決，不會加分。
+          </p>
+        </div>
+      )}
+
       {/* Directly under the plan: when the plan is a wait, this is often why. */}
       {signal.lab_gate && <LabGateCard gate={signal.lab_gate} />}
 

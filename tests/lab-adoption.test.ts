@@ -9,7 +9,11 @@ import {
   serializeAdoptions,
   upsertAdoption,
   type LabAdoption,
+  adoptionHealth,
+  describeGate,
+  PROBATION_MIN_RESOLVED,
 } from "@/lib/analysis/lab-adoption";
+import type { LabTradeRow } from "@/lib/db";
 import { CONDITIONS, WARMUP, runLab } from "@/lib/analysis/lab";
 import type { Candle } from "@/lib/data-sources/ohlcv";
 import type { LabFinding } from "@/lib/analysis/lab";
@@ -251,6 +255,61 @@ const adoption = (over: Partial<LabAdoption> = {}): LabAdoption => ({
   const opposing = adoptionEvidence([longAdoption, shortAdoption], { D1: down });
   check("an opposite-direction adoption votes the other way",
     opposing.length === 1 && opposing[0].direction === "short", opposing);
+}
+
+// ── 採用後的觀察期 ────────────────────────────────────────────────
+//
+// An adoption was verified on history and never re-checked. A condition
+// whose forward record turns negative after adoption stops gating and
+// stops voting until it is re-verified — the card says so.
+{
+  const adoption: LabAdoption = {
+    symbol: "XAUUSD", direction: "long", ids: ["ema-stack"], labels: ["均線排列"], timeframe: "D1",
+    inSample: { trades: 120, hitRate: 0.82 }, outOfSample: { trades: 60, hitRate: 0.8 },
+    floor: 0.8, bars: 2000, adoptedAt: "2026-06-01T00:00:00.000Z",
+  };
+  let n = 0;
+  const trade = (status: "win" | "loss" | "open", when: string, over: Partial<LabTradeRow> = {}): LabTradeRow => {
+    n++;
+    const entry = 2000, stop = 1980, target = 2060;
+    return {
+      id: `t-${n}`, symbol: "XAUUSD", direction: "long", conditionId: "ema-stack", entryBarTime: when,
+      entry, stop, target, atr: 20, horizonBars: 20, status,
+      exitPrice: status === "win" ? target : status === "loss" ? stop : null,
+      exitBarTime: status === "open" ? null : when, barsHeld: status === "open" ? null : 5,
+      openedAt: when, closedAt: status === "open" ? null : when, ...over,
+    };
+  };
+  const after = "2026-07-01T00:00:00.000Z";
+  const before = "2026-05-01T00:00:00.000Z";
+  const losing = Array.from({ length: PROBATION_MIN_RESOLVED }, () => trade("loss", after));
+  const h = adoptionHealth(adoption, losing);
+  check("a run of post-adoption losses reads as probation", h?.probation === true && h.resolved === PROBATION_MIN_RESOLVED, h);
+  check("with the numbers", h?.expectancyR !== null && (h?.expectancyR ?? 0) < 0 && h?.hitRate === 0, h);
+  check("losses before adoption do not count",
+    adoptionHealth(adoption, Array.from({ length: 30 }, () => trade("loss", before))) === null);
+  check("one short of the floor is not probation",
+    adoptionHealth(adoption, losing.slice(1))?.probation === false);
+  check("a positive record is not probation",
+    adoptionHealth(adoption, Array.from({ length: 25 }, (_, i) => trade(i % 2 ? "loss" : "win", after)))?.probation === false);
+  check("another condition's rows are ignored",
+    adoptionHealth(adoption, losing.map((t) => ({ ...t, conditionId: "rsi-oversold" }))) === null);
+  check("the other direction's rows are ignored",
+    adoptionHealth(adoption, losing.map((t) => ({ ...t, direction: "short" as const }))) === null);
+  check("no ledger, no health", adoptionHealth(adoption, undefined) === null && adoptionHealth(adoption, []) === null);
+
+  // The gate carries it, describes it, and evidence stops voting on it.
+  const candles = bars((i) => 100 + i, WARMUP + 5);
+  const gate = evaluateAdoption(adoption, candles, losing);
+  check("the gate carries the health", gate.health?.probation === true, gate.health);
+  check("and describes the probation", describeGate(gate).includes("觀察期") && describeGate(gate).includes("暫停作為閘門"), describeGate(gate));
+  const healthy = evaluateAdoption(adoption, candles);
+  check("without a ledger the gate is as before", healthy.health === null);
+  const { readFileSync } = require("node:fs") as typeof import("node:fs");
+  const { join } = require("node:path") as typeof import("node:path");
+  const builder = readFileSync(join(__dirname, "..", "lib", "signal-builder.ts"), "utf8");
+  check("the builder never blocks on a probation gate", builder.includes("if (gate.health?.probation) return;"));
+  check("and the evidence skips it", readFileSync(join(__dirname, "..", "lib", "analysis", "lab-adoption.ts"), "utf8").includes("if (gate.health?.probation) continue;"));
 }
 
 report("實驗室採用");

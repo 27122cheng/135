@@ -1,4 +1,6 @@
 import type { Candle } from "../data-sources/ohlcv";
+import { summariseForward } from "./lab-forward";
+import type { LabTradeRow } from "../db";
 import type { BiasItem, LabGate } from "@/types/signal";
 import { CONDITIONS, WARMUP, buildContext, type LabFinding, type LabTimeframe } from "./lab";
 import { readInternalSetting } from "../settings";
@@ -209,7 +211,55 @@ export function adoptionFromFinding(
  * checked at the close of the last completed bar — the same instant the lab
  * used, not an intrabar reading the backtest never saw.
  */
-export function evaluateAdoption(adoption: LabAdoption, candles: Candle[] | undefined): LabGate {
+/** Resolved forward trades since adoption before the record may put a condition on probation. */
+export const PROBATION_MIN_RESOLVED = 20;
+
+/**
+ * 採用後的實績 — the adopted condition's own forward record since the day
+ * it was adopted. An adoption was verified on history; nothing re-checked
+ * it afterwards, so a condition whose edge had decayed kept gating and
+ * kept voting on the strength of a sample that no longer described it.
+ * Pooled over the combination's conditions, in the adoption's direction,
+ * on rows opened at or after adoption. Probation when the pooled record
+ * has PROBATION_MIN_RESOLVED resolved trades and a negative expectancy.
+ */
+export function adoptionHealth(
+  adoption: LabAdoption,
+  labTrades: LabTradeRow[] | undefined,
+): NonNullable<LabGate["health"]> | null {
+  if (!labTrades?.length) return null;
+  const since = Date.parse(adoption.adoptedAt);
+  const ids = new Set(adoption.ids);
+  const rows = labTrades.filter(
+    (t) =>
+      t.symbol === adoption.symbol &&
+      t.direction === adoption.direction &&
+      ids.has(t.conditionId) &&
+      Number.isFinite(since) &&
+      Date.parse(t.entryBarTime) >= since,
+  );
+  if (rows.length === 0) return null;
+  const stats = summariseForward(rows);
+  const resolved = stats.reduce((n, s) => n + s.resolved, 0);
+  const wins = stats.reduce((n, s) => n + s.wins, 0);
+  const losses = stats.reduce((n, s) => n + s.losses, 0);
+  const weighted = stats.filter((s) => s.expectancyR !== null && s.resolved > 0);
+  const rTotal = weighted.reduce((n, s) => n + (s.expectancyR as number) * s.resolved, 0);
+  const rCount = weighted.reduce((n, s) => n + s.resolved, 0);
+  const expectancyR = rCount > 0 ? Math.round((rTotal / rCount) * 100) / 100 : null;
+  return {
+    resolved,
+    hitRate: wins + losses > 0 ? Math.round((wins / (wins + losses)) * 1000) / 1000 : null,
+    expectancyR,
+    probation: resolved >= PROBATION_MIN_RESOLVED && expectancyR !== null && expectancyR < 0,
+  };
+}
+
+export function evaluateAdoption(
+  adoption: LabAdoption,
+  candles: Candle[] | undefined,
+  labTrades?: LabTradeRow[],
+): LabGate {
   const base: LabGate = {
     ids: [...adoption.ids],
     labels: [...adoption.labels],
@@ -223,6 +273,7 @@ export function evaluateAdoption(adoption: LabAdoption, candles: Candle[] | unde
     out_of_sample_hit_rate: adoption.outOfSample.hitRate,
     out_of_sample_trades: adoption.outOfSample.trades,
     blocked: false,
+    health: adoptionHealth(adoption, labTrades),
   };
 
   if (!candles || candles.length <= WARMUP) {
@@ -275,11 +326,14 @@ export function evaluateAdoption(adoption: LabAdoption, candles: Candle[] | unde
 export function adoptionEvidence(
   adoptions: LabAdoption[],
   candles: { D1?: Candle[]; H4?: Candle[] },
+  labTrades?: LabTradeRow[],
 ): BiasItem[] {
   const items: BiasItem[] = [];
   for (const adoption of adoptions) {
-    const gate = evaluateAdoption(adoption, candles[adoption.timeframe]);
+    const gate = evaluateAdoption(adoption, candles[adoption.timeframe], labTrades);
     if (!gate.met) continue;
+    // A condition on probation has stopped earning its vote.
+    if (gate.health?.probation) continue;
     const oosPct = Math.round(adoption.outOfSample.hitRate * 100);
     items.push({
       dimension: "技術面",
@@ -319,6 +373,13 @@ export async function loadAdoptionsFor(symbol: string, gaps: string[]): Promise<
 /** One line summarising what the gate did, for the plan's wait_for text. */
 export function describeGate(gate: LabGate): string {
   if (gate.unevaluable) return gate.unevaluable;
+  if (gate.health?.probation) {
+    return (
+      `已採用條件進入觀察期：採用後 ${gate.health.resolved} 筆前進測試期望值 ${gate.health.expectancyR}R` +
+      `${gate.health.hitRate !== null ? `（勝率 ${Math.round(gate.health.hitRate * 100)}%）` : ""}，` +
+      `實績已轉負，暫停作為閘門與投票，需重新驗證後再採用`
+    );
+  }
   const unmet = gate.checks.filter((c) => !c.met).map((c) => c.label);
   if (unmet.length === 0) {
     return `已採用條件全數符合（${gate.labels.join(" ＋ ")}）`;

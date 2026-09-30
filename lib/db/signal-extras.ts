@@ -41,6 +41,7 @@ export function signalExtras(signal: TradeSignal): Record<string, unknown> {
     // completeSignal, which is a loss of record, not a correction.
     thesis: signal.thesis ?? null,
     forward_evidence: signal.forward_evidence ?? null,
+    context_record: signal.context_record ?? null,
     direction_tie: signal.direction_tie ?? false,
     chart_patterns: signal.chart_patterns ?? [],
     news_digest: signal.news_digest ?? null,

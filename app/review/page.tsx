@@ -16,6 +16,7 @@ import { SeverityTrend, StopReasonDonut, TAG_COLORS } from "@/components/review-
 import { JournalForm } from "@/components/journal-form";
 import type { RiskAdvice } from "@/lib/journal/advice";
 import type { ExitAdvice, ExitKindStat } from "@/lib/journal/exit-kind";
+import type { ContextBucket } from "@/lib/journal/context-record";
 import { SiteNav } from "@/components/site-nav";
 
 interface BlockerRow {
@@ -69,6 +70,7 @@ interface ReviewResponse extends ReviewStats {
   riskAdvice?: RiskAdvice[];
   exitKinds?: { real: ExitKindStat[]; paper: ExitKindStat[] };
   exitAdvice?: ExitAdvice[];
+  contextBuckets?: ContextBucket[];
   quarantine?: {
     fabricated: number;
     duplicates: number;
@@ -224,6 +226,46 @@ export default function ReviewPage() {
                   ))}
                 </ul>
               )}
+            </Section>
+          )}
+
+          {/* 情境實績 — in which situations does this system actually make
+              money. The buckets the context veto reads; a negative bucket
+              with a real sample withdraws entries in that situation. */}
+          {stats.contextBuckets && stats.contextBuckets.length > 0 && (
+            <Section title="各情境實績（系統的真實交易，依信心／行情／時段／評等）">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[11px] text-neutral-500">
+                    <th className="py-1 font-normal">情境</th>
+                    <th className="py-1 text-right font-normal">筆數</th>
+                    <th className="py-1 text-right font-normal">勝/敗</th>
+                    <th className="py-1 text-right font-normal">勝率</th>
+                    <th className="py-1 text-right font-normal">期望值%/筆</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.contextBuckets.map((b) => (
+                    <tr key={`${b.dimension}:${b.key}`} className="border-t border-neutral-800">
+                      <td className="py-1.5 text-neutral-300">
+                        {b.label}
+                        {b.trades >= 12 && b.expectancyPct < 0 && (
+                          <span className="ml-2 rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] text-red-300">否決中</span>
+                        )}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-neutral-400">{b.trades}</td>
+                      <td className="py-1.5 text-right font-mono text-neutral-400">{b.wins}/{b.losses}</td>
+                      <td className="py-1.5 text-right font-mono text-neutral-200">{b.hitRate === null ? "—" : `${b.hitRate}%`}</td>
+                      <td className={`py-1.5 text-right font-mono ${b.expectancyPct > 0 ? "text-emerald-400" : b.expectancyPct < 0 ? "text-red-400" : "text-neutral-400"}`}>
+                        {b.expectancyPct > 0 ? "+" : ""}{b.expectancyPct}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="mt-2 text-[11px] text-neutral-500">
+                滿 12 筆且期望值為負的情境會自動否決同情境的新進場；只會否決，不會加分。
+              </p>
             </Section>
           )}
 

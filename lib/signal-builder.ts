@@ -7,6 +7,7 @@ import { atr as computeAtr } from "./analysis/indicators";
 import { analyzeTechnical } from "./analysis/technical";
 import { EVENT_BLACKOUT_MS, analyzeTiming, upcomingHighImpactEvent } from "./analysis/timing";
 import { circuitBreaker, stopCooldown } from "./journal/risk-guard";
+import { confidenceBand, contextVerdict } from "./journal/context-record";
 import { buildThesis, playbookFor } from "./analysis/thesis";
 import { detectAllPatterns, patternContributions } from "./analysis/patterns";
 import { dedupeBiasItems } from "./analysis/evidence";
@@ -49,7 +50,7 @@ import { buildStopLoss, buildTakeProfits } from "./entry-exit";
 import { usableJournal } from "@/lib/journal/quarantine";
 import { getSignalStore } from "./db";
 import { fetchEconomicCalendar } from "./data-sources/finnhub";
-import {
+import { isMainSession,
   applyGradePenalties,
   assertNeverLoosened,
   computeCalibration,
@@ -490,7 +491,7 @@ async function buildSignalForSymbol(
   const labEvidence = adoptionEvidence(adoptions, {
     D1: d1?.candles,
     H4: h4?.candles,
-  });
+  }, labTrades);
 
   const rawBiasItems: BiasItem[] = [
     ...technical.biasItems,
@@ -1005,7 +1006,38 @@ async function buildSignalForSymbol(
     };
   }
 
-  applyLabGate(signal, adoptions, { D1: d1?.candles, H4: h4?.candles });
+  applyLabGate(signal, adoptions, { D1: d1?.candles, H4: h4?.candles }, labTrades);
+
+  // 情境實績 — what trades like this one have actually paid, on the book's
+  // own real rows, and a veto where that record is negative over a real
+  // sample. Attached whether or not it vetoes: the card and the push show
+  // the line so the reader knows in one glance. Book-wide: the situation is
+  // the unit, and twelve per symbol per bucket is a year away.
+  {
+    const record = contextVerdict(bookJournal, {
+      confidenceBand: confidenceBand(signal.confidence?.score ?? null),
+      regime: (signal.thesis?.playbook?.regime as "trending" | "ranging" | "transitional" | undefined) ?? null,
+      session: isMainSession(new Date()) ? "主時段" : "非主時段",
+      grade: signal.grade,
+    });
+    signal.context_record = record.lines.length > 0 || record.veto ? record : null;
+    if (signal.trade_plan.stance === "enter" && record.veto && record.reason) {
+      signal.downgrades = [...(signal.downgrades ?? []), record.reason];
+      signal.trade_plan = {
+        ...signal.trade_plan,
+        stance: "wait",
+        summary:
+          `${record.reason}。分析全部通過（這不是訊號變弱），是系統對自己實績的誠實：` +
+          `在這種情境下它過去沒有賺到錢，不該假裝這次不同。下方價位仍是分析算出的真實結構。`,
+        wait_for: `等這個情境的實績回到正值（更多同情境的真實交易結算後自動更新），或等情境改變。`,
+        entry: null,
+        stop_loss: null,
+        take_profit: null,
+        risk_reward: null,
+        add_ons: [],
+      };
+    }
+  }
 
   // 帳戶層級的兩道閘 — before the event blackout, for the same reason it
   // sits last: every analytical gate has passed, and what withdraws the trade
@@ -1129,6 +1161,7 @@ function applyLabGate(
   signal: TradeSignal,
   adoptions: LabAdoption[],
   candles: { D1: Candle[] | undefined; H4: Candle[] | undefined },
+  labTrades: LabTradeRow[] = [],
 ): void {
   // An adoption is scoped to a direction: a long combination says nothing about
   // whether a short is a good idea, so it must not gate one.
@@ -1138,8 +1171,12 @@ function applyLabGate(
   // The gate checks on the bars its evidence came from: a condition verified
   // on H4 is a claim about 4-hour bars, and checking it on a daily bar would
   // be answering a different question with the same words.
-  const gate = evaluateAdoption(adoption, candles[adoption.timeframe]);
+  const gate = evaluateAdoption(adoption, candles[adoption.timeframe], labTrades);
   signal.lab_gate = gate;
+  // 觀察期：a condition whose forward record turned negative since adoption
+  // may not withdraw a trade any more — it has not earned that either way.
+  // Shown on the card; never blocks; re-verify to restore it.
+  if (gate.health?.probation) return;
   if (gate.met || signal.trade_plan.stance !== "enter") return;
 
   gate.blocked = true;

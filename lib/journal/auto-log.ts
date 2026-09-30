@@ -7,6 +7,8 @@ import { fetchOHLCV } from "@/lib/data-sources/ohlcv";
 import { classifyR } from "@/lib/analysis/lab-manage";
 import { AUTO_MARKER, PAPER_MARKER } from "./markers";
 import { usableJournal } from "./quarantine";
+import { contextMarker } from "./context-record";
+import { isMainSession } from "./interventions";
 import type { CommodityMeta } from "@/types/signal";
 
 /**
@@ -207,7 +209,15 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
   const result: TradeResult =
     classifyR(moveR) === "scratch" ? "breakeven" : moveR > 0 ? "win" : "loss";
 
-  const markers = paper ? `${AUTO_MARKER}${PAPER_MARKER}` : AUTO_MARKER;
+  // 情境 rides in the note like the author markers do: the confidence band,
+  // the regime the thesis named and the session, so the journal can later
+  // say in which situations the system actually makes money.
+  const context = contextMarker({
+    confidenceScore: signal.confidence?.score ?? null,
+    regime: signal.thesis?.playbook?.regime ?? null,
+    mainSession: isMainSession(new Date(signal.generated_at)),
+  });
+  const markers = (paper ? `${AUTO_MARKER}${PAPER_MARKER}` : AUTO_MARKER) + context;
 
   /** The outcome every non-loss path reports — no S-tag, because S1–S8 classifies stop-outs. */
   const plainOutcome = (kind: string): ResolutionOutcome => ({

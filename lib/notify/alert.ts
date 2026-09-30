@@ -478,6 +478,9 @@ export function formatAlert(
     `📌 ${plan.summary}`,
     strongPoint ? `📰 ${strongPoint.point}` : null,
     evidence,
+    signal.context_record && signal.context_record.lines.length > 0
+      ? `📈 情境實績：${signal.context_record.lines.slice(0, 2).join("｜")}`
+      : null,
     `🛠 進場後：${scaleOut ? "觸及停利先平一半保本追蹤" : "觸及停利整筆出場"}｜2R 保本｜新 swing 移停｜反向 CHoCH 出場（監控自動提醒）`,
     plan.add_ons.length > 0 ? `➕ 加倉點 ${plan.add_ons.map((a) => fmt(a.price)).join(" / ")}（到達時提醒）` : null,
     plan.swing
