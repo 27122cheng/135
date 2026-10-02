@@ -4,6 +4,7 @@ import { summariseForward } from "@/lib/analysis/lab-forward";
 import { buildRiskAdvice } from "@/lib/journal/advice";
 import { exitKindAdvice, splitStreams, summariseExitKinds } from "@/lib/journal/exit-kind";
 import { contextBuckets } from "@/lib/journal/context-record";
+import { dimensionAccuracy } from "@/lib/journal/dimension-accuracy";
 import { computeEquityCurve, computeReviewStats, computeTrackRecord } from "@/lib/journal/stats";
 import { summariseTags, triggeredTags } from "@/lib/journal/interventions";
 import { partitionJournal, quarantineNote } from "@/lib/journal/quarantine";
@@ -133,6 +134,8 @@ export async function GET(request: Request) {
       // 情境實績 — the buckets the context veto reads, so the reader can see
       // which situations the system is actually good at.
       contextBuckets: contextBuckets(entries),
+      // 面向準確率 — which dimensions actually predict anything on this book.
+      dimensionAccuracy: dimensionAccuracy(entries),
       blockers: { census, scanned: scoped.length, windowDays: censusWindowDays },
       forward: {
         conditions: labStats.slice(0, 8),

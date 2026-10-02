@@ -481,6 +481,12 @@ export interface TradeSignal {
    * the journal holds real rows with context markers.
    */
   context_record?: ContextRecord | null;
+  /**
+   * 面向學習 — which dimensions had their weight halved this time for lack
+   * of predictive value on the book's own trades, and why. See
+   * lib/journal/dimension-accuracy.ts. Null when nothing was scaled.
+   */
+  dimension_learning?: { scaled: BiasDimension[]; notes: string[] } | null;
   data_gaps: string[];
 }
 

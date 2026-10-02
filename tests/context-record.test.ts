@@ -76,7 +76,7 @@ check("a row without a marker has no context but keeps its grade",
   const { join } = require("node:path") as typeof import("node:path");
   const builder = readFileSync(join(__dirname, "..", "lib", "signal-builder.ts"), "utf8");
   const autoLog = readFileSync(join(__dirname, "..", "lib", "journal", "auto-log.ts"), "utf8");
-  check("auto-log stamps the context on every row", autoLog.includes("contextMarker({") && autoLog.includes("+ context;"));
+  check("auto-log stamps the context on every row", autoLog.includes("contextMarker({") && autoLog.includes("+ context"));
   check("the builder attaches the record and vetoes on it", builder.includes("signal.context_record = record") && builder.includes("record.veto && record.reason"));
   const veto = builder.indexOf("contextVerdict(bookJournal");
   const guard = builder.indexOf("stopCooldown(symbolJournal");

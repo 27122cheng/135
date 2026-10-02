@@ -1274,6 +1274,66 @@ function TechnicalDetails({ items }: { items: BiasItem[] }) {
   );
 }
 
+/**
+ * 學習狀態 — the lab, the stop-loss learning, the context record and the
+ * dimension learning, each on one line, each linked to where its detail
+ * lives. These used to be four separate boxes scattered down the card, and
+ * three of them empty most of the time — which read as "nothing is linked"
+ * even while the gates were running. One strip says what is connected,
+ * what it is doing to THIS signal, and what is still accumulating.
+ */
+function LearningStrip({ signal }: { signal: TradeSignal }) {
+  const gate = signal.lab_gate;
+  const fe = signal.forward_evidence;
+  const labLine = gate
+    ? gate.health?.probation
+      ? `已採用條件進入觀察期（採用後 ${gate.health.resolved} 筆期望值 ${gate.health.expectancyR}R），本次不作閘門`
+      : gate.unevaluable
+        ? "已採用條件無法檢查（K 棒不足）"
+        : gate.met
+          ? `已採用條件全數成立（${gate.labels.join("＋")}）→ 投票 +2`
+          : gate.blocked
+            ? `已採用條件未成立（${gate.checks.filter((c) => !c.met).map((c) => c.label).join("、")}）→ 擋下進場`
+            : `已採用條件未成立（${gate.checks.filter((c) => !c.met).map((c) => c.label).join("、")}）`
+    : "尚未採用任何條件 → 到實驗室驗證並採用，成立時投票、不成立時擋單";
+  const feLine = fe
+    ? `前進證據：${fe.supporting.length} 條支持、${fe.opposing.length} 條反對（${fe.verifiedCount} 條已驗證）→ 計入信心度`
+    : "前進證據：帳本累積中（每個條件各自紙上下單，滿 20 筆結算後生效）";
+  const interventions = signal.interventions;
+  const ivLine =
+    interventions.length > 0
+      ? `干涉 ${interventions.length} 項生效：${interventions.map((i) => (i.tag ? `${i.tag} ` : "") + i.effect).join("；")}`
+      : "尚無干涉：近 30 筆內沒有原因達到觸發門檻（≥3 次且 severity ≥3）";
+  const ctx = signal.context_record;
+  const ctxLine = ctx && ctx.lines.length > 0 ? ctx.lines.slice(0, 3).join("｜") : "情境實績累積中（同情境滿 12 筆真實交易後生效）";
+  const dl = signal.dimension_learning;
+  const dimLine = dl && dl.scaled.length > 0 ? `${dl.scaled.join("、")} 無預測力，權重減半` : "六面向準確率累積中（同向滿 12 筆後自動調權）";
+
+  const Row = ({ label, href, text, tone }: { label: string; href: string; text: string; tone?: "warn" | "bad" | "good" }) => (
+    <li className="flex gap-2 text-[11px] leading-relaxed">
+      <Link href={href} className="w-16 shrink-0 text-neutral-500 hover:text-neutral-300">
+        {label} →
+      </Link>
+      <span className={tone === "bad" ? "text-red-300" : tone === "warn" ? "text-amber-300" : tone === "good" ? "text-emerald-300" : "text-neutral-300"}>
+        {text}
+      </span>
+    </li>
+  );
+
+  return (
+    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-3">
+      <p className="mb-1.5 text-xs font-medium text-neutral-200">學習狀態 — 這筆訊號被什麼修正過</p>
+      <ul className="flex flex-col gap-1">
+        <Row label="實驗室" href="/lab" text={labLine} tone={gate?.blocked ? "warn" : gate?.met ? "good" : undefined} />
+        <Row label="前進證據" href="/lab" text={feLine} />
+        <Row label="止損學習" href="/review" text={ivLine} tone={interventions.length > 0 ? "warn" : undefined} />
+        <Row label="情境實績" href="/review" text={ctx?.veto ? `否決：${ctx.reason}` : ctxLine} tone={ctx?.veto ? "bad" : undefined} />
+        <Row label="面向學習" href="/review" text={dimLine} tone={dl && dl.scaled.length > 0 ? "warn" : undefined} />
+      </ul>
+    </div>
+  );
+}
+
 function Section({
   title,
   children,
@@ -1414,35 +1474,25 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
           />
         )}
 
-      {/* 情境實績 — one glance: have trades like this one paid? */}
-      {signal.context_record && signal.context_record.lines.length > 0 && (
-        <div
-          className={`rounded-xl border p-3 ${
-            signal.context_record.veto ? "border-red-500/40 bg-red-500/5" : "border-neutral-800 bg-neutral-900/40"
-          }`}
-        >
-          <p className="text-xs font-medium text-neutral-200">
-            情境實績{signal.context_record.veto && <span className="ml-2 text-red-300">— 此情境實測在賠錢，本次不進場</span>}
-          </p>
-          <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-neutral-400">
-            {signal.context_record.lines.map((l, i) => (
-              <li key={i}>{l}</li>
-            ))}
-          </ul>
-          <p className="mt-1 text-[11px] text-neutral-600">
-            系統自己的真實交易，依信心區間、行情性質、時段、評等分桶的每筆期望值。只會否決，不會加分。
-          </p>
-        </div>
-      )}
-
-      {/* Directly under the plan: when the plan is a wait, this is often why. */}
-      {signal.lab_gate && <LabGateCard gate={signal.lab_gate} />}
-
-      {signal.interventions.length > 0 && <Interventions items={signal.interventions} />}
+      {/* 學習狀態 — one strip: lab, stop-loss learning, context, dimensions.
+          Detail for each lives on /lab and /review; the gate's own checklist
+          and the applied interventions are kept below, collapsed. */}
+      <LearningStrip signal={signal} />
 
       {/* 論點在最前面：行情性質決定打法，打法決定價位怎麼挑。讀者要能跟著
           「因為 A 且 B，所以 C，除非 D」走一遍，而不是只看到分數。 */}
       <ThesisCard signal={signal} />
+
+      {/* 深入分析 — everything below is the working behind the verdict:
+          the trader's view, the news, the full levels, regime, patterns,
+          technical readings, the six dimensions, the AI narrative, the
+          structures, every factor. It stays, collapsed: the card above
+          already answered what to do and why, and a reader who wants the
+          working opens it. */}
+      <Section title="深入分析（交易員視角、新聞、完整價位、結構、六面向、全部因子）">
+      <div className="flex flex-col gap-3">
+      {signal.lab_gate && <LabGateCard gate={signal.lab_gate} />}
+      {signal.interventions.length > 0 && <Interventions items={signal.interventions} />}
 
       {/* 頂級交易員視角在新聞之上：新聞是輸入，先有自己的看法才有判斷新聞的標準。 */}
       <TraderViewCard signal={signal} />
@@ -1671,6 +1721,9 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
             ))}
           </ul>
         )}
+      </Section>
+
+      </div>
       </Section>
 
       {/* Moved to the bottom and collapsed — it was burying the actual signal. */}

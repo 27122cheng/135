@@ -8,6 +8,7 @@ import { classifyR } from "@/lib/analysis/lab-manage";
 import { AUTO_MARKER, PAPER_MARKER } from "./markers";
 import { usableJournal } from "./quarantine";
 import { contextMarker } from "./context-record";
+import { dimensionMarker } from "./dimension-accuracy";
 import { isMainSession } from "./interventions";
 import type { CommodityMeta } from "@/types/signal";
 
@@ -217,7 +218,10 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
     regime: signal.thesis?.playbook?.regime ?? null,
     mainSession: isMainSession(new Date(signal.generated_at)),
   });
-  const markers = (paper ? `${AUTO_MARKER}${PAPER_MARKER}` : AUTO_MARKER) + context;
+  // 面向 rides alongside: which dimensions agreed with the direction, so the
+  // journal can later say which of them actually predict anything here.
+  const dims = dimensionMarker(signal.direction, signal.bias_items ?? []);
+  const markers = (paper ? `${AUTO_MARKER}${PAPER_MARKER}` : AUTO_MARKER) + context + dims;
 
   /** The outcome every non-loss path reports — no S-tag, because S1–S8 classifies stop-outs. */
   const plainOutcome = (kind: string): ResolutionOutcome => ({

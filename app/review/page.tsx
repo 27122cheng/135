@@ -17,6 +17,7 @@ import { JournalForm } from "@/components/journal-form";
 import type { RiskAdvice } from "@/lib/journal/advice";
 import type { ExitAdvice, ExitKindStat } from "@/lib/journal/exit-kind";
 import type { ContextBucket } from "@/lib/journal/context-record";
+import type { DimensionRecord } from "@/lib/journal/dimension-accuracy";
 import { SiteNav } from "@/components/site-nav";
 
 interface BlockerRow {
@@ -71,6 +72,7 @@ interface ReviewResponse extends ReviewStats {
   exitKinds?: { real: ExitKindStat[]; paper: ExitKindStat[] };
   exitAdvice?: ExitAdvice[];
   contextBuckets?: ContextBucket[];
+  dimensionAccuracy?: DimensionRecord[];
   quarantine?: {
     fabricated: number;
     duplicates: number;
@@ -265,6 +267,53 @@ export default function ReviewPage() {
               </table>
               <p className="mt-2 text-[11px] text-neutral-500">
                 滿 12 筆且期望值為負的情境會自動否決同情境的新進場；只會否決，不會加分。
+              </p>
+            </Section>
+          )}
+
+          {/* 面向準確率 — which of the six dimensions actually predict
+              anything on this book. A dimension whose agreement pays no
+              better than its disagreement over a real sample votes at half
+              weight from then on. */}
+          {stats.dimensionAccuracy && stats.dimensionAccuracy.length > 0 && (
+            <Section title="各面向預測準確率（同向時 vs 反向時，系統的真實交易）">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[11px] text-neutral-500">
+                    <th className="py-1 font-normal">面向</th>
+                    <th className="py-1 text-right font-normal">同向 筆數</th>
+                    <th className="py-1 text-right font-normal">同向 勝率</th>
+                    <th className="py-1 text-right font-normal">同向 期望值%</th>
+                    <th className="py-1 text-right font-normal">反向 筆數</th>
+                    <th className="py-1 text-right font-normal">反向 期望值%</th>
+                    <th className="py-1 text-right font-normal">預測力</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.dimensionAccuracy.map((d) => (
+                    <tr key={d.dimension} className="border-t border-neutral-800">
+                      <td className="py-1.5 text-neutral-300">
+                        {d.dimension}
+                        {d.scale < 1 && (
+                          <span className="ml-2 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">權重減半中</span>
+                        )}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-neutral-400">{d.agree.trades}</td>
+                      <td className="py-1.5 text-right font-mono text-neutral-200">{d.agree.hitRate === null ? "—" : `${d.agree.hitRate}%`}</td>
+                      <td className={`py-1.5 text-right font-mono ${(d.agree.expectancyPct ?? 0) > 0 ? "text-emerald-400" : (d.agree.expectancyPct ?? 0) < 0 ? "text-red-400" : "text-neutral-400"}`}>
+                        {d.agree.expectancyPct === null ? "—" : d.agree.expectancyPct}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-neutral-400">{d.oppose.trades}</td>
+                      <td className="py-1.5 text-right font-mono text-neutral-400">{d.oppose.expectancyPct === null ? "—" : d.oppose.expectancyPct}</td>
+                      <td className={`py-1.5 text-right font-mono ${(d.edgePct ?? 0) > 0 ? "text-emerald-400" : (d.edgePct ?? 0) < 0 ? "text-red-400" : "text-neutral-400"}`}>
+                        {d.edgePct === null ? "—" : `${d.edgePct > 0 ? "+" : ""}${d.edgePct}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="mt-2 text-[11px] text-neutral-500">
+                預測力 = 同向時每筆期望值 − 反向時每筆期望值。同向滿 12 筆而期望值 ≤ 0，或不比反向好，該面向之後的投票權重自動減半；只會減，不會加。
               </p>
             </Section>
           )}

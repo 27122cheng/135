@@ -8,6 +8,7 @@ import { analyzeTechnical } from "./analysis/technical";
 import { EVENT_BLACKOUT_MS, analyzeTiming, upcomingHighImpactEvent } from "./analysis/timing";
 import { circuitBreaker, stopCooldown } from "./journal/risk-guard";
 import { confidenceBand, contextVerdict } from "./journal/context-record";
+import { applyDimensionScales, dimensionAccuracy } from "./journal/dimension-accuracy";
 import { buildThesis, playbookFor } from "./analysis/thesis";
 import { detectAllPatterns, patternContributions } from "./analysis/patterns";
 import { dedupeBiasItems } from "./analysis/evidence";
@@ -514,7 +515,14 @@ async function buildSignalForSymbol(
   // merged item's own factor text already says 已合併為一票 where the reader
   // looks for it.
   const deduped = dedupeBiasItems(rawBiasItems);
-  const biasItems = deduped.items;
+  // 面向學習 — a dimension with no predictive value on the book's own real
+  // trades votes at half weight. Learned from the journal, subtract-only,
+  // applied before the direction is picked so the side and the score read
+  // the same evidence. Nothing scales until twelve real rows carry the
+  // marker; until then this is the identity.
+  const dimensionScaled = applyDimensionScales(deduped.items, dimensionAccuracy(bookJournal));
+  const biasItems = dimensionScaled.items;
+  const dimensionLearning = dimensionScaled.learning.scaled.length > 0 ? dimensionScaled.learning : null;
 
   const { direction, tie } = pickDirection(biasItems);
   if (tie) {
@@ -1021,6 +1029,8 @@ async function buildSignalForSymbol(
       grade: signal.grade,
     });
     signal.context_record = record.lines.length > 0 || record.veto ? record : null;
+    signal.dimension_learning = dimensionLearning;
+    if (dimensionLearning) signal.downgrades = [...(signal.downgrades ?? []), ...dimensionLearning.notes];
     if (signal.trade_plan.stance === "enter" && record.veto && record.reason) {
       signal.downgrades = [...(signal.downgrades ?? []), record.reason];
       signal.trade_plan = {
