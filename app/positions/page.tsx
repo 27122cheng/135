@@ -45,6 +45,7 @@ const STATE_LABEL: Record<string, string> = {
   added: "已加倉",
   scaled: "已分批止盈（剩半倉）",
   waiting: "等待進場",
+  touched: "已觸及，等收回確認",
   stop_hit: "已停損",
   target_hit: "已停利",
   structure_exit: "結構翻轉出場",

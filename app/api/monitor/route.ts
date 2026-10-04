@@ -88,6 +88,31 @@ async function structureFor(
  * Null when there is nothing to catch up on or no candles to do it with — the
  * caller then decides on the spot price exactly as before.
  */
+/**
+ * 最新一根完成的 H4 — for a confirm-style entry: the fill is judged on a
+ * completed close, never on the bar in progress. Served from the same
+ * cached candles the window reads.
+ */
+async function lastClosedH4(
+  meta: CommodityMeta,
+  gaps: string[],
+): Promise<{ close: number; time: string } | null> {
+  try {
+    const bars = (await fetchOHLCV(meta, "H4", gaps))?.candles;
+    if (!bars || bars.length < 2) return null;
+    const H4_MS = 4 * 60 * 60 * 1000;
+    // The newest bar whose open time is at least one full bar ago is complete.
+    for (let i = bars.length - 1; i >= 0; i--) {
+      if (Date.now() - new Date(bars[i].time).getTime() >= H4_MS) {
+        return { close: bars[i].close, time: bars[i].time };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function missedWindow(
   meta: CommodityMeta,
   since: string | null | undefined,
@@ -412,6 +437,10 @@ export async function GET(request: Request) {
         window,
         planAgeHours,
         entryArmed,
+        lastClosedBar:
+          plan.entry_style === "confirm" && (memory.state === "waiting" || memory.state === "touched")
+            ? await lastClosedH4(meta, gaps)
+            : null,
         eventAhead: eventAhead ? { label: eventAhead.label, minutesAway: eventAhead.minutesAway } : null,
       });
 

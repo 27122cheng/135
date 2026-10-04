@@ -17,6 +17,7 @@ import { ER_RANGING, ER_TRENDING } from "@/lib/analysis/thesis";
 
 export type PlanState =
   | "waiting"      // price hasn't reached the entry
+  | "touched"      // confirm-style: price reached the entry; waiting for a close back on our side
   | "entered"      // entry touched, position assumed open
   | "added"        // at least one add-on level reached
   | "scaled"       // first target banked half; the remainder trails at ≥ breakeven
@@ -155,6 +156,13 @@ export interface MonitorInput {
    */
   entryArmed?: boolean;
   /**
+   * 回踩後確認 — the newest COMPLETED bar's close and time, for a plan whose
+   * entry_style is "confirm". The touch arms the entry (state "touched");
+   * the fill is the first completed close back on the trade's side of the
+   * entry, at that close. Absent: a confirm plan can arm but cannot fill.
+   */
+  lastClosedBar?: { close: number; time: string } | null;
+  /**
    * 數據前 — a clock-derivable high-impact release inside the blackout
    * window, when there is one. While set: a position ≥ PRE_EVENT_PROTECT_R
    * in favour gets its stop moved to entry, and no add-on is reported —
@@ -165,6 +173,7 @@ export interface MonitorInput {
 
 export interface MonitorEvent {
   kind:
+    | "touched"
     | "entered"
     | "add_on"
     | "stop_moved"
@@ -319,14 +328,66 @@ export function advancePlan(input: MonitorInput): MonitorResult {
     if (input.entryArmed === false || !entryFilled(direction, adverse, plan.entry)) {
       return { memory: { state, addOnsFilled, activeStop }, events };
     }
-    state = "entered";
-    events.push({
-      kind: "entered",
-      headline: "已觸及進場價",
-      detail:
-        `價格 ${fmt(caught ? adverse : price)} 觸及進場 ${fmt(plan.entry)}，停損 ${fmt(activeStop)}${since}`,
-      newStop: activeStop,
-    });
+    if (plan.entry_style === "confirm") {
+      // The touch only arms a confirmation entry; the fill is judged below.
+      state = "touched";
+      events.push({
+        kind: "touched",
+        headline: "已觸及進場價 —— 等收回確認",
+        detail:
+          `價格 ${fmt(caught ? adverse : price)} 觸及 ${fmt(plan.entry)}${since}。本計畫為回踩後確認進場：` +
+          `等一根完成的 H4 K 棒收在 ${fmt(plan.entry)} ${direction === "long" ? "之上" : "之下"}再進，以該收盤價成交；` +
+          `收不回來就是跌破，不進。`,
+        newStop: activeStop,
+      });
+    } else {
+      state = "entered";
+      events.push({
+        kind: "entered",
+        headline: "已觸及進場價",
+        detail:
+          `價格 ${fmt(caught ? adverse : price)} 觸及進場 ${fmt(plan.entry)}，停損 ${fmt(activeStop)}${since}`,
+        newStop: activeStop,
+      });
+    }
+  }
+
+  if (state === "touched") {
+    // 收回確認. A completed bar closing back on our side takes the entry at
+    // that close; a close through the STOP means the pullback was a
+    // breakdown and the order is pulled — no position, no loss.
+    const bar = input.lastClosedBar;
+    if (bar && Number.isFinite(bar.close)) {
+      const back = direction === "long" ? bar.close > plan.entry : bar.close < plan.entry;
+      const broke = direction === "long" ? bar.close <= activeStop : bar.close >= activeStop;
+      if (back) {
+        state = "entered";
+        events.push({
+          kind: "entered",
+          headline: "收回確認，進場",
+          detail:
+            `H4 收盤 ${fmt(bar.close)}（${bar.time.slice(5, 16).replace("T", " ")} UTC）已收回進場價 ${fmt(plan.entry)} ` +
+            `${direction === "long" ? "之上" : "之下"}，以該收盤進場，停損 ${fmt(activeStop)}。`,
+          newStop: activeStop,
+        });
+      } else if (broke) {
+        return {
+          memory: { state: "cancelled", addOnsFilled, activeStop },
+          events: [
+            ...events,
+            {
+              kind: "cancelled",
+              headline: "掛單取消：回踩後未收回，直接跌破",
+              detail:
+                `H4 收盤 ${fmt(bar.close)} 已越過停損 ${fmt(activeStop)}，回踩是跌破不是回踩。` +
+                `回踩後確認進場的意義就在這裡：這筆沒有進場，也沒有虧損。`,
+              newStop: null,
+            },
+          ],
+        };
+      }
+    }
+    if (state === "touched") return { memory: { state, addOnsFilled, activeStop }, events };
   }
 
   // Checked first — see the note above about intrabar ordering.

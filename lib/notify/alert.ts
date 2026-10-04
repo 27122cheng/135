@@ -467,7 +467,7 @@ export function formatAlert(
   const lines: Array<string | null> = [
     `${signal.direction === "long" ? "🟢" : "🔴"} <b>${signal.symbol} ${dir}　${signal.grade}</b>`,
     "",
-    `進場${plan.swing ? "（當沖）" : ""}　<b>${fmt(e)}</b>　回踩掛單`,
+    `進場${plan.swing ? "（當沖）" : ""}　<b>${fmt(e)}</b>　${plan.entry_style === "confirm" ? "回踩後收回確認再進（觸及時另行通知）" : "回踩掛單"}`,
     `停損　${fmt(sl)}　${pct(sl)}`,
     `停利　${fmt(tp)}　${pct(tp)}${rr !== null ? `　風報比 1:${rr}` : ""}`,
     risk !== null ? `停損距離 ${fmt(risk)}　→ 部位 = 可承受虧損 ÷ ${fmt(risk)}` : null,

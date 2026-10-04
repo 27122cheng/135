@@ -876,6 +876,7 @@ async function buildSignalForSymbol(
           d1.candles,
           undefined,
           meta.symbol,
+          tradePlan.entry_style ?? "limit",
         )
       : null;
   if (tradePlan.stance === "enter" && !planBacktest) {

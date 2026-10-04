@@ -233,6 +233,14 @@ export interface TradePlan {
    */
   fallback_reason?: string | null;
   /**
+   * 進場方式 — how the pullback is taken. "limit": a resting order at the
+   * entry, filled on the touch. "confirm": the touch arms it; the entry is
+   * taken only once a completed bar closes back on the trade's side of the
+   * level, at that close. Chosen per plan by the managed backtest: whichever
+   * paid better on this geometry. Absent means limit (rows from before).
+   */
+  entry_style?: "limit" | "confirm";
+  /**
    * 波段變體 — the same analysis at the larger horizon, offered beside the
    * 當沖 plan rather than replacing it. Levels with their own backtest, not a
    * second monitored trade; absent when the larger timeframe's trend does not

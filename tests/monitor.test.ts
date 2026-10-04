@@ -796,4 +796,34 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
     route.includes("recommendedAt,") && route.includes("recommendedAt = new Date().toISOString()"));
 }
 
+// ── 回踩後確認進場 ────────────────────────────────────────────────
+{
+  const cp = plan({ entry_style: "confirm", add_ons: [] });
+  const step2 = (price: number, memory: MonitorMemory, bar?: { close: number; time: string } | null) =>
+    advancePlan({ direction: "long", plan: cp, price, priceAgeMinutes: 15, memory, lastClosedBar: bar ?? null });
+  const touched = step2(1995, INITIAL_MEMORY);
+  check("on a confirm plan the touch arms, it does not fill",
+    touched.memory.state === "touched" && touched.events[0]?.kind === "touched", touched);
+  const armed: MonitorMemory = { state: "touched", addOnsFilled: 0, activeStop: 1980 };
+  check("no completed bar yet: still touched, silent",
+    step2(1998, armed).memory.state === "touched" && step2(1998, armed).events.length === 0);
+  const back = step2(2004, armed, { close: 2003, time: "2026-10-03T08:00:00.000Z" });
+  check("a completed close back above the entry fills at that close",
+    back.memory.state === "entered" && back.events[0]?.kind === "entered" && back.events[0].detail.includes("2003.00"), back);
+  const below = step2(1992, armed, { close: 1992, time: "2026-10-03T08:00:00.000Z" });
+  check("a close still under the entry but above the stop keeps waiting", below.memory.state === "touched" && below.events.length === 0);
+  const broke = step2(1975, armed, { close: 1975, time: "2026-10-03T08:00:00.000Z" });
+  check("a close through the stop pulls the order — no position, no loss",
+    broke.memory.state === "cancelled" && broke.events[0]?.headline.includes("直接跌破"), broke);
+  check("a limit plan still fills on the touch", step(1995, INITIAL_MEMORY).memory.state === "entered");
+  // Shorts mirror.
+  const sp = plan({ entry: 2000, stop_loss: 2020, take_profit: 1920, add_ons: [], entry_style: "confirm" });
+  const sArmed: MonitorMemory = { state: "touched", addOnsFilled: 0, activeStop: 2020 };
+  check("a short confirms on a close back below the entry",
+    advancePlan({ direction: "short", plan: sp, price: 1996, priceAgeMinutes: 15, memory: sArmed, lastClosedBar: { close: 1997, time: "t" } }).memory.state === "entered");
+  const route = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the route hands a confirm plan the newest COMPLETED H4 close",
+    route.includes("lastClosedH4(meta, gaps)") && route.includes(">= H4_MS"));
+}
+
 report("monitor + add-ons");
