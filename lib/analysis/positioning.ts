@@ -31,6 +31,17 @@ export async function analyzePositioning(
   const invert = config.cotInverted ? -1 : 1;
   const items: BiasItem[] = [];
   const latest = reports.at(-1)!;
+  // 報告過舊就不投票. COT is weekly (Tuesday positions, Friday release), so
+  // the newest report is normally 3–10 days old. Older than that means a
+  // missed release or a stale cache, and positioning from three weeks ago
+  // is not a vote about this week — it is shown, at weight 0, with its age.
+  const COT_MAX_AGE_DAYS = 14;
+  const reportMs = Date.parse(`${latest.reportDate}T00:00:00Z`);
+  const ageDays = Number.isFinite(reportMs) ? Math.floor((Date.now() - reportMs) / 86_400_000) : null;
+  const stale = ageDays !== null && ageDays > COT_MAX_AGE_DAYS;
+  if (stale) {
+    gaps.push(`CFTC COT (${meta.symbol}) 最新報告已 ${ageDays} 天（超過 ${COT_MAX_AGE_DAYS} 天），籌碼面本次僅供參考、不投票`);
+  }
   const latestNetSigned = latest.netNonCommercial * invert;
   const direction = latestNetSigned > 0 ? "long" : latestNetSigned < 0 ? "short" : "neutral";
   items.push({
@@ -88,5 +99,13 @@ export async function analyzePositioning(
     gaps.push(`CFTC COT (${meta.symbol}) 不足兩週資料，無法計算週變化`);
   }
 
+  if (stale) {
+    for (const it of items) {
+      if (it.weight > 0) {
+        it.weight = 0;
+        it.factor = `${it.factor}（報告已 ${ageDays} 天，權重歸零）`;
+      }
+    }
+  }
   return { biasItems: items, reports, extremeDirection };
 }

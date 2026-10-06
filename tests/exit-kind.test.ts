@@ -32,6 +32,7 @@ check("scale-out", exitKindOf(kinds.scale) === "scale_out");
 check("breakeven", exitKindOf(kinds.be) === "breakeven");
 check("structure exit", exitKindOf(kinds.structure) === "structure");
 check("thesis exit", exitKindOf(kinds.thesis) === "thesis");
+check("horizon exit", exitKindOf(row({ review_note: "[自動追蹤] 逾時出場 2010（獲利 0.5%）" })) === "horizon");
 check("a hand-written row is manual", exitKindOf(kinds.manual) === "manual");
 check("a classified early exit keeps its kind",
   exitKindOf(row({ review_note: "[自動追蹤] 結構翻轉出場 1988（虧損 -0.6%），未觸及停損停利：… 分類 S2（由規則判定）" })) === "structure");

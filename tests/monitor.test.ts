@@ -826,4 +826,28 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
     route.includes("lastClosedH4(meta, gaps)") && route.includes(">= H4_MS"));
 }
 
+// ── 到期出場：實際交易用回測的那支時鐘 ──────────────────────────
+{
+  const { MANAGE_HORIZON } = require("@/lib/analysis/lab-manage") as typeof import("@/lib/analysis/lab-manage");
+  const held: MonitorMemory = { state: "entered", addOnsFilled: 0, activeStop: 1980 };
+  const at = (barsHeld: number | null, memory: MonitorMemory = held, price = 2010) =>
+    advancePlan({ direction: "long", plan: plan({ add_ons: [] }), price, priceAgeMinutes: 15, memory, barsHeld });
+  const out = at(MANAGE_HORIZON);
+  check("a position that has used up the backtest's horizon exits at the market",
+    out.memory.state === "horizon_exit" && out.events[0]?.kind === "horizon_exit", out);
+  check("one bar short of it keeps running", at(MANAGE_HORIZON - 1).memory.state === "entered");
+  check("unknown bars-held never exits", at(null).memory.state === "entered");
+  check("a waiting plan has nothing to time out",
+    at(MANAGE_HORIZON, INITIAL_MEMORY, 2050).memory.state !== "horizon_exit");
+  check("the stop still wins the same sweep",
+    at(MANAGE_HORIZON, held, 1975).memory.state === "stop_hit");
+  check("horizon_exit is terminal",
+    at(MANAGE_HORIZON, { state: "horizon_exit", addOnsFilled: 0, activeStop: 1980 }).events.length === 0);
+  const route = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the route stamps the fill time once and counts completed D1 bars from it",
+    route.includes("tracked.enteredAt = new Date().toISOString()") && route.includes("barsHeld: read?.barsHeld"));
+  check("and journals it like the other market exits",
+    readFileSync(join(__dirname, "..", "lib", "journal", "auto-log.ts"), "utf8").includes('outcome === "horizon_exit"'));
+}
+
 report("monitor + add-ons");

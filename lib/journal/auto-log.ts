@@ -49,7 +49,7 @@ export interface ResolveInput {
   stopLoss: number;
   takeProfit: number;
   exitPrice: number;
-  outcome: "stop_hit" | "target_hit" | "structure_exit" | "thesis_exit";
+  outcome: "stop_hit" | "target_hit" | "structure_exit" | "thesis_exit" | "horizon_exit";
   /**
    * 分批止盈 — the price at which half the position was banked before the
    * final exit, or null when the trade never touched its target. When set,
@@ -278,12 +278,15 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
     }
   }
 
-  if (outcome === "structure_exit" || outcome === "thesis_exit") {
+  if (outcome === "structure_exit" || outcome === "thesis_exit" || outcome === "horizon_exit") {
     const thesis = outcome === "thesis_exit";
-    const kind = thesis ? "論點失效出場" : "結構翻轉出場";
-    const why = thesis
-      ? `未觸及停損停利：計畫所需的行情性質已結束（ER(20) 越過門檻），進場前提失效，依計畫卡上的失效條件以市價出場。`
-      : `未觸及停損停利：日線出現反向 CHoCH，進場理由失效，依管理規則以市價出場。`;
+    const horizon = outcome === "horizon_exit";
+    const kind = horizon ? "逾時出場" : thesis ? "論點失效出場" : "結構翻轉出場";
+    const why = horizon
+      ? `未觸及停損停利：持倉已滿回測所用的持有上限（日線根數），依回測同一條規則以市價結束。`
+      : thesis
+        ? `未觸及停損停利：計畫所需的行情性質已結束（ER(20) 越過門檻），進場前提失效，依計畫卡上的失效條件以市價出場。`
+        : `未觸及停損停利：日線出現反向 CHoCH，進場理由失效，依管理規則以市價出場。`;
     const paperNote = paper ? "此為參考價位的紙上追蹤，假設在價位上成交、無滑價與點差。" : "";
 
     // 提早出場的虧損也要有原因. These used to carry no S-tag on the theory

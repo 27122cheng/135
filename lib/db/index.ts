@@ -233,6 +233,11 @@ export interface TrackedPlan {
    */
   recommendedAt?: string | null;
   /**
+   * 成交時間（ISO）— stamped on the sweep that saw the fill. The horizon
+   * exit counts completed D1 bars from here. Null while waiting.
+   */
+  enteredAt?: string | null;
+  /**
    * 這筆計畫的打法需要的行情性質 — from the thesis's playbook at tracking
    * time. The monitor checks ER(20) against it every sweep and exits an
    * unproven position when the regime ends (lib/monitor/plan-state.ts,

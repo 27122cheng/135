@@ -39,8 +39,47 @@ interface BoardResponse {
   build?: string | null;
   /** Which database host answered — the fact that catches a per-deploy branch. */
   db?: { kind: string; host: string; database: string | null } | null;
+  /** When the scan and the monitor last ran, for the health strip. */
+  health?: { lastScanAt: string | null; lastMonitorAt: string | null } | null;
   error?: string;
   next?: string;
+}
+
+/**
+ * 系統健康 — the two schedulers, and whether either has gone quiet.
+ *
+ * The refresh is hourly and the monitor nominally every five minutes
+ * (really ~3.5 h median on GitHub's schedule). Past these bounds the
+ * board is showing a market that has moved on, and nothing else on the
+ * page says so.
+ */
+function HealthStrip({ health }: { health: BoardResponse["health"] }) {
+  if (!health) return null;
+  const age = (iso: string | null) => (iso ? (Date.now() - Date.parse(iso)) / 60_000 : null);
+  const fmtAge = (m: number | null) =>
+    m === null ? "從未" : m < 60 ? `${Math.round(m)} 分鐘前` : `${Math.round((m / 60) * 10) / 10} 小時前`;
+  const scan = age(health.lastScanAt);
+  const mon = age(health.lastMonitorAt);
+  const scanBad = scan === null || scan > 5 * 60;
+  const monBad = mon === null || mon > 4 * 60;
+  const tone = (bad: boolean) => (bad ? "text-red-400" : "text-emerald-400");
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-1.5 text-[11px] text-neutral-500">
+      <span>系統健康</span>
+      <span>
+        掃描 <span className={tone(scanBad)}>{fmtAge(scan)}</span>
+      </span>
+      <span>·</span>
+      <span>
+        監控 <span className={tone(monBad)}>{fmtAge(mon)}</span>
+      </span>
+      {(scanBad || monBad) && (
+        <span className="text-red-400/80">
+          — 排程可能停擺：檢查 GitHub Actions 的 refresh／monitor 工作流，或改用外部 pinger 打 /api/monitor
+        </span>
+      )}
+    </div>
+  );
 }
 
 /** Cheap: one query. */
@@ -572,6 +611,7 @@ export default function BoardPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 py-5">
       <SiteNav title="交易總覽" />
+      <HealthStrip health={data?.health ?? null} />
 
       {/* 重整 sits with the status line it acts on, not in the nav bar: the
           nav is now identical on every page, and a control that exists on

@@ -23,6 +23,7 @@ export type ExitKind =
   | "breakeven"  // 保本出場（停損已移到成本附近）
   | "structure"  // 結構翻轉，提早出場
   | "thesis"     // 論點失效，提早出場
+  | "horizon"    // 到期以市價結束（回測的持有上限）
   | "manual";    // 人工記錄
 
 export const EXIT_KIND_LABELS: Record<ExitKind, string> = {
@@ -32,17 +33,19 @@ export const EXIT_KIND_LABELS: Record<ExitKind, string> = {
   breakeven: "保本出場",
   structure: "結構翻轉提早出場",
   thesis: "論點失效提早出場",
+  horizon: "到期出場",
   manual: "人工記錄",
 };
 
 /** The early exits — closed by a rule before stop or target. */
-export const EARLY_EXIT_KINDS: ReadonlySet<ExitKind> = new Set<ExitKind>(["structure", "thesis"]);
+export const EARLY_EXIT_KINDS: ReadonlySet<ExitKind> = new Set<ExitKind>(["structure", "thesis", "horizon"]);
 
 export function exitKindOf(entry: JournalEntry): ExitKind {
   const note = entry.review_note ?? "";
   if (!note.includes(AUTO_MARKER)) return "manual";
   if (note.includes("分批止盈")) return "scale_out";
   if (note.includes("論點失效出場")) return "thesis";
+  if (note.includes("逾時出場")) return "horizon";
   if (note.includes("結構翻轉出場")) return "structure";
   if (note.includes("保本出場")) return "breakeven";
   if (note.includes("觸及停利")) return "target";
@@ -66,7 +69,7 @@ export interface ExitKindStat {
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-const ORDER: ExitKind[] = ["target", "scale_out", "stop", "breakeven", "structure", "thesis", "manual"];
+const ORDER: ExitKind[] = ["target", "scale_out", "stop", "breakeven", "structure", "thesis", "horizon", "manual"];
 
 /** One row per kind actually observed, in a fixed reading order. */
 export function summariseExitKinds(entries: JournalEntry[]): ExitKindStat[] {

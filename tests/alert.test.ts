@@ -101,7 +101,7 @@ function stored(s: TradeSignal): SignalRow {
   check("the route ties 'resolved' to the previous signal's own plan identity",
     route.includes("monitorState.tracked.generatedAt === previous?.generated_at"));
   check("and treats every terminal state as resolved, expiry and cancellation included",
-    /"stop_hit", "target_hit", "structure_exit", "thesis_exit", "expired", "cancelled"/.test(route));
+    /"stop_hit", "target_hit", "structure_exit", "thesis_exit", "horizon_exit", "expired", "cancelled"/.test(route));
 }
 
 // ── the floor ─────────────────────────────────────────────────────

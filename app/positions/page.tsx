@@ -50,6 +50,7 @@ const STATE_LABEL: Record<string, string> = {
   target_hit: "已停利",
   structure_exit: "結構翻轉出場",
   thesis_exit: "論點失效出場",
+  horizon_exit: "到期出場",
   expired: "掛單逾時撤單",
   cancelled: "掛單取消（未成交）",
   invalidated: "已失效",

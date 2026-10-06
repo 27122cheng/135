@@ -40,12 +40,23 @@ async function structureFor(
   meta: CommodityMeta,
   direction: "long" | "short",
   gaps: string[],
-): Promise<{ trailStop: number | null; flipped: boolean; er: number | null } | null> {
+  /** The fill time, for the horizon clock; null while unknown. */
+  enteredAt: string | null = null,
+): Promise<{ trailStop: number | null; flipped: boolean; er: number | null; barsHeld: number | null } | null> {
   try {
     const d1 = await fetchOHLCV(meta, "D1", gaps);
     const candles = d1?.candles;
     if (!candles || candles.length <= WARMUP) return null;
     const i = candles.length - 1;
+    // Completed daily bars since the fill: bars whose open came after the
+    // fill, excluding the one still forming (its open is within a day).
+    const filledMs = enteredAt ? Date.parse(enteredAt) : NaN;
+    const barsHeld = Number.isFinite(filledMs)
+      ? candles.filter((c) => {
+          const t = new Date(c.time).getTime();
+          return t > filledMs && Date.now() - t >= 24 * 60 * 60 * 1000;
+        }).length
+      : null;
     const ctx = buildContext(candles, [i]);
     const a = ctx.atr[i];
     const anchor = direction === "long" ? ctx.anchorLow[i] : ctx.anchorHigh[i];
@@ -56,7 +67,7 @@ async function structureFor(
           : anchor + a * STOP_BUFFER_ATR
         : null;
     const flipped = direction === "long" ? ctx.chochDown[i] : ctx.chochUp[i];
-    return { trailStop, flipped, er: ctx.er[i] };
+    return { trailStop, flipped, er: ctx.er[i], barsHeld };
   } catch {
     // No structure read means no trailing this round — the levels and the
     // breakeven rule still run, so an outage degrades, never blinds.
@@ -397,7 +408,7 @@ export async function GET(request: Request) {
       // the backtest measured this plan under.
       const read =
         memory.state === "entered" || memory.state === "added" || memory.state === "scaled"
-          ? await structureFor(meta, tracked.direction, gaps)
+          ? await structureFor(meta, tracked.direction, gaps, tracked.enteredAt ?? null)
           : null;
       // 論點失效 — the thesis's own regime invalidation, checked against
       // today's ER(20). Written on the card as 「什麼會證明我看錯」 and
@@ -437,12 +448,24 @@ export async function GET(request: Request) {
         window,
         planAgeHours,
         entryArmed,
+        barsHeld: read?.barsHeld ?? null,
         lastClosedBar:
           plan.entry_style === "confirm" && (memory.state === "waiting" || memory.state === "touched")
             ? await lastClosedH4(meta, gaps)
             : null,
         eventAhead: eventAhead ? { label: eventAhead.label, minutesAway: eventAhead.minutesAway } : null,
       });
+
+      // 成交時間 — stamped once, on the sweep that saw the fill; the horizon
+      // clock counts from here. Rows from before this existed stay null and
+      // never time out (unknown is not a reason to close a trade).
+      if (
+        (next.state === "entered" || next.state === "added" || next.state === "scaled") &&
+        !tracked.enteredAt &&
+        events.some((e) => e.kind === "entered")
+      ) {
+        tracked.enteredAt = new Date().toISOString();
+      }
 
       // No memory, no mouth. If this state cannot be persisted, the next
       // sweep will believe nothing happened and fire the identical events
@@ -509,7 +532,8 @@ export async function GET(request: Request) {
           e.kind === "stop_hit" ||
           e.kind === "target_hit" ||
           e.kind === "structure_exit" ||
-          e.kind === "thesis_exit",
+          e.kind === "thesis_exit" ||
+          e.kind === "horizon_exit",
       );
       if (resolved && plan.entry !== null && plan.stop_loss !== null && plan.take_profit !== null) {
         const logged = await recordResolvedPlan({
@@ -543,7 +567,9 @@ export async function GET(request: Request) {
                 ? "structure_exit"
                 : resolved.kind === "thesis_exit"
                   ? "thesis_exit"
-                  : "stop_hit",
+                  : resolved.kind === "horizon_exit"
+                    ? "horizon_exit"
+                    : "stop_hit",
           // The banked half's price, when this trade scaled out before its
           // final exit — either earlier (state remembered as scaled) or in
           // this very sweep (scale_out event ahead of the resolving one).

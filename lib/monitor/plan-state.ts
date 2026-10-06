@@ -1,5 +1,5 @@
 import type { AddOnLevel, TradePlan } from "@/types/signal";
-import { PROVEN_R, SCALE_OUT_MIN_R } from "@/lib/analysis/lab-manage";
+import { MANAGE_HORIZON, PROVEN_R, SCALE_OUT_MIN_R } from "@/lib/analysis/lab-manage";
 import { ER_RANGING, ER_TRENDING } from "@/lib/analysis/thesis";
 
 /**
@@ -25,6 +25,7 @@ export type PlanState =
   | "target_hit"
   | "structure_exit" // closed at market on an opposite structure break
   | "thesis_exit"    // closed at market because the regime the playbook needed ended
+  | "horizon_exit"   // closed at market because the trade used up the horizon the backtest measured it on
   | "expired"        // the pending entry was never filled inside its validity window
   | "cancelled"      // the pending entry was pulled: the move happened without us
   | "invalidated"; // the plan is no longer the current recommendation
@@ -163,6 +164,14 @@ export interface MonitorInput {
    */
   lastClosedBar?: { close: number; time: string } | null;
   /**
+   * 已持有幾根完成的 D1 — for the horizon exit. The backtest that approved
+   * every plan closes the trade at the market after MANAGE_HORIZON daily
+   * bars; the live position never did, so the trade the monitor ran was
+   * not the trade the numbers described. Null while unknown (no fill time
+   * recorded, no candles), and unknown never exits anything.
+   */
+  barsHeld?: number | null;
+  /**
    * 數據前 — a clock-derivable high-impact release inside the blackout
    * window, when there is one. While set: a position ≥ PRE_EVENT_PROTECT_R
    * in favour gets its stop moved to entry, and no add-on is reported —
@@ -182,6 +191,7 @@ export interface MonitorEvent {
     | "scale_out"
     | "structure_exit"
     | "thesis_exit"
+    | "horizon_exit"
     | "expired"
     | "cancelled";
   headline: string;
@@ -257,6 +267,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
     memory.state === "target_hit" ||
     memory.state === "structure_exit" ||
     memory.state === "thesis_exit" ||
+    memory.state === "horizon_exit" ||
     memory.state === "expired" ||
     memory.state === "cancelled"
   ) {
@@ -548,6 +559,37 @@ export function advancePlan(input: MonitorInput): MonitorResult {
         newStop: plan.entry,
       });
     }
+  }
+
+  // 到期出場 — the horizon the backtest measured this plan on.
+  //
+  // Every expectancy on the card comes from a walk that closes the trade at
+  // the market after MANAGE_HORIZON daily bars. The live position had no
+  // such clock: a trade that went nowhere sat for weeks, tying up the book
+  // and drifting toward whichever level the noise found first. Same clock
+  // here, counted in completed D1 bars since the fill, so the live trade is
+  // the measured trade. Checked after the hard levels and the structural
+  // exits: a bar that hit the stop reports the stop.
+  if (
+    (state === "entered" || state === "added" || state === "scaled") &&
+    input.barsHeld != null &&
+    Number.isFinite(input.barsHeld) &&
+    input.barsHeld >= MANAGE_HORIZON
+  ) {
+    return {
+      memory: { state: "horizon_exit", addOnsFilled, activeStop },
+      events: [
+        ...events,
+        {
+          kind: "horizon_exit",
+          headline: state === "scaled" ? "到期出場，剩餘半倉以市價結束" : "到期出場",
+          detail:
+            `持倉已滿 ${MANAGE_HORIZON} 根日線，這是回測量這筆計畫時用的持有上限 —— 回測在這裡以市價結束，` +
+            `實際交易也在這裡結束，數字才描述同一筆交易。以現價 ${fmt(price)} 出場，不等停損 ${fmt(activeStop)}。`,
+          newStop: null,
+        },
+      ],
+    };
   }
 
   // 保本移停 — at PROVEN_R in favour, the stop moves to the entry.

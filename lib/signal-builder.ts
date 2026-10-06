@@ -9,6 +9,8 @@ import { EVENT_BLACKOUT_MS, analyzeTiming, upcomingHighImpactEvent } from "./ana
 import { circuitBreaker, stopCooldown } from "./journal/risk-guard";
 import { confidenceBand, contextVerdict } from "./journal/context-record";
 import { applyDimensionScales, dimensionAccuracy } from "./journal/dimension-accuracy";
+import { openRealPositionCount } from "./monitor/book";
+import { MAX_OPEN_POSITIONS } from "./analysis/sizing";
 import { buildThesis, playbookFor } from "./analysis/thesis";
 import { detectAllPatterns, patternContributions } from "./analysis/patterns";
 import { dedupeBiasItems } from "./analysis/evidence";
@@ -1055,6 +1057,30 @@ async function buildSignalForSymbol(
   // here is the book, not the setup. Both only ever turn an enter into a
   // wait; the reference levels stay so the paper bucket can measure what
   // the gate cost. Same-symbol cooldown first (the more specific reason).
+  // 同時持倉上限 — the book's rule, at the place the recommendation is made.
+  // The sizing card already refused a fifth position; the signal still said
+  // 進場 and the phone still rang. Counted from the monitor's own rows, one
+  // read per minute for the whole sweep. Only turns an enter into a wait.
+  if (signal.trade_plan.stance === "enter") {
+    const store = getSignalStore();
+    const open = store ? await openRealPositionCount(store).catch(() => 0) : 0;
+    if (open >= MAX_OPEN_POSITIONS) {
+      const note = `同時持倉已達上限 ${MAX_OPEN_POSITIONS} 筆（目前 ${open} 筆真實部位在跑），本次不開新倉`;
+      signal.downgrades = [...(signal.downgrades ?? []), note];
+      signal.trade_plan = {
+        ...signal.trade_plan,
+        stance: "wait",
+        summary: `${note}。分析全部通過，是部位管理：同時暴露在太多停損上的回撤，單筆再好的期望值也抵不過。下方價位仍是分析算出的真實結構。`,
+        wait_for: "等一筆持倉結算釋出額度後，若結構仍成立再進場。",
+        entry: null,
+        stop_loss: null,
+        take_profit: null,
+        risk_reward: null,
+        add_ons: [],
+      };
+    }
+  }
+
   if (signal.trade_plan.stance === "enter") {
     const cooldown = stopCooldown(symbolJournal, { symbol: meta.symbol, direction: signal.direction });
     const breaker = cooldown.active ? null : circuitBreaker(bookJournal);

@@ -117,7 +117,7 @@ export async function GET(request: Request) {
       // a plan has here. A terminal state on a *different* plan (an older
       // one the monitor never replaced) says nothing about this signal.
       const RESOLVED = new Set([
-        "stop_hit", "target_hit", "structure_exit", "thesis_exit", "expired", "cancelled",
+        "stop_hit", "target_hit", "structure_exit", "thesis_exit", "horizon_exit", "expired", "cancelled",
       ]);
       const resolvedTrade =
         monitorState != null &&
