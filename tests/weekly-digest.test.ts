@@ -131,4 +131,19 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
   check("and says whether the engine has tightened yet", msg.includes("達門檻後會自動套用") || msg.includes("已自動套用"), msg);
 }
 
+// ── 卡在哪一關 ────────────────────────────────────────────────────
+{
+  const msg = buildWeeklyDigest([], "2026-W40", [], null, [
+    { id: "geometry", label: "價位組合未過門檻", count: 120, share: 40, tunable: true, symbols: ["XAUUSD"] },
+    { id: "none", label: "已進場", count: 30, share: 10, tunable: false, symbols: ["WTI"] },
+    { id: "trend-gate", label: "逆勢閘門", count: 90, share: 30, tunable: true, symbols: ["EURUSD"] },
+    { id: "grade", label: "評等未達 B", count: 60, share: 20, tunable: true, symbols: ["US30"] },
+  ]);
+  check("the digest says which gates stopped the week's scans",
+    msg.includes("卡在哪一關（本週 300 次掃描，30 次放行）"), msg);
+  check("top three, by count, with shares",
+    msg.includes("價位組合未過門檻 40%、逆勢閘門 30%、評等未達 B 20%"), msg);
+  check("no census, no line", !buildWeeklyDigest([], "2026-W40").includes("卡在哪一關"));
+}
+
 report("weekly digest");

@@ -394,14 +394,9 @@ export function formatAlert(
     if (options.openTrade) {
       const held = [
         `🟡 <b>${signal.symbol} 分析已轉觀望 —— 持倉不受影響</b>`,
-        `你已進場的部位<b>不會</b>因重新掃描而取消。持倉由出場規則管理` +
-          `（停損／停利／保本移停／結構移停／反向 CHoCH 出場），監控持續追蹤中` +
+        `持倉照舊由出場規則管理` +
           (options.activeStop != null ? `，目前停損 ${fmt(options.activeStop)}` : "") +
-          `。`,
-        `本次掃描（${signal.grade}）已不再支持新開倉 —— 這則通知的意義是：進場當時的論點轉弱了，` +
-          `可自行考慮收緊停損或減碼，但系統沒有、也不會替你平倉。`,
-        "",
-        plan.summary,
+          `。論點轉弱，可自行收緊停損或減碼；系統不會替你平倉。`,
         "",
         `<i>觸發：${reason}</i>`,
       ];
@@ -414,9 +409,7 @@ export function formatAlert(
     // narrow trade would still let its disappearance ping the phone.
     const withdrawal = [
       `⚪ <b>${signal.symbol} 先前的進場訊號已失效</b>`,
-      `此訊號尚未成交，視為取消掛單。本次掃描結果：${signal.grade}，${plan.wait_for ? "觀望" : "不進場"}`,
-      "",
-      plan.summary,
+      `尚未成交，視為取消掛單。本次掃描：${signal.grade}，${plan.wait_for ? "觀望" : "不進場"}`,
       plan.wait_for ? `等待條件：${plan.wait_for}` : null,
       "",
       `<i>觸發：${reason}</i>`,

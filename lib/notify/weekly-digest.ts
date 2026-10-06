@@ -9,6 +9,7 @@ import { TAG_GUIDANCE } from "@/lib/journal/advice";
 import { exitKindAdvice, splitStreams, summariseExitKinds } from "@/lib/journal/exit-kind";
 import { STOP_REASON_LABELS, type StopReasonTag } from "@/types/journal";
 import { notifyAll } from "@/lib/notify";
+import { censusOf, type BlockerCensus } from "@/lib/analysis/blockers";
 
 /**
  * 週結摘要 — the system grading itself, delivered.
@@ -78,6 +79,8 @@ export function buildWeeklyDigest(
   weekLabel: string,
   openPositions: OpenPositionSummary[] = [],
   allTime: AllTimeSummary | null = null,
+  /** 卡在哪一關 — the week's scans by what stopped them; see lib/analysis/blockers.ts. */
+  blockers: BlockerCensus[] = [],
 ): string {
   const record = computeTrackRecord(entries);
   const lines: string[] = [`<b>週結摘要 ${weekLabel}</b>`];
@@ -168,6 +171,19 @@ export function buildWeeklyDigest(
     );
   }
 
+  // 交易太少的答案 — which gate stopped the week's scans. Without this line
+  // "0 筆結算" has no cause, and the thresholds worth arguing about stay
+  // invisible until someone opens /review.
+  const stopped = blockers.filter((b) => b.id !== "none");
+  if (stopped.length > 0) {
+    const total = blockers.reduce((n, b) => n + b.count, 0);
+    const entered = blockers.find((b) => b.id === "none")?.count ?? 0;
+    lines.push(
+      `卡在哪一關（本週 ${total} 次掃描，${entered} 次放行）：` +
+        stopped.slice(0, 3).map((b) => `${b.label} ${b.share}%`).join("、"),
+    );
+  }
+
   lines.push("", "<i>勝率高於「損益兩平需 x%」才是正期望；詳情見 /review</i>");
   return lines.join("\n");
 }
@@ -189,6 +205,12 @@ export async function maybeSendWeeklyDigest(
   await store.saveSetting(MARKER_KEY, week);
 
   const weekAgo = Date.now() - 7 * 24 * 3600_000;
+  // The week's scans, by what stopped them. Best effort: a failed read is
+  // an empty line, not a failed digest.
+  const blockers = await store
+    .listSignals({ from: new Date(weekAgo).toISOString(), limit: 600 })
+    .then((rows) => censusOf(rows))
+    .catch(() => [] as BlockerCensus[]);
   const allEntries = usableJournal(await store.listJournal({ limit: 500 }).catch(() => []));
   const entries = allEntries.filter((e) => Date.parse(e.closed_at) >= weekAgo);
   // 累計權益 over real trades only — paper 參考價位 rows would flatter it.
@@ -221,7 +243,7 @@ export async function maybeSendWeeklyDigest(
     }
   }
 
-  const text = buildWeeklyDigest(entries, week, open, allTime) + (appUrl ? `\n${appUrl}/review` : "");
+  const text = buildWeeklyDigest(entries, week, open, allTime, blockers) + (appUrl ? `\n${appUrl}/review` : "");
   await notifyAll(text);
   return { sent: true, reason: `已發送（${entries.length} 筆結算、${open.length} 筆持倉中）` };
 }

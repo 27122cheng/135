@@ -293,9 +293,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
           {
             kind: "expired",
             headline: "掛單逾時，撤單",
-            detail:
-              `進場價 ${fmt(plan.entry)} 掛了 ${Math.round(age)} 小時仍未成交（有效期 ${PENDING_ENTRY_MAX_HOURS} 小時）。` +
-              `回調沒有來，這張單所依據的結構已是兩個交易日前的市場 —— 撤單，等下一輪分析重新給價位。`,
+            detail: `進場 ${fmt(plan.entry)} 掛了 ${Math.round(age)} 小時未成交（上限 ${PENDING_ENTRY_MAX_HOURS} 小時），撤單，等下一輪價位。`,
             newStop: null,
           },
         ],
@@ -346,9 +344,8 @@ export function advancePlan(input: MonitorInput): MonitorResult {
         kind: "touched",
         headline: "已觸及進場價 —— 等收回確認",
         detail:
-          `價格 ${fmt(caught ? adverse : price)} 觸及 ${fmt(plan.entry)}${since}。本計畫為回踩後確認進場：` +
-          `等一根完成的 H4 K 棒收在 ${fmt(plan.entry)} ${direction === "long" ? "之上" : "之下"}再進，以該收盤價成交；` +
-          `收不回來就是跌破，不進。`,
+          `價格 ${fmt(caught ? adverse : price)} 觸及 ${fmt(plan.entry)}${since}。` +
+          `等一根完成的 H4 收在 ${fmt(plan.entry)} ${direction === "long" ? "之上" : "之下"}才進；收不回就不進。`,
         newStop: activeStop,
       });
     } else {
@@ -356,8 +353,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
       events.push({
         kind: "entered",
         headline: "已觸及進場價",
-        detail:
-          `價格 ${fmt(caught ? adverse : price)} 觸及進場 ${fmt(plan.entry)}，停損 ${fmt(activeStop)}${since}`,
+        detail: `價格 ${fmt(caught ? adverse : price)} 觸及進場 ${fmt(plan.entry)}${since}｜停損 ${fmt(activeStop)}`,
         newStop: activeStop,
       });
     }
@@ -376,9 +372,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
         events.push({
           kind: "entered",
           headline: "收回確認，進場",
-          detail:
-            `H4 收盤 ${fmt(bar.close)}（${bar.time.slice(5, 16).replace("T", " ")} UTC）已收回進場價 ${fmt(plan.entry)} ` +
-            `${direction === "long" ? "之上" : "之下"}，以該收盤進場，停損 ${fmt(activeStop)}。`,
+          detail: `H4 收盤 ${fmt(bar.close)} 收回 ${fmt(plan.entry)} ${direction === "long" ? "之上" : "之下"}，以此價進場｜停損 ${fmt(activeStop)}`,
           newStop: activeStop,
         });
       } else if (broke) {
@@ -389,9 +383,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
             {
               kind: "cancelled",
               headline: "掛單取消：回踩後未收回，直接跌破",
-              detail:
-                `H4 收盤 ${fmt(bar.close)} 已越過停損 ${fmt(activeStop)}，回踩是跌破不是回踩。` +
-                `回踩後確認進場的意義就在這裡：這筆沒有進場，也沒有虧損。`,
+              detail: `H4 收盤 ${fmt(bar.close)} 已越過停損 ${fmt(activeStop)}，這是跌破不是回踩。未進場，無虧損。`,
               newStop: null,
             },
           ],
@@ -412,8 +404,8 @@ export function advancePlan(input: MonitorInput): MonitorResult {
           headline: state === "scaled" ? "剩餘半倉停損觸及" : "停損觸及",
           detail:
             state === "scaled"
-              ? `價格 ${fmt(caught ? adverse : price)} 觸及停損 ${fmt(activeStop)}${since}，剩餘半倉出場（前一半已在停利 ${plan.take_profit !== null ? fmt(plan.take_profit) : "—"} 落袋）。本次交易結束，系統正在結算並分類。`
-              : `價格 ${fmt(caught ? adverse : price)} 觸及停損 ${fmt(activeStop)}${since}，本次交易結束。系統會自行判定停損原因並記入學習。`,
+              ? `價格 ${fmt(caught ? adverse : price)} 觸及停損 ${fmt(activeStop)}${since}，剩餘半倉出場（前一半已在 ${plan.take_profit !== null ? fmt(plan.take_profit) : "—"} 落袋）。`
+              : `價格 ${fmt(caught ? adverse : price)} 觸及停損 ${fmt(activeStop)}${since}。系統自動結算並分類。`,
           newStop: null,
         },
       ],
@@ -446,9 +438,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
           {
             kind: "target_hit",
             headline: "停利觸及，全部出場",
-            detail:
-              `價格 ${fmt(caught ? favourable : price)} 觸及停利 ${fmt(plan.take_profit)}${since}。此目標不足 ${SCALE_OUT_MIN_R}R，` +
-              `依規則整筆出場（分批只在目標 ≥${SCALE_OUT_MIN_R}R 時啟用）。本次交易結束，系統正在結算。`,
+            detail: `價格 ${fmt(caught ? favourable : price)} 觸及停利 ${fmt(plan.take_profit)}${since}。目標不足 ${SCALE_OUT_MIN_R}R，整筆出場。`,
             newStop: null,
           },
         ],
@@ -466,9 +456,8 @@ export function advancePlan(input: MonitorInput): MonitorResult {
       kind: "scale_out",
       headline: "觸及停利 —— 先平一半，剩餘保本追蹤",
       detail:
-        `價格 ${fmt(caught ? favourable : price)} 觸及停利 ${fmt(banked)}${since}：平掉一半部位落袋，` +
-        `剩餘半倉停損${movedStop ? `移至進場價 ${fmt(plan.entry)}` : `維持 ${fmt(activeStop)}（已優於進場價）`}，` +
-        `之後交由結構移停與反向 CHoCH 出場管理 —— 這半倉最差是打平，最好是跑出一段趨勢。`,
+        `價格 ${fmt(caught ? favourable : price)} 觸及停利 ${fmt(banked)}${since}：平一半落袋，` +
+        `剩餘半倉停損${movedStop ? `移至 ${fmt(plan.entry)}（進場價）` : `維持 ${fmt(activeStop)}`}，交由結構移停管理。`,
       newStop: activeStop,
     });
   }
@@ -487,10 +476,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
         {
           kind: "structure_exit",
           headline: state === "scaled" ? "結構翻轉，剩餘半倉出場" : "結構翻轉，出場",
-          detail:
-            `日線出現反向 CHoCH（結構翻轉），進場理由已不成立。` +
-            `以現價 ${fmt(price)} ${state === "scaled" ? "將剩餘半倉出場（前一半已在停利落袋）" : "出場"}，不等停損 ${fmt(activeStop)} —— ` +
-            `技術面看法改變時出場是管理規則的一部分，和回測量的是同一種交易。`,
+          detail: `日線反向 CHoCH，進場理由不成立。以現價 ${fmt(price)} ${state === "scaled" ? "將剩餘半倉出場" : "出場"}，不等停損 ${fmt(activeStop)}。`,
           newStop: null,
         },
       ],
@@ -520,10 +506,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
         {
           kind: "thesis_exit",
           headline: "論點失效，出場",
-          detail:
-            `${why.trigger}。${why.meaning} ` +
-            `以現價 ${fmt(price)} 出場，不等停損 ${fmt(activeStop)} —— ` +
-            `進場的前提沒有了就不留在場內，這是計畫卡上寫明的失效條件，不是臨時決定。`,
+          detail: `${why.trigger}。${why.meaning} 以現價 ${fmt(price)} 出場，不等停損 ${fmt(activeStop)}。`,
           newStop: null,
         },
       ],
@@ -552,10 +535,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
       events.push({
         kind: "stop_moved",
         headline: `數據前保本：${ev.minutesAway} 分鐘後公布${ev.label}，停損移至進場價`,
-        detail:
-          `這筆已走完 ${PRE_EVENT_PROTECT_R}R 以上，數據公布會用擲硬幣決定它的結局 —— ` +
-          `在那之前先把停損收到進場價 ${fmt(plan.entry)}，最差打平。` +
-          `平時的保本門檻是 ${PROVEN_R}R，數據前提前到 ${PRE_EVENT_PROTECT_R}R 是刻意的。`,
+        detail: `已走完 ${PRE_EVENT_PROTECT_R}R，數據前先把停損收到進場價 ${fmt(plan.entry)}，最差打平。`,
         newStop: plan.entry,
       });
     }
@@ -583,9 +563,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
         {
           kind: "horizon_exit",
           headline: state === "scaled" ? "到期出場，剩餘半倉以市價結束" : "到期出場",
-          detail:
-            `持倉已滿 ${MANAGE_HORIZON} 根日線，這是回測量這筆計畫時用的持有上限 —— 回測在這裡以市價結束，` +
-            `實際交易也在這裡結束，數字才描述同一筆交易。以現價 ${fmt(price)} 出場，不等停損 ${fmt(activeStop)}。`,
+          detail: `持倉已滿 ${MANAGE_HORIZON} 根日線（回測的持有上限），以現價 ${fmt(price)} 出場，不等停損 ${fmt(activeStop)}。`,
           newStop: null,
         },
       ],
@@ -626,12 +604,8 @@ export function advancePlan(input: MonitorInput): MonitorResult {
         kind: "stop_moved",
         headline: `已達 ${PROVEN_R}R，停損移至進場價（保本）`,
         detail:
-          `價格 ${fmt(caught ? favourable : price)} 已朝有利方向走完 ${PROVEN_R} 個風險距離${since}` +
-          `（1R = ${fmt(risk)}，${PROVEN_R}R = ${fmt(proven)}）。` +
-          `停損由 ${fmt(memory.activeStop ?? plan.stop_loss)} 移至進場價 ${fmt(plan.entry)} —— ` +
-          `這筆交易從此最差是打平。` +
-          `門檻是 ${PROVEN_R}R 不是 1R：1R 只是日線的日常波動，在那裡保本會把大量` +
-          `原本會走完的單洗成 ±0R，回測實測有 13% 的交易是這樣消失的。`,
+          `價格 ${fmt(caught ? favourable : price)} 已走完 ${PROVEN_R}R（${PROVEN_R}R = ${fmt(proven)}）${since}，` +
+          `停損 ${fmt(memory.activeStop ?? plan.stop_loss)} → ${fmt(plan.entry)}（進場價），最差打平。1R 只是日常波動，所以等 ${PROVEN_R}R。`,
         newStop: plan.entry,
       });
     }
@@ -651,9 +625,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
         events.push({
           kind: "stop_moved",
           headline: "結構移停",
-          detail:
-            `日線確認了新的 swing 結構，停損上移到結構外 ${fmt(trail)} —— ` +
-            `跟著結構走的移動停損，和回測用的是同一條規則。`,
+          detail: `日線新 swing 確認，停損上移到結構外 ${fmt(trail)}。`,
           newStop: trail,
         });
       }
@@ -783,10 +755,7 @@ export function formatMonitorAlert(
   lines.push(...events.flatMap((e) => [`<b>${e.headline}</b>`, e.detail]));
 
   if (context.analysisSupports === false && events.some((e) => e.kind === "add_on")) {
-    lines.push(
-      `⚠ 最新一輪分析已轉觀望，<b>不建議執行這次加倉</b> —— 加倉是唯一會增加風險的動作，` +
-        `只在最新分析仍支持這個方向時才值得做。停損上移照常執行，持倉本身不受影響。`,
-    );
+    lines.push(`⚠ 最新分析已轉觀望，<b>不建議執行這次加倉</b>。停損上移照常執行，持倉不受影響。`);
   }
 
   // 系統的結論，不是給你的作業。
@@ -795,23 +764,20 @@ export function formatMonitorAlert(
     const resultWord = r.result === "win" ? "獲利" : r.result === "loss" ? "虧損" : "打平";
     lines.push(
       "",
-      `<b>本次結算：${r.kind}｜${resultWord} ${r.pnlPct > 0 ? "+" : ""}${r.pnlPct}%</b>`,
+      `<b>結算：${r.kind}｜${resultWord} ${r.pnlPct > 0 ? "+" : ""}${r.pnlPct}%</b>`,
     );
     if (r.tag && r.label) {
       lines.push(
         `<b>停損原因（系統判定）：${r.tag} ${r.label}</b>` +
-          (r.decidedBy ? `　—— 由${r.decidedBy === "ai" ? " AI 複核" : "規則判定"}` : "") +
-          (r.severity !== null ? `，嚴重度 ${r.severity}` : ""),
+          (r.decidedBy ? `（${r.decidedBy === "ai" ? "AI 複核" : "規則判定"}` : "（") +
+          (r.severity !== null ? `，嚴重度 ${r.severity}）` : "）"),
       );
       if (r.why) lines.push(r.why);
-      // The part that makes it learning rather than labelling: what changes.
-      if (r.consequence) lines.push(`<i>接下來的影響：${r.consequence}</i>`);
+      if (r.consequence) lines.push(`<i>→ ${r.consequence}</i>`);
     } else {
-      lines.push(
-        `<i>S1–S8 只分類停損，這筆不是停損出場，因此不列入停損原因統計。已記入實績。</i>`,
-      );
+      lines.push(`<i>非停損出場，S1–S8 只分類停損；已記入實績。</i>`);
     }
-    lines.push(`<i>已寫入交易日誌，下一次訊號會帶著這個結論建立。</i>`);
+    lines.push(`<i>已寫入交易日誌。</i>`);
   }
 
   lines.push("", `<i>⏱ 價格延遲約 ${Math.round(priceAgeMinutes)} 分鐘｜H4/D1 級別部位管理</i>`);
