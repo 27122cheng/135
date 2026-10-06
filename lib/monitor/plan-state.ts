@@ -404,7 +404,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
           headline: state === "scaled" ? "剩餘半倉停損觸及" : "停損觸及",
           detail:
             state === "scaled"
-              ? `價格 ${fmt(caught ? adverse : price)} 觸及停損 ${fmt(activeStop)}${since}，剩餘半倉出場（前一半已在 ${plan.take_profit !== null ? fmt(plan.take_profit) : "—"} 落袋）。`
+              ? `價格 ${fmt(caught ? adverse : price)} 觸及停損 ${fmt(activeStop)}${since}，剩餘半倉出場（前一半已在 ${plan.take_profit !== null ? fmt(plan.take_profit) : "—"} 落袋）。系統自動結算並分類。`
               : `價格 ${fmt(caught ? adverse : price)} 觸及停損 ${fmt(activeStop)}${since}。系統自動結算並分類。`,
           newStop: null,
         },
