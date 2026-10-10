@@ -1,0 +1,43 @@
+name: Lab auto-adoption
+
+# Weekly. Re-runs the lab for every symbol and direction on the deployed
+# build and lets /api/lab/auto decide: adopt the best verified combination
+# where nothing is adopted or what is adopted has decayed, remove an
+# auto-adopted one that no longer verifies, never replace a manual one.
+# One request per slot: a lab run is a deep-history fetch plus a beam
+# search and does not share a function invocation.
+on:
+  schedule:
+    - cron: "0 20 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: lab-auto
+  cancel-in-progress: false
+
+jobs:
+  adopt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run the lab per symbol and direction
+        env:
+          APP_URL: ${{ secrets.APP_URL || vars.APP_URL || 'https://135-mu.vercel.app' }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -uo pipefail
+          symbols="EURUSD USDJPY GBPUSD XAUUSD NAS100 GER40 US30 WTI SPX500"
+          for symbol in $symbols; do
+            for direction in long short; do
+              echo "::group::$symbol $direction"
+              status=$(curl --silent --show-error --location \
+                --max-time 120 --retry 1 --retry-delay 15 --retry-all-errors \
+                --request POST \
+                --header "Authorization: Bearer ${CRON_SECRET:-}" \
+                --output "/tmp/$symbol-$direction.json" \
+                --write-out "%{http_code}" \
+                "$APP_URL/api/lab/auto?symbol=$symbol&direction=$direction&run=1") || status="000"
+              echo "HTTP $status"
+              head -c 600 "/tmp/$symbol-$direction.json"; echo
+              echo "::endgroup::"
+            done
+          done

@@ -72,6 +72,8 @@ export interface LabAdoption {
   /** How many candles the verifying run saw. */
   bars: number;
   adoptedAt: string;
+  /** Who adopted it: a person on /lab, or the weekly auto-adoption. Absent = manual. */
+  adoptedBy?: "manual" | "auto";
 }
 
 function isDirection(v: unknown): v is "long" | "short" {
@@ -133,9 +135,62 @@ export function parseAdoptions(raw: string | null): LabAdoption[] {
       floor: typeof o.floor === "number" && Number.isFinite(o.floor) ? o.floor : 0,
       bars: typeof o.bars === "number" && Number.isFinite(o.bars) ? o.bars : 0,
       adoptedAt: typeof o.adoptedAt === "string" ? o.adoptedAt : new Date(0).toISOString(),
+      adoptedBy: o.adoptedBy === "auto" ? "auto" : "manual",
     });
   }
   return out;
+}
+
+/**
+ * 自動採用的決定 — pure, so the rule is testable without a lab run.
+ *
+ * The lab verified combinations and then waited for a person to press 採用;
+ * on nine symbols × two directions that never happened, and the gate and
+ * its +2 vote stayed off everywhere. Once a week the system now runs the
+ * lab itself and adopts the best verified combination where there is
+ * nothing adopted, where what is adopted has fallen onto probation, or
+ * where an auto-adopted combination no longer verifies. A manual adoption
+ * is never replaced by this: a person's choice outranks the scheduler's,
+ * and is only ever flagged, not removed.
+ */
+export type AutoDecision =
+  | { action: "adopt"; finding: LabFinding; reason: string }
+  | { action: "remove"; reason: string }
+  | { action: "keep"; reason: string }
+  | { action: "none"; reason: string };
+
+export function decideAutoAdoption(input: {
+  current: LabAdoption | null;
+  /** The current adoption's forward record since adoption, if any. */
+  health: ReturnType<typeof adoptionHealth>;
+  /** The lab's verified findings for this symbol/direction/timeframe, best first. */
+  verified: LabFinding[];
+}): AutoDecision {
+  const best = input.verified[0] ?? null;
+  const { current } = input;
+  if (!current) {
+    return best
+      ? { action: "adopt", finding: best, reason: "尚無採用條件，採用本週驗證最佳的組合" }
+      : { action: "none", reason: "尚無採用條件，本週也沒有組合通過驗證" };
+  }
+  const key = [...current.ids].sort().join("+");
+  const stillVerified = input.verified.some((f) => [...f.ids].sort().join("+") === key);
+  if (input.health?.probation) {
+    return best && [...best.ids].sort().join("+") !== key
+      ? { action: "adopt", finding: best, reason: "現行條件在觀察期（採用後實績轉負），換成本週驗證最佳的組合" }
+      : current.adoptedBy === "auto"
+        ? { action: "remove", reason: "現行自動採用的條件在觀察期，且本週沒有更好的組合，撤銷" }
+        : { action: "keep", reason: "現行人工採用的條件在觀察期，本週沒有更好的組合；保留並標示，由人決定" };
+  }
+  if (!stillVerified) {
+    if (current.adoptedBy === "auto") {
+      return best
+        ? { action: "adopt", finding: best, reason: "現行自動採用的條件本週未通過驗證，換成通過的組合" }
+        : { action: "remove", reason: "現行自動採用的條件本週未通過驗證，且沒有組合通過，撤銷" };
+    }
+    return { action: "keep", reason: "現行人工採用的條件本週未通過驗證；保留並標示，由人決定" };
+  }
+  return { action: "keep", reason: "現行條件本週仍通過驗證" };
 }
 
 export function serializeAdoptions(list: LabAdoption[]): string {

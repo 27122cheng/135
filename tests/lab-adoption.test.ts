@@ -10,6 +10,7 @@ import {
   upsertAdoption,
   type LabAdoption,
   adoptionHealth,
+  decideAutoAdoption,
   describeGate,
   PROBATION_MIN_RESOLVED,
 } from "@/lib/analysis/lab-adoption";
@@ -310,6 +311,58 @@ const adoption = (over: Partial<LabAdoption> = {}): LabAdoption => ({
   const builder = readFileSync(join(__dirname, "..", "lib", "signal-builder.ts"), "utf8");
   check("the builder never blocks on a probation gate", builder.includes("if (gate.health?.probation) return;"));
   check("and the evidence skips it", readFileSync(join(__dirname, "..", "lib", "analysis", "lab-adoption.ts"), "utf8").includes("if (gate.health?.probation) continue;"));
+}
+
+// ── 自動採用的決定 ────────────────────────────────────────────────
+//
+// Nine symbols × two directions and nobody pressed 採用, so the gate and
+// its vote stayed off everywhere. The weekly run adopts where nothing is
+// adopted or what is adopted has decayed; a person's choice is never
+// replaced, only flagged.
+{
+  const finding = (ids: string[], oos = 0.8): LabFinding => ({
+    ids, labels: ids, verified: true, lift: 10,
+    inSample: { trades: 120, hitRate: 0.82, expectancyR: 1.4 } as unknown as LabFinding["inSample"],
+    outOfSample: { trades: 60, hitRate: oos, expectancyR: 1.2 } as unknown as LabFinding["outOfSample"],
+  });
+  const adoption = (ids: string[], by: "manual" | "auto"): LabAdoption => ({
+    symbol: "XAUUSD", direction: "long", ids, labels: ids, timeframe: "D1",
+    inSample: { trades: 120, hitRate: 0.82 }, outOfSample: { trades: 60, hitRate: 0.8 },
+    floor: 0.55, bars: 2000, adoptedAt: "2026-09-01T00:00:00.000Z", adoptedBy: by,
+  });
+  const ok = { resolved: 30, hitRate: 0.6, expectancyR: 0.5, probation: false };
+  const bad = { resolved: 30, hitRate: 0.3, expectancyR: -0.4, probation: true };
+
+  const empty = decideAutoAdoption({ current: null, health: null, verified: [finding(["ema-stack"])] });
+  check("nothing adopted + a verified finding → adopt the best", empty.action === "adopt" && empty.action === "adopt" && empty.finding.ids[0] === "ema-stack", empty);
+  check("nothing adopted + nothing verified → none",
+    decideAutoAdoption({ current: null, health: null, verified: [] }).action === "none");
+  check("a current combination that still verifies is kept",
+    decideAutoAdoption({ current: adoption(["ema-stack"], "auto"), health: ok, verified: [finding(["ema-stack"])] }).action === "keep");
+  const swap = decideAutoAdoption({ current: adoption(["ema-stack"], "auto"), health: bad, verified: [finding(["rsi-oversold"])] });
+  check("on probation with a better verified combination → adopt that one", swap.action === "adopt" && swap.action === "adopt" && swap.finding.ids[0] === "rsi-oversold", swap);
+  check("an auto adoption on probation with nothing better → removed",
+    decideAutoAdoption({ current: adoption(["ema-stack"], "auto"), health: bad, verified: [] }).action === "remove");
+  check("a manual adoption on probation with nothing better → kept and flagged, never removed",
+    decideAutoAdoption({ current: adoption(["ema-stack"], "manual"), health: bad, verified: [] }).action === "keep");
+  check("an auto adoption that no longer verifies → replaced by what does",
+    decideAutoAdoption({ current: adoption(["ema-stack"], "auto"), health: ok, verified: [finding(["rsi-oversold"])] }).action === "adopt");
+  check("an auto adoption that no longer verifies, nothing else does → removed",
+    decideAutoAdoption({ current: adoption(["ema-stack"], "auto"), health: ok, verified: [] }).action === "remove");
+  check("a manual adoption that no longer verifies → kept",
+    decideAutoAdoption({ current: adoption(["ema-stack"], "manual"), health: ok, verified: [] }).action === "keep");
+  check("adoptedBy survives the round trip",
+    parseAdoptions(serializeAdoptions([adoption(["ema-stack"], "auto")]))[0]?.adoptedBy === "auto");
+  check("an old record without adoptedBy reads as manual",
+    parseAdoptions(JSON.stringify([{ ...adoption(["ema-stack"], "auto"), adoptedBy: undefined }]))[0]?.adoptedBy === "manual");
+
+  const { readFileSync } = require("node:fs") as typeof import("node:fs");
+  const { join } = require("node:path") as typeof import("node:path");
+  const builder = readFileSync(join(__dirname, "..", "lib", "signal-builder.ts"), "utf8");
+  check("strict mode withdraws an entry with nothing adopted", builder.includes('getSetting("LAB_STRICT")') && builder.includes("尚無實驗室驗證並採用的條件"));
+  check("and one whose adopted condition is on probation or not met", builder.includes("!usable || !gate.met"));
+  const wf = readFileSync(join(__dirname, "..", ".github", "workflows", "lab.yml"), "utf8");
+  check("the weekly workflow runs every symbol in both directions", wf.includes("for direction in long short") && wf.includes("/api/lab/auto?symbol="));
 }
 
 report("實驗室採用");

@@ -44,7 +44,14 @@ const ALERT_KEYS = [
  * parseCustomSymbols the browser uses, so the two copies cannot disagree
  * about what a well-formed symbol is.
  */
-const CONFIG_KEYS = ["TRADING_COSTS_OVERRIDE", "CUSTOM_SYMBOLS"] as const;
+/**
+ * LAB_STRICT ("1"): 嚴格模式 — an entry is recommended only where a lab-verified
+ * combination is adopted for that symbol and direction AND holds on the
+ * current bar. LAB_AUTO_FLOOR ("0.55"–"0.9"): the hit-rate floor both halves
+ * must clear for the weekly auto-adoption. Both read by lib/signal-builder.ts
+ * and app/api/lab/auto/route.ts.
+ */
+const CONFIG_KEYS = ["TRADING_COSTS_OVERRIDE", "CUSTOM_SYMBOLS", "LAB_STRICT", "LAB_AUTO_FLOOR"] as const;
 
 /**
  * The AI keys are settable here *as well as* per-request, and the two serve

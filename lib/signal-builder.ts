@@ -16,7 +16,7 @@ import { detectAllPatterns, patternContributions } from "./analysis/patterns";
 import { dedupeBiasItems } from "./analysis/evidence";
 import { describeProximity, isNearEntry } from "./analysis/proximity";
 import { marketStatus } from "./market-hours";
-import { applyStoredTradingCosts } from "./settings";
+import { getSetting, applyStoredTradingCosts } from "./settings";
 import { driftWarning, fetchWitness, refineClosedReason } from "./data-sources/binance-witness";
 import { basisNote } from "./data-sources/instrument-basis";
 import { analyzeFundamental } from "./analysis/fundamental";
@@ -1018,6 +1018,38 @@ async function buildSignalForSymbol(
   }
 
   applyLabGate(signal, adoptions, { D1: d1?.candles, H4: h4?.candles }, labTrades);
+
+  // 嚴格模式 — only trade what the lab has verified. The gate above can only
+  // withdraw a trade where something is adopted; with nothing adopted the
+  // analysis trades on its own rules. Strict mode closes that door: no
+  // adopted, non-probation combination for this symbol and direction means
+  // no entry, and the card says exactly what is missing. The reference
+  // levels stay, paper-tracked, so the cost of the mode is measured.
+  if (signal.trade_plan.stance === "enter" && (await getSetting("LAB_STRICT").catch(() => null)) === "1") {
+    const gate = signal.lab_gate;
+    const usable = gate && !gate.unevaluable && !gate.health?.probation;
+    if (!usable || !gate.met) {
+      const why = !gate
+        ? `嚴格模式：${meta.symbol} ${signal.direction === "long" ? "做多" : "做空"}尚無實驗室驗證並採用的條件`
+        : gate.health?.probation
+          ? "嚴格模式：已採用條件在觀察期，暫不作為進場依據"
+          : gate.unevaluable
+            ? "嚴格模式：已採用條件無法在本根 K 棒檢查"
+            : "嚴格模式：已採用條件未成立";
+      signal.downgrades = [...(signal.downgrades ?? []), why];
+      signal.trade_plan = {
+        ...signal.trade_plan,
+        stance: "wait",
+        summary: `${why}。嚴格模式下只做實驗室樣本內、樣本外都通過驗證的條件；分析本身通過，這是你選的門檻。下方價位仍是分析算出的真實結構。`,
+        wait_for: !gate ? "等每週自動採用（週日）為此商品此方向找到通過驗證的組合，或到實驗室手動採用。" : "等已採用條件在當前 K 棒成立。",
+        entry: null,
+        stop_loss: null,
+        take_profit: null,
+        risk_reward: null,
+        add_ons: [],
+      };
+    }
+  }
 
   // 情境實績 — what trades like this one have actually paid, on the book's
   // own real rows, and a veto where that record is negative over a real
