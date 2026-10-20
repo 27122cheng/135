@@ -15,6 +15,9 @@ import type { TagStat } from "@/types/journal";
 import { SeverityTrend, StopReasonDonut, TAG_COLORS } from "@/components/review-charts";
 import { JournalForm } from "@/components/journal-form";
 import type { RiskAdvice } from "@/lib/journal/advice";
+import type { ExitAdvice, ExitKindStat } from "@/lib/journal/exit-kind";
+import type { ContextBucket } from "@/lib/journal/context-record";
+import type { DimensionRecord } from "@/lib/journal/dimension-accuracy";
 import { SiteNav } from "@/components/site-nav";
 
 interface BlockerRow {
@@ -66,6 +69,10 @@ interface ReviewResponse extends ReviewStats {
   activeInterventions: TagStat[];
   recentTagStats: TagStat[];
   riskAdvice?: RiskAdvice[];
+  exitKinds?: { real: ExitKindStat[]; paper: ExitKindStat[] };
+  exitAdvice?: ExitAdvice[];
+  contextBuckets?: ContextBucket[];
+  dimensionAccuracy?: DimensionRecord[];
   quarantine?: {
     fabricated: number;
     duplicates: number;
@@ -197,6 +204,119 @@ export default function ReviewPage() {
               </p>
             )}
           </Section>
+
+          {/* 出場方式 — every ending side by side, early exits included. The
+              track record says whether the book paid; this says *how* each
+              trade ended and what each ending cost, which is where a losing
+              structure exit and a scratched winner stop being invisible. */}
+          {stats.exitKinds && (stats.exitKinds.real.length > 0 || stats.exitKinds.paper.length > 0) && (
+            <Section title="出場方式（含提早出場，每種各自的勝負與損益）">
+              <ExitKindTable label="正式訊號" rows={stats.exitKinds.real} />
+              {stats.exitKinds.paper.length > 0 && (
+                <div className="mt-3">
+                  <ExitKindTable label="參考價位（紙上追蹤）" rows={stats.exitKinds.paper} />
+                </div>
+              )}
+              {stats.exitAdvice && stats.exitAdvice.length > 0 && (
+                <ul className="mt-3 space-y-2">
+                  {stats.exitAdvice.map((a) => (
+                    <li key={a.kind} className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                      <p className="text-xs font-medium text-amber-300">{a.title}</p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-neutral-300">{a.detail}</p>
+                      <p className="mt-1 text-[11px] text-neutral-500">依據：{a.basedOn}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Section>
+          )}
+
+          {/* 情境實績 — in which situations does this system actually make
+              money. The buckets the context veto reads; a negative bucket
+              with a real sample withdraws entries in that situation. */}
+          {stats.contextBuckets && stats.contextBuckets.length > 0 && (
+            <Section title="各情境實績（系統的真實交易，依信心／行情／時段／評等）">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[11px] text-neutral-500">
+                    <th className="py-1 font-normal">情境</th>
+                    <th className="py-1 text-right font-normal">筆數</th>
+                    <th className="py-1 text-right font-normal">勝/敗</th>
+                    <th className="py-1 text-right font-normal">勝率</th>
+                    <th className="py-1 text-right font-normal">期望值%/筆</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.contextBuckets.map((b) => (
+                    <tr key={`${b.dimension}:${b.key}`} className="border-t border-neutral-800">
+                      <td className="py-1.5 text-neutral-300">
+                        {b.label}
+                        {b.trades >= 12 && b.expectancyPct < 0 && (
+                          <span className="ml-2 rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] text-red-300">否決中</span>
+                        )}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-neutral-400">{b.trades}</td>
+                      <td className="py-1.5 text-right font-mono text-neutral-400">{b.wins}/{b.losses}</td>
+                      <td className="py-1.5 text-right font-mono text-neutral-200">{b.hitRate === null ? "—" : `${b.hitRate}%`}</td>
+                      <td className={`py-1.5 text-right font-mono ${b.expectancyPct > 0 ? "text-emerald-400" : b.expectancyPct < 0 ? "text-red-400" : "text-neutral-400"}`}>
+                        {b.expectancyPct > 0 ? "+" : ""}{b.expectancyPct}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="mt-2 text-[11px] text-neutral-500">
+                滿 12 筆且期望值為負的情境會自動否決同情境的新進場；只會否決，不會加分。
+              </p>
+            </Section>
+          )}
+
+          {/* 面向準確率 — which of the six dimensions actually predict
+              anything on this book. A dimension whose agreement pays no
+              better than its disagreement over a real sample votes at half
+              weight from then on. */}
+          {stats.dimensionAccuracy && stats.dimensionAccuracy.length > 0 && (
+            <Section title="各面向預測準確率（同向時 vs 反向時，系統的真實交易）">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[11px] text-neutral-500">
+                    <th className="py-1 font-normal">面向</th>
+                    <th className="py-1 text-right font-normal">同向 筆數</th>
+                    <th className="py-1 text-right font-normal">同向 勝率</th>
+                    <th className="py-1 text-right font-normal">同向 期望值%</th>
+                    <th className="py-1 text-right font-normal">反向 筆數</th>
+                    <th className="py-1 text-right font-normal">反向 期望值%</th>
+                    <th className="py-1 text-right font-normal">預測力</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.dimensionAccuracy.map((d) => (
+                    <tr key={d.dimension} className="border-t border-neutral-800">
+                      <td className="py-1.5 text-neutral-300">
+                        {d.dimension}
+                        {d.scale < 1 && (
+                          <span className="ml-2 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">權重減半中</span>
+                        )}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-neutral-400">{d.agree.trades}</td>
+                      <td className="py-1.5 text-right font-mono text-neutral-200">{d.agree.hitRate === null ? "—" : `${d.agree.hitRate}%`}</td>
+                      <td className={`py-1.5 text-right font-mono ${(d.agree.expectancyPct ?? 0) > 0 ? "text-emerald-400" : (d.agree.expectancyPct ?? 0) < 0 ? "text-red-400" : "text-neutral-400"}`}>
+                        {d.agree.expectancyPct === null ? "—" : d.agree.expectancyPct}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-neutral-400">{d.oppose.trades}</td>
+                      <td className="py-1.5 text-right font-mono text-neutral-400">{d.oppose.expectancyPct === null ? "—" : d.oppose.expectancyPct}</td>
+                      <td className={`py-1.5 text-right font-mono ${(d.edgePct ?? 0) > 0 ? "text-emerald-400" : (d.edgePct ?? 0) < 0 ? "text-red-400" : "text-neutral-400"}`}>
+                        {d.edgePct === null ? "—" : `${d.edgePct > 0 ? "+" : ""}${d.edgePct}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="mt-2 text-[11px] text-neutral-500">
+                預測力 = 同向時每筆期望值 − 反向時每筆期望值。同向滿 12 筆而期望值 ≤ 0，或不比反向好，該面向之後的投票權重自動減半；只會減，不會加。
+              </p>
+            </Section>
+          )}
 
           {/* 權益曲線 — the running sum of real trades' pnl, with the deepest
               drawdown named. The one chart a desk reads before any win rate:
@@ -649,6 +769,53 @@ function LearningLog({ entries }: { entries: LearningEntry[] }) {
         獲利單只記錄不復盤：S1–S8 是虧損的分類法。
       </p>
     </div>
+  );
+}
+
+function ExitKindTable({ label, rows }: { label: string; rows: ExitKindStat[] }) {
+  if (rows.length === 0) {
+    return <p className="text-xs text-neutral-500">{label}：尚無結算紀錄。</p>;
+  }
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-left text-[11px] text-neutral-500">
+          <th className="py-1 font-normal">{label}</th>
+          <th className="py-1 text-right font-normal">筆數</th>
+          <th className="py-1 text-right font-normal">佔比</th>
+          <th className="py-1 text-right font-normal">勝/敗/平</th>
+          <th className="py-1 text-right font-normal">勝率</th>
+          <th className="py-1 text-right font-normal">合計%</th>
+          <th className="py-1 text-right font-normal">平均%</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.kind} className="border-t border-neutral-800">
+            <td className="py-1.5 text-neutral-300">{r.label}</td>
+            <td className="py-1.5 text-right font-mono text-neutral-400">{r.trades}</td>
+            <td className="py-1.5 text-right font-mono text-neutral-500">{r.sharePct}%</td>
+            <td className="py-1.5 text-right font-mono text-neutral-400">
+              {r.wins}/{r.losses}/{r.breakeven}
+            </td>
+            <td className="py-1.5 text-right font-mono text-neutral-200">
+              {r.winRate === null ? "—" : `${r.winRate}%`}
+            </td>
+            <td
+              className={`py-1.5 text-right font-mono ${
+                r.totalPnlPct > 0 ? "text-emerald-400" : r.totalPnlPct < 0 ? "text-red-400" : "text-neutral-400"
+              }`}
+            >
+              {r.totalPnlPct > 0 ? "+" : ""}
+              {r.totalPnlPct}
+            </td>
+            <td className="py-1.5 text-right font-mono text-neutral-400">
+              {r.avgPnlPct === null ? "—" : r.avgPnlPct}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

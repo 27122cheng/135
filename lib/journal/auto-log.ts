@@ -7,6 +7,9 @@ import { fetchOHLCV } from "@/lib/data-sources/ohlcv";
 import { classifyR } from "@/lib/analysis/lab-manage";
 import { AUTO_MARKER, PAPER_MARKER } from "./markers";
 import { usableJournal } from "./quarantine";
+import { contextMarker } from "./context-record";
+import { dimensionMarker } from "./dimension-accuracy";
+import { isMainSession } from "./interventions";
 import type { CommodityMeta } from "@/types/signal";
 
 /**
@@ -46,7 +49,7 @@ export interface ResolveInput {
   stopLoss: number;
   takeProfit: number;
   exitPrice: number;
-  outcome: "stop_hit" | "target_hit" | "structure_exit" | "thesis_exit";
+  outcome: "stop_hit" | "target_hit" | "structure_exit" | "thesis_exit" | "horizon_exit";
   /**
    * 分批止盈 — the price at which half the position was banked before the
    * final exit, or null when the trade never touched its target. When set,
@@ -60,6 +63,22 @@ export interface ResolveInput {
   /** A high-impact release landed while the position was open. */
   eventDuringHold: boolean;
   gaps: string[];
+}
+
+/**
+ * The `signal_id` a journal row may carry.
+ *
+ * `trade_journal.signal_id` is a uuid column with a foreign key into `signals`.
+ * The row the monitor resolves against comes from `latest_signal`, whose id is
+ * the SYMBOL, not a uuid (`latestPerSymbol` says so) — so every auto-written
+ * resolution on that path was rejected by the database with
+ * "invalid input syntax for type uuid" and swallowed into a note nobody reads.
+ * The `plan_monitor` write beside it already guards for exactly this; the
+ * journal write did not. Same rule here: a uuid is kept, anything else is
+ * null, which is what the column means by "not from a stored signal row".
+ */
+export function journalSignalId(id: string | null | undefined): string | null {
+  return typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? id : null;
 }
 
 /**
@@ -148,7 +167,7 @@ async function alreadyLogged(
     const recent = await store.listJournal({ symbol: signal.symbol, limit: 30 });
     return recent.some(
       (e) =>
-        (e.signal_id ?? "") === (signal.id ?? "") &&
+        (journalSignalId(e.signal_id) ?? "") === (journalSignalId(signal.id) ?? "") &&
         e.direction === signal.direction &&
         near(e.entry_price, entry) &&
         near(e.exit_price, exitPrice),
@@ -191,7 +210,18 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
   const result: TradeResult =
     classifyR(moveR) === "scratch" ? "breakeven" : moveR > 0 ? "win" : "loss";
 
-  const markers = paper ? `${AUTO_MARKER}${PAPER_MARKER}` : AUTO_MARKER;
+  // 情境 rides in the note like the author markers do: the confidence band,
+  // the regime the thesis named and the session, so the journal can later
+  // say in which situations the system actually makes money.
+  const context = contextMarker({
+    confidenceScore: signal.confidence?.score ?? null,
+    regime: signal.thesis?.playbook?.regime ?? null,
+    mainSession: isMainSession(new Date(signal.generated_at)),
+  });
+  // 面向 rides alongside: which dimensions agreed with the direction, so the
+  // journal can later say which of them actually predict anything here.
+  const dims = dimensionMarker(signal.direction, signal.bias_items ?? []);
+  const markers = (paper ? `${AUTO_MARKER}${PAPER_MARKER}` : AUTO_MARKER) + context + dims;
 
   /** The outcome every non-loss path reports — no S-tag, because S1–S8 classifies stop-outs. */
   const plainOutcome = (kind: string): ResolutionOutcome => ({
@@ -216,7 +246,7 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
     try {
       const written = await store.insertJournalEntry(
         {
-          signal_id: signal.id,
+          signal_id: journalSignalId(signal.id),
           symbol: signal.symbol,
           direction: signal.direction,
           grade: signal.grade,
@@ -248,16 +278,88 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
     }
   }
 
-  if (outcome === "structure_exit" || outcome === "thesis_exit") {
+  if (outcome === "structure_exit" || outcome === "thesis_exit" || outcome === "horizon_exit") {
     const thesis = outcome === "thesis_exit";
-    // Not a stop-out: the S1–S8 stop taxonomy classifies trades the market
-    // took out at a level, and forcing a market exit into it would teach the
-    // intervention engine the wrong lesson. Logged with the exit reason
-    // instead — the win/loss still counts toward the realized-rate audit.
+    const horizon = outcome === "horizon_exit";
+    const kind = horizon ? "逾時出場" : thesis ? "論點失效出場" : "結構翻轉出場";
+    const why = horizon
+      ? `未觸及停損停利：持倉已滿回測所用的持有上限（日線根數），依回測同一條規則以市價結束。`
+      : thesis
+        ? `未觸及停損停利：計畫所需的行情性質已結束（ER(20) 越過門檻），進場前提失效，依計畫卡上的失效條件以市價出場。`
+        : `未觸及停損停利：日線出現反向 CHoCH，進場理由失效，依管理規則以市價出場。`;
+    const paperNote = paper ? "此為參考價位的紙上追蹤，假設在價位上成交、無滑價與點差。" : "";
+
+    // 提早出場的虧損也要有原因. These used to carry no S-tag on the theory
+    // that the taxonomy is for stop-outs; the effect was that a losing trade
+    // the rules closed early vanished from 停損原因分布 and from the
+    // intervention engine — a loss with no lesson. The classifier reads the
+    // excursion and the event window, neither of which cares whether the
+    // final tick was a stop or a market order, so a losing early exit is
+    // classified exactly like a stop-out. Wins and scratches stay untagged:
+    // there is nothing to fix.
+    if (result === "loss") {
+      const bestPrice = await bestPriceSince(input.meta, signal.direction, signal.generated_at, input.gaps);
+      const review = await reviewStop(
+        { signal, entry, stopLoss, takeProfit, exitPrice, bestPrice, eventDuringHold: input.eventDuringHold },
+        input.gaps,
+      );
+      const history = usableJournal(
+        await store.listJournal({ symbol: signal.symbol, limit: 30 }).catch(() => []),
+      );
+      const severity = computeSeverity({ tag: review.tag, pnlPct, history }).severity;
+      try {
+        const written = await store.insertJournalEntry(
+          {
+            signal_id: journalSignalId(signal.id),
+            symbol: signal.symbol,
+            direction: signal.direction,
+            grade: signal.grade,
+            entry_price: entry,
+            exit_price: exitPrice,
+            result,
+            pnl_pct: pnlPct,
+            closed_at: new Date().toISOString(),
+            stop_reason_tag: review.tag,
+            review_note:
+              `${markers} ${kind} ${exitPrice}（虧損 ${pnlPct}%），${why}` +
+              `分類 ${review.tag}（由${review.decidedBy === "ai" ? " AI 複核" : "規則判定"}）：${review.note} ` +
+              describeConsequence(review.tag) +
+              paperNote,
+          },
+          severity,
+        );
+        return {
+          entry: written,
+          tag: review.tag,
+          decidedBy: review.decidedBy,
+          note: `${kind}（虧損），已分類 ${review.tag} 並記錄`,
+          outcome: {
+            result,
+            pnlPct,
+            tag: review.tag,
+            label: STOP_REASON_LABELS[review.tag],
+            decidedBy: review.decidedBy,
+            why: review.note,
+            consequence: describeConsequence(review.tag),
+            severity,
+            kind,
+          },
+        };
+      } catch (err) {
+        return {
+          entry: null,
+          tag: null,
+          decidedBy: null,
+          note: `寫入交易日誌失敗：${err instanceof Error ? err.message : String(err)}`,
+          outcome: null,
+        };
+      }
+    }
+
     try {
       const written = await store.insertJournalEntry(
         {
-          signal_id: signal.id,
+          signal_id: journalSignalId(signal.id),
           symbol: signal.symbol,
           direction: signal.direction,
           grade: signal.grade,
@@ -268,18 +370,14 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
           closed_at: new Date().toISOString(),
           stop_reason_tag: null,
           review_note:
-            `${markers} ${thesis ? "論點失效出場" : "結構翻轉出場"} ${exitPrice}（${result === "win" ? "獲利" : result === "breakeven" ? "打平" : "虧損"} ${pnlPct}%），` +
-            (thesis
-              ? `未觸及停損停利：計畫所需的行情性質已結束（ER(20) 越過門檻），進場前提失效，依計畫卡上的失效條件以市價出場。`
-              : `未觸及停損停利：日線出現反向 CHoCH，進場理由失效，依管理規則以市價出場。`) +
-            (paper ? "此為參考價位的紙上追蹤，假設在價位上成交、無滑價與點差。" : ""),
+            `${markers} ${kind} ${exitPrice}（${result === "win" ? "獲利" : "打平"} ${pnlPct}%），` + why + paperNote,
         },
         null,
       );
       return {
         entry: written, tag: null, decidedBy: null,
-        note: thesis ? "論點失效出場，已記錄" : "結構翻轉出場，已記錄",
-        outcome: plainOutcome(thesis ? "論點失效出場" : "結構翻轉出場"),
+        note: `${kind}，已記錄`,
+        outcome: plainOutcome(kind),
       };
     } catch (err) {
       return {
@@ -300,7 +398,7 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
     try {
       const written = await store.insertJournalEntry(
         {
-          signal_id: signal.id,
+          signal_id: journalSignalId(signal.id),
           symbol: signal.symbol,
           direction: signal.direction,
           grade: signal.grade,
@@ -337,7 +435,7 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
     try {
       const written = await store.insertJournalEntry(
         {
-          signal_id: signal.id,
+          signal_id: journalSignalId(signal.id),
           symbol: signal.symbol,
           direction: signal.direction,
           grade: signal.grade,
@@ -401,7 +499,7 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
   try {
     const written = await store.insertJournalEntry(
       {
-        signal_id: signal.id,
+        signal_id: journalSignalId(signal.id),
         symbol: signal.symbol,
         direction: signal.direction,
         grade: signal.grade,

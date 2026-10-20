@@ -96,6 +96,35 @@ check("insufficient data must return null", backtestPlanGeometry("long", 100, 99
   // ends near 299 — and it still produces a full sample.
   check("an entry beyond the live proximity screen falls back to market entry",
     r1.resolved > 0 && r1.basis?.includes("現價進場") === true, r1.basis);
+
+  // ── 回踩後確認 — the second way to take the same pullback ──────────
+  //
+  // Same three prices, different trade: the touch arms it, a completed
+  // close back above the level takes it at that close. On the oscillating
+  // fixture every dip is rejected, so it fills at least as often as the
+  // limit; on a series where every dip keeps going it fills nothing.
+  const confirm = backtestPlanGeometry(
+    "long", refSwing * 0.99, refSwing * 0.975, refSwing * 1.03, swing, undefined, undefined, "confirm",
+  )!;
+  check("a confirm entry fills on a rejected dip", confirm.resolved > 0, confirm.resolved);
+  check("and is labelled as such", confirm.entryStyle === "confirm" && confirm.basis?.includes("回踩後確認") === true, confirm.basis);
+  check("the limit backtest is labelled limit", fills.entryStyle === "limit");
+  // Breakdowns: each dip closes below the level and never comes back
+  // within the window. Build a staircase down with a 3-bar flat after
+  // each step so the touch happens but no close returns above it.
+  const stairs: number[] = [];
+  for (let step = 0; step < 40; step++) for (let k = 0; k < 4; k++) stairs.push(200 - step * 2 - (k === 0 ? 0 : 1.5));
+  const falls = bars(stairs, 0.001);
+  const refFalls = falls[falls.length - 1].close;
+  const noConfirm = backtestPlanGeometry(
+    "long", refFalls * 0.995, refFalls * 0.98, refFalls * 1.02, falls, undefined, undefined, "confirm",
+  );
+  const limitOnFalls = backtestPlanGeometry(
+    "long", refFalls * 0.995, refFalls * 0.98, refFalls * 1.02, falls, undefined, undefined, "limit",
+  );
+  check("where every dip is a breakdown, the confirm entry takes fewer trades than the limit",
+    (noConfirm?.resolved ?? 0) < (limitOnFalls?.resolved ?? 0), { confirm: noConfirm?.resolved, limit: limitOnFalls?.resolved });
+  check("a market entry ignores the style", backtestPlanGeometry("long", refSwing, refSwing * 0.975, refSwing * 1.03, swing, undefined, undefined, "confirm")!.entryStyle === "limit");
 }
 
 // ── 賠率結構 ──────────────────────────────────────────────────────

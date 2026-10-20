@@ -72,6 +72,22 @@ export async function GET(request: Request) {
       // "successful write that never shows up" is explained at once: the
       // platform is minting a database branch per deployment.
       db: describeStore(),
+      // 系統健康 — when the two clocks last ticked. A board with no sign of
+      // its scheduler is indistinguishable from one that stopped yesterday.
+      health: await (async () => {
+        const monitorRows = await Promise.all(
+          rows.map((r) => store.getMonitorState(r.symbol).catch(() => null)),
+        );
+        const lastMonitorAt = monitorRows.reduce<string | null>(
+          (m, row) => (row?.updatedAt && (!m || row.updatedAt > m) ? row.updatedAt : m),
+          null,
+        );
+        const lastScanAt = rows.reduce<string | null>(
+          (m, r) => (r.generatedAt && (!m || r.generatedAt > m) ? r.generatedAt : m),
+          null,
+        );
+        return { lastScanAt, lastMonitorAt };
+      })(),
       tradeCount: rows.filter((r) => r.stance === "enter").length,
       scannedCount: rows.filter((r) => r.generatedAt !== null).length,
       oldestAt: rows.reduce<string | null>(

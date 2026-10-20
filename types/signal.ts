@@ -7,6 +7,7 @@ import type { AppliedIntervention } from "./journal";
 // Type-only, so it is erased at compile time and the modules stay acyclic at
 // runtime: thesis.ts imports this file's types, this file imports only its type.
 import type { Thesis } from "@/lib/analysis/thesis";
+import type { ContextRecord } from "@/lib/journal/context-record";
 
 /**
  * H4 / D1 / W1 only. Intraday below 4h is deliberately out of scope: the free
@@ -231,6 +232,14 @@ export interface TradePlan {
    * that was never the problem.
    */
   fallback_reason?: string | null;
+  /**
+   * 進場方式 — how the pullback is taken. "limit": a resting order at the
+   * entry, filled on the touch. "confirm": the touch arms it; the entry is
+   * taken only once a completed bar closes back on the trade's side of the
+   * level, at that close. Chosen per plan by the managed backtest: whichever
+   * paid better on this geometry. Absent means limit (rows from before).
+   */
+  entry_style?: "limit" | "confirm";
   /**
    * 波段變體 — the same analysis at the larger horizon, offered beside the
    * 當沖 plan rather than replacing it. Levels with their own backtest, not a
@@ -473,6 +482,19 @@ export interface TradeSignal {
    * for this symbol yet.
    */
   forward_evidence?: ForwardEvidence | null;
+  /**
+   * 情境實績 — what the system's own real trades in this signal's situation
+   * (confidence band, regime, session, grade) have paid, and whether that
+   * record forbids the entry. See lib/journal/context-record.ts. Null until
+   * the journal holds real rows with context markers.
+   */
+  context_record?: ContextRecord | null;
+  /**
+   * 面向學習 — which dimensions had their weight halved this time for lack
+   * of predictive value on the book's own trades, and why. See
+   * lib/journal/dimension-accuracy.ts. Null when nothing was scaled.
+   */
+  dimension_learning?: { scaled: BiasDimension[]; notes: string[] } | null;
   data_gaps: string[];
 }
 
@@ -519,6 +541,13 @@ export interface LabGate {
   out_of_sample_trades: number;
   /** True when this gate is what withdrew an otherwise-enterable plan. */
   blocked: boolean;
+  /**
+   * 採用後的實績 — the condition's own forward record since it was adopted.
+   * `probation` means that record has turned negative over a real sample:
+   * the gate then stops blocking on it and it stops voting, until it is
+   * re-verified. Absent when the ledger holds nothing since adoption.
+   */
+  health?: { resolved: number; hitRate: number | null; expectancyR: number | null; probation: boolean } | null;
 }
 
 /** Shape of a row in the Supabase `signals` table (see supabase/schema.sql). */

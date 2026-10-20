@@ -26,6 +26,10 @@ create table if not exists public.signals (
 create index if not exists signals_symbol_idx on public.signals (symbol);
 create index if not exists signals_grade_idx on public.signals (grade);
 create index if not exists signals_generated_at_idx on public.signals (generated_at desc);
+-- The sweep's hot query is "newest row for this symbol" (refresh route, scan):
+-- symbol = ? order by generated_at desc limit 1, nine times a sweep. The two
+-- single-column indexes above cannot serve both the filter and the sort.
+create index if not exists signals_symbol_generated_at_idx on public.signals (symbol, generated_at desc);
 
 -- RLS: anyone can read (history page uses the anon key), only the service
 -- role (used server-side by the cron route) can write.
@@ -38,9 +42,9 @@ create policy "Public read access" on public.signals
 -- Migration for tables created before trade_plan existed; no-op on new ones.
 alter table public.signals add column if not exists trade_plan jsonb not null default '{}'::jsonb;
 alter table public.signals add column if not exists plan_backtest jsonb;
--- The gate-evidence fields the insert never carried (confidence, lab_gate,
--- downgrades, reference_plan, graded_as), packed as one jsonb — see
--- signalExtras in lib/db/index.ts. Null on rows written before this existed.
+-- The fields the insert never carried (confidence, lab_gate, downgrades,
+-- reference_plan, graded_as, thesis, forward_evidence, direction_tie, …),
+-- packed as one jsonb — see signalExtras in lib/db/signal-extras.ts. Null on rows written before this existed.
 alter table public.signals add column if not exists extras jsonb;
 
 -- ─────────────────────────────────────────────────────────────────
@@ -268,6 +272,10 @@ alter table public.lab_forward alter column target drop not null;
 
 create index if not exists lab_forward_status_idx on public.lab_forward (status);
 create index if not exists lab_forward_scope_idx on public.lab_forward (symbol, direction, condition_id);
+-- The ledger is never pruned and is read newest-first per symbol on every
+-- refresh sweep (lib/lab-forward-runner.ts, limit 4000); without this the
+-- sort is over the symbol's entire history, forever.
+create index if not exists lab_forward_symbol_entry_idx on public.lab_forward (symbol, entry_bar_time desc);
 
 alter table public.lab_forward enable row level security;
 

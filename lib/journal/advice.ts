@@ -32,7 +32,7 @@ export interface RiskAdvice {
 
 /** Per-cause guidance. `automated` mirrors interventions.ts exactly — if the
  * effects there change, these strings are the user-facing contract to update. */
-const TAG_GUIDANCE: Record<StopReasonTag, { detail: string; automated: string | null }> = {
+export const TAG_GUIDANCE: Record<StopReasonTag, { detail: string; automated: string | null }> = {
   S1: {
     detail:
       "方向判斷本身出錯的比例偏高。進場前檢查卡片上的反向因子清單：同向面向少於 3 個、或有任何面向明確反向時，把部位減半或放棄這筆。",

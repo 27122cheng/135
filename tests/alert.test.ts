@@ -1,6 +1,6 @@
 import { check, report } from "./_harness";
 import { clearSettingsCache, isSecretSetting, isSettableKey } from "@/lib/settings";
-import { formatAlert, MIN_CONSENSUS_DIMENSIONS, shouldAlert } from "@/lib/notify/alert";
+import { formatAlert, MIN_CONSENSUS_DIMENSIONS, shouldAlert, equivalentPlans, recommendationKey } from "@/lib/notify/alert";
 import { notifyStatus } from "@/lib/notify";
 import type { SignalRow, TradeSignal, Grade } from "@/types/signal";
 
@@ -85,6 +85,23 @@ function stored(s: TradeSignal): SignalRow {
 
   check("with no open trade the same signal alerts",
     shouldAlert(signal(), null, "A", { openTrade: false }).alert);
+
+  // 建議 → 進場 → 出場 is the whole story. The rescan after the exit found
+  // 觀望 and, seeing no open trade, sent 「此訊號尚未成交，視為取消掛單」
+  // about a trade the reader had watched enter and exit. A resolved plan is
+  // not a pending order.
+  const done = shouldAlert(withdrawn, prev, "A", { openTrade: false, resolvedTrade: true });
+  check("a withdrawal after the monitor already closed the trade is silent", !done.alert, done);
+  check("and says why", done.reason.includes("已由監控結算"), done.reason);
+  check("a genuinely pending order still gets its cancellation",
+    shouldAlert(withdrawn, prev, "A", { openTrade: false, resolvedTrade: false }).alert);
+  const { readFileSync } = require("node:fs") as typeof import("node:fs");
+  const { join } = require("node:path") as typeof import("node:path");
+  const route = readFileSync(join(__dirname, "..", "app", "api", "refresh", "route.ts"), "utf8");
+  check("the route ties 'resolved' to the previous signal's own plan identity",
+    route.includes("monitorState.tracked.generatedAt === previous?.generated_at"));
+  check("and treats every terminal state as resolved, expiry and cancellation included",
+    /"stop_hit", "target_hit", "structure_exit", "thesis_exit", "horizon_exit", "expired", "cancelled"/.test(route));
 }
 
 // ── the floor ─────────────────────────────────────────────────────
@@ -188,6 +205,14 @@ function stored(s: TradeSignal): SignalRow {
   // monitor will do at every branch, not just where three prices sit.
   check("spells out the management playbook",
     text.includes("先平一半") && text.includes("2R 保本") && text.includes("CHoCH"), text);
+  // 乾淨、簡單、該有的一眼看到 — and the two rules the reader must know
+  // before touching the order.
+  check("says not to enter inside the first minute", text.includes("60 秒內不進場"), text);
+  check("names the order's validity deadline", text.includes("掛單有效至") && text.includes("UTC"), text);
+  check("gives the stop distance for sizing", text.includes("停損距離 20.00"), text);
+  check("prices carry their percent from entry", text.includes("-1.00%") && text.includes("+2.50%"), text);
+  check("the card opens with a direction marker", text.startsWith("🟢"), text.slice(0, 20));
+  check("a short opens red", formatAlert(signal({ direction: "short" }), "r").startsWith("🔴"));
 
   // 實測證據 rides with the recommendation when the plan carries a backtest.
   const backed = signal();
@@ -264,4 +289,39 @@ async function channelTests() {
   check("the alert threshold is not a secret", !isSecretSetting("ALERT_MIN_GRADE"));
 }
 
+// ── 先建議，再進場 ───────────────────────────────────────────────
+//
+// The fill push says 「此單來自 09-04 的訊號」; that signal must have been
+// sent. The refresh keeps a recommendation quiet in three legitimate cases
+// and the monitor then tracked the plan as announced — so the reader's first
+// word of the trade was its fill. The monitor now catches up at tracking
+// start, keyed first-writer-wins, and equivalent plans across rescans
+// inherit the flag instead of re-announcing.
+{
+  const a = { direction: "long" as const, plan: { entry: 2000, stop_loss: 1980, take_profit: 2080 } };
+  check("the same levels are the same plan", equivalentPlans(a, { ...a }));
+  check("a hair of drift is still the same plan",
+    equivalentPlans(a, { direction: "long", plan: { entry: 2000.2, stop_loss: 1980.1, take_profit: 2080.3 } }));
+  check("a moved entry is a new plan",
+    !equivalentPlans(a, { direction: "long", plan: { entry: 2010, stop_loss: 1980, take_profit: 2080 } }));
+  check("the other direction is a new plan",
+    !equivalentPlans(a, { direction: "short", plan: { entry: 2000, stop_loss: 1980, take_profit: 2080 } }));
+  check("nothing is equivalent to nothing", !equivalentPlans(null, a) && !equivalentPlans(a, undefined));
+  check("the key is per symbol", recommendationKey("XAUUSD") === "signal-pushed:XAUUSD");
+
+  const { readFileSync } = require("node:fs") as typeof import("node:fs");
+  const { join } = require("node:path") as typeof import("node:path");
+  const refresh = readFileSync(join(__dirname, "..", "app", "api", "refresh", "route.ts"), "utf8");
+  const monitor = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the refresh records the push before sending, and yields if the monitor got there first",
+    refresh.includes("seriesId: recommendationKey(meta.symbol)") && refresh.includes("if (!receipt.isNew) sendIt = false;"));
+  check("the monitor sends the recommendation itself when tracking starts on an unsent plan",
+    monitor.includes("訊號補發") && monitor.includes("seriesId: recommendationKey(meta.symbol)"));
+  check("an equivalent plan already tracked inherits the flag instead of re-announcing",
+    monitor.includes("existingRow?.tracked?.recommended === true && equivalentPlans(existingRow.tracked, next)"));
+  check("a stale plan is tracked silently — it expires next line anyway",
+    monitor.includes("announced: worthy && fresh"));
+}
+
 void channelTests().then(() => report("alerts"));
+

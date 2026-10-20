@@ -4,7 +4,12 @@ import { allInstruments } from "@/lib/server-symbols";
 import type { JournalEntry } from "@/types/journal";
 import { usableJournal } from "@/lib/journal/quarantine";
 import { computeEquityCurve, computeTrackRecord, type TrackBucket } from "@/lib/journal/stats";
+import { summariseTags, triggeredTags } from "@/lib/journal/interventions";
+import { TAG_GUIDANCE } from "@/lib/journal/advice";
+import { exitKindAdvice, splitStreams, summariseExitKinds } from "@/lib/journal/exit-kind";
+import { STOP_REASON_LABELS, type StopReasonTag } from "@/types/journal";
 import { notifyAll } from "@/lib/notify";
+import { censusOf, type BlockerCensus } from "@/lib/analysis/blockers";
 
 /**
  * 週結摘要 — the system grading itself, delivered.
@@ -74,6 +79,8 @@ export function buildWeeklyDigest(
   weekLabel: string,
   openPositions: OpenPositionSummary[] = [],
   allTime: AllTimeSummary | null = null,
+  /** 卡在哪一關 — the week's scans by what stopped them; see lib/analysis/blockers.ts. */
+  blockers: BlockerCensus[] = [],
 ): string {
   const record = computeTrackRecord(entries);
   const lines: string[] = [`<b>週結摘要 ${weekLabel}</b>`];
@@ -106,6 +113,25 @@ export function buildWeeklyDigest(
       const line = bucketLine(label, bucket);
       if (line) lines.push(line);
     }
+    // 獲利與虧損，分開報 — the win rate alone hides both sides.
+    const real = splitStreams(entries).real;
+    if (real.length > 0) {
+      const won = real.filter((e) => e.result === "win").reduce((s, e) => s + e.pnl_pct, 0);
+      const lost = real.filter((e) => e.result === "loss").reduce((s, e) => s + e.pnl_pct, 0);
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      lines.push(`正式訊號損益：獲利 +${r2(won)}%，虧損 ${r2(lost)}%，淨 ${r2(won + lost) > 0 ? "+" : ""}${r2(won + lost)}%`);
+    }
+    // 出場方式 — every ending, early exits included. A trade the rules
+    // closed before its stop is part of the week's story, not a footnote.
+    const kinds = summariseExitKinds(real);
+    if (kinds.length > 0) {
+      lines.push(
+        "出場方式：" +
+          kinds
+            .map((k) => `${k.label} ${k.trades} 筆（${k.wins}勝${k.losses}負${k.breakeven > 0 ? `${k.breakeven}平` : ""}，${k.totalPnlPct > 0 ? "+" : ""}${k.totalPnlPct}%）`)
+            .join("；"),
+      );
+    }
     // The costliest lesson of the week, by stop-reason tag.
     const tagLoss = new Map<string, number>();
     for (const e of entries) {
@@ -115,7 +141,20 @@ export function buildWeeklyDigest(
     }
     const worst = [...tagLoss.entries()].sort((a, b) => b[1] - a[1])[0];
     if (worst) {
-      lines.push(`本週最痛的停損原因：${worst[0]}（合計 -${Math.round(worst[1] * 100) / 100}%）`);
+      const tag = worst[0] as StopReasonTag;
+      lines.push(`本週最痛的停損原因：${tag} ${STOP_REASON_LABELS[tag]}（合計 -${Math.round(worst[1] * 100) / 100}%）`);
+      // 建議 — the same line the review page carries for this cause, and
+      // whether the engine has already tightened for it.
+      const active = triggeredTags(summariseTags(entries)).some((t) => t.tag === tag);
+      lines.push(
+        `建議：${TAG_GUIDANCE[tag].detail}` +
+          (TAG_GUIDANCE[tag].automated
+            ? `（系統${active ? "已自動套用" : "達門檻後會自動套用"}：${TAG_GUIDANCE[tag].automated}）`
+            : ""),
+      );
+    }
+    for (const a of exitKindAdvice(kinds).slice(0, 2)) {
+      lines.push(`${a.title}：${a.detail}（${a.basedOn}）`);
     }
     if (openPositions.length > 0) {
       lines.push(`另有 ${openPositions.length} 筆持倉中：${held}`);
@@ -129,6 +168,19 @@ export function buildWeeklyDigest(
     lines.push(
       `累計（實際交易 ${allTime.trades} 筆）：${allTime.totalPct > 0 ? "+" : ""}${allTime.totalPct}%，` +
         `最大回撤 ${allTime.maxDrawdownPct}%`,
+    );
+  }
+
+  // 交易太少的答案 — which gate stopped the week's scans. Without this line
+  // "0 筆結算" has no cause, and the thresholds worth arguing about stay
+  // invisible until someone opens /review.
+  const stopped = blockers.filter((b) => b.id !== "none");
+  if (stopped.length > 0) {
+    const total = blockers.reduce((n, b) => n + b.count, 0);
+    const entered = blockers.find((b) => b.id === "none")?.count ?? 0;
+    lines.push(
+      `卡在哪一關（本週 ${total} 次掃描，${entered} 次放行）：` +
+        stopped.slice(0, 3).map((b) => `${b.label} ${b.share}%`).join("、"),
     );
   }
 
@@ -153,6 +205,12 @@ export async function maybeSendWeeklyDigest(
   await store.saveSetting(MARKER_KEY, week);
 
   const weekAgo = Date.now() - 7 * 24 * 3600_000;
+  // The week's scans, by what stopped them. Best effort: a failed read is
+  // an empty line, not a failed digest.
+  const blockers = await store
+    .listSignals({ from: new Date(weekAgo).toISOString(), limit: 600 })
+    .then((rows) => censusOf(rows))
+    .catch(() => [] as BlockerCensus[]);
   const allEntries = usableJournal(await store.listJournal({ limit: 500 }).catch(() => []));
   const entries = allEntries.filter((e) => Date.parse(e.closed_at) >= weekAgo);
   // 累計權益 over real trades only — paper 參考價位 rows would flatter it.
@@ -185,7 +243,7 @@ export async function maybeSendWeeklyDigest(
     }
   }
 
-  const text = buildWeeklyDigest(entries, week, open, allTime) + (appUrl ? `\n${appUrl}/review` : "");
+  const text = buildWeeklyDigest(entries, week, open, allTime, blockers) + (appUrl ? `\n${appUrl}/review` : "");
   await notifyAll(text);
   return { sent: true, reason: `已發送（${entries.length} 筆結算、${open.length} 筆持倉中）` };
 }

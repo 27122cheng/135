@@ -207,7 +207,16 @@ export function TradePlanCard({
       </div>
 
       <div className="flex gap-3">
-        <Leg label="進場" price={plan.entry!} reason={plan.entry_reason} tone="entry" />
+        <Leg
+          label="進場"
+          price={plan.entry!}
+          reason={
+            plan.entry_style === "confirm"
+              ? `${plan.entry_reason}｜回踩後確認：價格觸及此價位後，等一根完成的 H4 收回${plan.take_profit !== null && plan.take_profit > plan.entry! ? "之上" : "之下"}再進，以該收盤成交；收不回就不進`
+              : plan.entry_reason
+          }
+          tone="entry"
+        />
         <Leg label="停損" price={plan.stop_loss!} reason={plan.stop_loss_reason} tone="sl" />
         <Leg label="停利" price={plan.take_profit!} reason={plan.take_profit_reason} tone="tp" />
       </div>

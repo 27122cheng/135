@@ -178,8 +178,9 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   // plan's levels below a risen market let one price be "entry touched" and
   // "target hit" at once. With fill semantics it is a contradiction.
   const pastTarget = step(2085, INITIAL_MEMORY);
-  check("a price already past the target fills nobody",
-    pastTarget.events.length === 0 && pastTarget.memory.state === "waiting", pastTarget.memory);
+  check("a price already past the target fills nobody — the order is cancelled instead",
+    !pastTarget.events.some((e) => e.kind === "entered" || e.kind === "target_hit") &&
+    pastTarget.memory.state === "cancelled", pastTarget.memory);
 
   const entered = step(2000, INITIAL_MEMORY);
   check("touching the entry fires once", entered.events.length === 1 && entered.events[0].kind === "entered");
@@ -543,12 +544,14 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
     filled.memory.state === "entered", filled.memory.state);
   check("which the spot price alone would have missed entirely",
     go(2015, INITIAL_MEMORY).memory.state === "waiting");
+  // 2060 is 3R past the entry: never a fill, and (new rule) the order is
+  // pulled because the move happened without us.
   check("and a window that never dipped to the entry does not fill",
-    go(2050, INITIAL_MEMORY, win(2060, 2005)).memory.state === "waiting");
+    go(2050, INITIAL_MEMORY, win(2060, 2005)).memory.state !== "entered");
   // The direction of the extreme matters: the window's HIGH must never fill
   // a long, or the fictional-trade bug walks straight back in.
   check("a window high above the entry cannot fill a long",
-    go(2100, INITIAL_MEMORY, win(2200, 2050)).events.length === 0);
+    !go(2100, INITIAL_MEMORY, win(2200, 2050)).events.some((e) => e.kind === "entered"));
 
   // Pessimistic ordering survives: a window that covers both levels reports
   // the stop, because bars cannot order intrabar events.
@@ -596,7 +599,7 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   check("the monitor gates its pushes on whether the signal was announced",
     /events\.length > 0 && !paper && announced/.test(src), "route.ts");
   check("the decision is snapshotted when tracking starts, not re-derived each sweep",
-    /announced: paper \? false : pushWorthiness\(latest\)\.worthy/.test(src), "route.ts");
+    src.includes("const worthy = !paper && pushWorthiness(latest).worthy") && src.includes("announced: worthy && fresh"), "route.ts");
   check("a pre-existing row defaults to announced so a live trade cannot go silent",
     src.includes("tracked.announced ?? true"), "route.ts");
   check("and the sweep log says why the phone stayed quiet", src.includes("muted:"), "route.ts");
@@ -674,6 +677,177 @@ function step(price: number, memory: MonitorMemory, p = plan()) {
   const route = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
   check("the route derives the break from the snapshotted regime and today's ER",
     route.includes("regimeBrokenFor(tracked.regime") && route.includes("regime:\n"));
+}
+
+// ── 掛單有效期 ───────────────────────────────────────────────────
+//
+// A waiting plan had no time bound: the hourly rescan normally replaced it,
+// but the moment the refresh workflow failed the last plan stood forever and
+// a level drawn on a market days gone could still fill.
+{
+  const { PENDING_ENTRY_MAX_HOURS } = require("@/lib/monitor/plan-state") as typeof import("@/lib/monitor/plan-state");
+  const at = (price: number, planAgeHours: number | null) =>
+    advancePlan({ direction: "long", plan: plan(), price, priceAgeMinutes: 15, memory: INITIAL_MEMORY, planAgeHours });
+  const stale = at(1990, PENDING_ENTRY_MAX_HOURS + 1);
+  check("a pending entry older than the validity window expires instead of filling",
+    stale.memory.state === "expired" && stale.events[0]?.kind === "expired", stale);
+  check("even though the price is at the entry", at(1990, 1).memory.state === "entered");
+  check("inside the window it fills as before", at(1990, PENDING_ENTRY_MAX_HOURS - 1).memory.state === "entered");
+  check("an unknown age never expires", at(1990, null).memory.state === "entered");
+  check("expired is terminal",
+    step(1990, { state: "expired", addOnsFilled: 0, activeStop: null }).events.length === 0);
+  check("an open position is never expired",
+    advancePlan({ direction: "long", plan: plan(), price: 2010, priceAgeMinutes: 15,
+      memory: { state: "entered", addOnsFilled: 0, activeStop: 1980 }, planAgeHours: 200 }).memory.state === "entered");
+  const route = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the route passes the plan's age from its own generatedAt",
+    route.includes("planAgeHours,") && route.includes("Date.parse(tracked.generatedAt)"));
+}
+
+// ── 數據前：保本與不加倉 ──────────────────────────────────────────
+{
+  const { PRE_EVENT_PROTECT_R } = require("@/lib/monitor/plan-state") as typeof import("@/lib/monitor/plan-state");
+  const held: MonitorMemory = { state: "entered", addOnsFilled: 0, activeStop: 1980 };
+  const nfp = { label: "美國非農就業（NFP）", minutesAway: 90 };
+  const p = plan({ add_ons: [addOn(1, 2015, 1995)] });
+  const go = (price: number, ev: typeof nfp | null) =>
+    advancePlan({ direction: "long", plan: p, price, priceAgeMinutes: 15, memory: held, eventAhead: ev });
+
+  // 1R = 20. At +1R with NFP ahead the stop goes to entry; without NFP it waits for 2R.
+  const protectedNow = go(2000 + 20 * PRE_EVENT_PROTECT_R, nfp);
+  check("≥1R in favour with an event ahead moves the stop to entry",
+    protectedNow.memory.activeStop === 2000 &&
+    protectedNow.events.some((e) => e.kind === "stop_moved" && e.headline.includes("數據前保本")), protectedNow);
+  check("the same price without an event does not lock the entry (2R rule; the add-on's 1995 stands)",
+    go(2020, null).memory.activeStop === 1995);
+  check("below 1R nothing mechanical happens — the warning covers it",
+    go(2010, nfp).memory.activeStop === 1980 && !go(2010, nfp).events.some((e) => e.kind === "stop_moved"));
+  check("no add-on is reported inside the window",
+    !go(2020, nfp).events.some((e) => e.kind === "add_on"));
+  check("the same level is an add-on once the window is gone",
+    go(2020, null).events.some((e) => e.kind === "add_on"));
+  check("a stop already at entry is not moved again",
+    !advancePlan({ direction: "long", plan: p, price: 2030, priceAgeMinutes: 15,
+      memory: { state: "entered", addOnsFilled: 0, activeStop: 2000 }, eventAhead: nfp })
+      .events.some((e) => e.kind === "stop_moved"));
+  const route = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the route computes the event once and hands it to every plan",
+    route.includes("const eventAhead = upcomingHighImpactEvent(") && route.includes("eventAhead: eventAhead ?"));
+  check("the warning gives each position its own instruction",
+    route.includes("尚未保本 —— 建議減半") && route.includes("停損已在進場價"));
+}
+
+// ── 掛單取消：沒進場就先到停利，或跑太遠 ─────────────────────────
+{
+  const { PENDING_MAX_RUNAWAY_R } = require("@/lib/monitor/plan-state") as typeof import("@/lib/monitor/plan-state");
+  // long: entry 2000, stop 1980 (1R = 20), target 2080.
+  const at = (price: number, window?: { high: number; low: number }) =>
+    advancePlan({ direction: "long", plan: plan(), price, priceAgeMinutes: 15, memory: INITIAL_MEMORY, window });
+  const target = at(2085);
+  check("a pending long whose target printed without a fill is cancelled",
+    target.memory.state === "cancelled" && target.events[0]?.kind === "cancelled", target);
+  check("and the message says the move happened without us",
+    target.events[0]?.headline.includes("先到停利") === true, target.events[0]);
+  const ran = at(2000 + 20 * PENDING_MAX_RUNAWAY_R);
+  check(`price ${PENDING_MAX_RUNAWAY_R}R past the entry in the trade's favour cancels`,
+    ran.memory.state === "cancelled" && ran.events[0]?.headline.includes("跑掉") === true, ran);
+  check("just short of that it keeps waiting", at(2000 + 20 * PENDING_MAX_RUNAWAY_R - 1).memory.state === "waiting");
+  check("a dip to the entry still fills", at(1995).memory.state === "entered");
+  check("the window's favourable extreme is what is judged",
+    at(2005, { high: 2030, low: 2003 }).memory.state === "cancelled");
+  check("a window that both dipped to entry and ran to target is cancelled, not booked as a win",
+    at(2050, { high: 2085, low: 1995 }).memory.state === "cancelled");
+  check("cancelled is terminal",
+    step(1990, { state: "cancelled", addOnsFilled: 0, activeStop: null }).events.length === 0);
+  // Shorts mirror: entry 2000, stop 2020, target 1920.
+  const short = (price: number) => advancePlan({
+    direction: "short", plan: plan({ entry: 2000, stop_loss: 2020, take_profit: 1920, add_ons: [] }),
+    price, priceAgeMinutes: 15, memory: INITIAL_MEMORY,
+  });
+  check("a short whose target printed first is cancelled", short(1915).memory.state === "cancelled");
+  check("a short that ran 1R down without a fill is cancelled", short(1980).memory.state === "cancelled");
+  check("a short still within reach keeps waiting", short(1990).memory.state === "waiting");
+  check("a rally to the short's entry fills it", short(2005).memory.state === "entered");
+  // An open position is never cancelled — the rule is for pending orders only.
+  check("an open position is not touched by the runaway rule",
+    advancePlan({ direction: "long", plan: plan(), price: 2050, priceAgeMinutes: 15,
+      memory: { state: "entered", addOnsFilled: 0, activeStop: 1980 } }).memory.state !== "cancelled");
+}
+
+// ── 建議發出後一分鐘內不成交 ──────────────────────────────────────
+{
+  const { ENTRY_ARM_MS } = require("@/lib/monitor/plan-state") as typeof import("@/lib/monitor/plan-state");
+  const at = (armed: boolean | undefined) =>
+    advancePlan({ direction: "long", plan: plan(), price: 1995, priceAgeMinutes: 15, memory: INITIAL_MEMORY, entryArmed: armed });
+  check("a price at the entry does not fill while the order is not yet armed", at(false).memory.state === "waiting");
+  check("and reports nothing", at(false).events.length === 0);
+  check("armed, the same price fills", at(true).memory.state === "entered");
+  check("absent means armed", at(undefined).memory.state === "entered");
+  check("the arm is one minute", ENTRY_ARM_MS === 60_000);
+  // Expiry and cancellation still apply to an unarmed order.
+  const stale = advancePlan({ direction: "long", plan: plan(), price: 1995, priceAgeMinutes: 15, memory: INITIAL_MEMORY, entryArmed: false, planAgeHours: 100 });
+  check("an unarmed but stale order still expires", stale.memory.state === "expired");
+  const route = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the route arms the fill one minute after the recommendation",
+    route.includes("recommendedMs + ENTRY_ARM_MS") && route.includes("entryArmed,"));
+  check("and bounds the catch-up window the same way, so a dip before the push never fills",
+    route.includes("Math.max(Date.parse(tracked.generatedAt), armedFromMs)"));
+  check("the recommendation time is stamped on the tracked plan",
+    route.includes("recommendedAt,") && route.includes("recommendedAt = new Date().toISOString()"));
+}
+
+// ── 回踩後確認進場 ────────────────────────────────────────────────
+{
+  const cp = plan({ entry_style: "confirm", add_ons: [] });
+  const step2 = (price: number, memory: MonitorMemory, bar?: { close: number; time: string } | null) =>
+    advancePlan({ direction: "long", plan: cp, price, priceAgeMinutes: 15, memory, lastClosedBar: bar ?? null });
+  const touched = step2(1995, INITIAL_MEMORY);
+  check("on a confirm plan the touch arms, it does not fill",
+    touched.memory.state === "touched" && touched.events[0]?.kind === "touched", touched);
+  const armed: MonitorMemory = { state: "touched", addOnsFilled: 0, activeStop: 1980 };
+  check("no completed bar yet: still touched, silent",
+    step2(1998, armed).memory.state === "touched" && step2(1998, armed).events.length === 0);
+  const back = step2(2004, armed, { close: 2003, time: "2026-10-03T08:00:00.000Z" });
+  check("a completed close back above the entry fills at that close",
+    back.memory.state === "entered" && back.events[0]?.kind === "entered" && back.events[0].detail.includes("2003.00"), back);
+  const below = step2(1992, armed, { close: 1992, time: "2026-10-03T08:00:00.000Z" });
+  check("a close still under the entry but above the stop keeps waiting", below.memory.state === "touched" && below.events.length === 0);
+  const broke = step2(1975, armed, { close: 1975, time: "2026-10-03T08:00:00.000Z" });
+  check("a close through the stop pulls the order — no position, no loss",
+    broke.memory.state === "cancelled" && broke.events[0]?.headline.includes("直接跌破"), broke);
+  check("a limit plan still fills on the touch", step(1995, INITIAL_MEMORY).memory.state === "entered");
+  // Shorts mirror.
+  const sp = plan({ entry: 2000, stop_loss: 2020, take_profit: 1920, add_ons: [], entry_style: "confirm" });
+  const sArmed: MonitorMemory = { state: "touched", addOnsFilled: 0, activeStop: 2020 };
+  check("a short confirms on a close back below the entry",
+    advancePlan({ direction: "short", plan: sp, price: 1996, priceAgeMinutes: 15, memory: sArmed, lastClosedBar: { close: 1997, time: "t" } }).memory.state === "entered");
+  const route = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the route hands a confirm plan the newest COMPLETED H4 close",
+    route.includes("lastClosedH4(meta, gaps)") && route.includes(">= H4_MS"));
+}
+
+// ── 到期出場：實際交易用回測的那支時鐘 ──────────────────────────
+{
+  const { MANAGE_HORIZON } = require("@/lib/analysis/lab-manage") as typeof import("@/lib/analysis/lab-manage");
+  const held: MonitorMemory = { state: "entered", addOnsFilled: 0, activeStop: 1980 };
+  const at = (barsHeld: number | null, memory: MonitorMemory = held, price = 2010) =>
+    advancePlan({ direction: "long", plan: plan({ add_ons: [] }), price, priceAgeMinutes: 15, memory, barsHeld });
+  const out = at(MANAGE_HORIZON);
+  check("a position that has used up the backtest's horizon exits at the market",
+    out.memory.state === "horizon_exit" && out.events[0]?.kind === "horizon_exit", out);
+  check("one bar short of it keeps running", at(MANAGE_HORIZON - 1).memory.state === "entered");
+  check("unknown bars-held never exits", at(null).memory.state === "entered");
+  check("a waiting plan has nothing to time out",
+    at(MANAGE_HORIZON, INITIAL_MEMORY, 2050).memory.state !== "horizon_exit");
+  check("the stop still wins the same sweep",
+    at(MANAGE_HORIZON, held, 1975).memory.state === "stop_hit");
+  check("horizon_exit is terminal",
+    at(MANAGE_HORIZON, { state: "horizon_exit", addOnsFilled: 0, activeStop: 1980 }).events.length === 0);
+  const route = readFileSync(join(__dirname, "..", "app", "api", "monitor", "route.ts"), "utf8");
+  check("the route stamps the fill time once and counts completed D1 bars from it",
+    route.includes("tracked.enteredAt = new Date().toISOString()") && route.includes("barsHeld: read?.barsHeld"));
+  check("and journals it like the other market exits",
+    readFileSync(join(__dirname, "..", "lib", "journal", "auto-log.ts"), "utf8").includes('outcome === "horizon_exit"'));
 }
 
 report("monitor + add-ons");

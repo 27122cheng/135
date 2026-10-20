@@ -1,6 +1,7 @@
 import { breadthOf } from "@/lib/analysis/evidence";
 import { SCALE_OUT_MIN_R } from "@/lib/analysis/lab-manage";
-import type { Grade, SignalRow, TradeSignal } from "@/types/signal";
+import { ENTRY_ARM_MS, PENDING_ENTRY_MAX_HOURS } from "@/lib/monitor/plan-state";
+import type { Grade, SignalRow, TradePlan, TradeSignal } from "@/types/signal";
 import { getSetting } from "@/lib/settings";
 
 /**
@@ -56,6 +57,37 @@ function samePrice(a: number | null, b: number | null, reference: number): boole
   if (!(reference > 0)) return a === b;
   return Math.abs(a - b) / reference <= PRICE_TOLERANCE;
 }
+
+/**
+ * 同一張單 — two plans that describe the same trade within the price
+ * tolerance the re-announcement check uses. The hourly rescan rewrites the
+ * plan with a new generatedAt every hour; the levels drifting by less than
+ * PRICE_TOLERANCE is the same recommendation, not a new one, and whatever
+ * was already said about the first applies to the second.
+ */
+export function equivalentPlans(
+  a: { direction: "long" | "short"; plan: Pick<TradePlan, "entry" | "stop_loss" | "take_profit"> } | null | undefined,
+  b: { direction: "long" | "short"; plan: Pick<TradePlan, "entry" | "stop_loss" | "take_profit"> } | null | undefined,
+): boolean {
+  if (!a || !b || a.direction !== b.direction) return false;
+  const ref = b.plan.entry ?? a.plan.entry ?? 0;
+  return (
+    samePrice(a.plan.entry, b.plan.entry, ref) &&
+    samePrice(a.plan.stop_loss, b.plan.stop_loss, ref) &&
+    samePrice(a.plan.take_profit, b.plan.take_profit, ref)
+  );
+}
+
+/**
+ * The first-writer-wins key that says "this plan's recommendation has been
+ * pushed". Written by whichever route sends it first — the refresh sweep in
+ * the normal case, the monitor when it starts tracking a plan the refresh
+ * had to keep quiet about (market closed, another position open on the
+ * symbol, or a rescan that judged it "unchanged" from one that was never
+ * sent). Keyed by the plan's generatedAt; equivalent plans across rescans
+ * inherit the flag on the tracked snapshot instead (see equivalentPlans).
+ */
+export const recommendationKey = (symbol: string) => `signal-pushed:${symbol}`;
 
 export interface AlertDecision {
   alert: boolean;
@@ -147,6 +179,16 @@ export function shouldAlert(
      * is exactly what an interruption is for.
      */
     openTrade?: boolean;
+    /**
+     * True when the monitor already ran the previous signal's plan to its end
+     * — filled and stopped, targeted, structure- or thesis-exited, or pulled
+     * as expired/cancelled — and announced that. The signal's lifecycle is
+     * over; a withdrawal on top would say 「尚未成交，視為取消掛單」 about a
+     * trade the reader watched enter and exit an hour earlier. The live
+     * sequence: 已觸及進場價 14:30, 結構翻轉出場 15:00, then 先前的進場訊號
+     * 已失效／此訊號尚未成交 at 18:46 from the next rescan.
+     */
+    resolvedTrade?: boolean;
   } = {},
 ): AlertDecision {
   const plan = current.trade_plan;
@@ -193,6 +235,13 @@ export function shouldAlert(
       // this: 已觸及進場價 at 20:16, followed minutes later by 先前的進場訊號
       // 已失效 — the reader asked, reasonably, why their filled trade was
       // "cancelled". It wasn't; the message just couldn't say so.
+      if (options.resolvedTrade) {
+        // Nothing left to withdraw: the trade this signal opened has already
+        // been closed and reported by the monitor. Three messages tell the
+        // whole story (建議 → 進場 → 出場); a fourth saying it never filled
+        // is false.
+        return { alert: false, reason: "先前訊號的交易已由監控結算並通知，不另發取消" };
+      }
       if (options.openTrade) {
         // Named so the route can dedupe: a setup sitting right on the
         // geometry floor can flip enter→wait→enter→wait across consecutive
@@ -344,15 +393,10 @@ export function formatAlert(
     // see the matching branch in shouldAlert.
     if (options.openTrade) {
       const held = [
-        `<b>${signal.symbol} 分析已轉觀望 —— 持倉不受影響</b>`,
-        `你已進場的部位<b>不會</b>因重新掃描而取消。持倉由出場規則管理` +
-          `（停損／停利／保本移停／結構移停／反向 CHoCH 出場），監控持續追蹤中` +
+        `🟡 <b>${signal.symbol} 分析已轉觀望 —— 持倉不受影響</b>`,
+        `持倉照舊由出場規則管理` +
           (options.activeStop != null ? `，目前停損 ${fmt(options.activeStop)}` : "") +
-          `。`,
-        `本次掃描（${signal.grade}）已不再支持新開倉 —— 這則通知的意義是：進場當時的論點轉弱了，` +
-          `可自行考慮收緊停損或減碼，但系統沒有、也不會替你平倉。`,
-        "",
-        plan.summary,
+          `。論點轉弱，可自行收緊停損或減碼；系統不會替你平倉。`,
         "",
         `<i>觸發：${reason}</i>`,
       ];
@@ -364,10 +408,8 @@ export function formatAlert(
     // bar against the *previous* signal's own evidence. Without this, muting a
     // narrow trade would still let its disappearance ping the phone.
     const withdrawal = [
-      `<b>${signal.symbol} 先前的進場訊號已失效</b>`,
-      `此訊號尚未成交，視為取消掛單。本次掃描結果：${signal.grade}，${plan.wait_for ? "觀望" : "不進場"}`,
-      "",
-      plan.summary,
+      `⚪ <b>${signal.symbol} 先前的進場訊號已失效</b>`,
+      `尚未成交，視為取消掛單。本次掃描：${signal.grade}，${plan.wait_for ? "觀望" : "不進場"}`,
       plan.wait_for ? `等待條件：${plan.wait_for}` : null,
       "",
       `<i>觸發：${reason}</i>`,
@@ -376,71 +418,71 @@ export function formatAlert(
     return withdrawal.filter((l) => l !== null).join("\n");
   }
 
-  const lines = [
-    `<b>${signal.symbol} ${dir} ${signal.grade}</b>`,
-    `當沖：進場 <b>${fmt(plan.entry)}</b>`,
-    `停損 ${fmt(plan.stop_loss)}　停利 ${fmt(plan.take_profit)}`,
-    plan.risk_reward !== null ? `風報比 1:${plan.risk_reward}` : null,
-    // The evidence rides with the recommendation. A push that names three
-    // prices without its sample asks to be trusted; this one shows the
-    // managed backtest that let the plan through the floors.
-    signal.plan_backtest && signal.plan_backtest.resolved > 0
-      ? `實測：${
-          signal.plan_backtest.expectancyR !== null
-            ? `期望值 ${signal.plan_backtest.expectancyR > 0 ? "+" : ""}${signal.plan_backtest.expectancyR}R・`
-            : ""
-        }${
-          signal.plan_backtest.hitRate !== null
-            ? `勝率 ${Math.round(signal.plan_backtest.hitRate * 100)}%・`
-            : ""
-        }${signal.plan_backtest.resolved} 筆（含交易管理與成本）`
-      : null,
-    // And the lifecycle, so the reader enters knowing every branch — the
-    // same rules the monitor executes and the backtest measured. Which
-    // target branch applies depends on this plan's own geometry.
-    `進場後：${
-      plan.entry !== null &&
-      plan.stop_loss !== null &&
-      plan.take_profit !== null &&
-      Math.abs(plan.entry - plan.stop_loss) > 0 &&
-      Math.abs(plan.take_profit - plan.entry) / Math.abs(plan.entry - plan.stop_loss) >=
-        SCALE_OUT_MIN_R
-        ? "觸及停利先平一半保本追蹤"
-        : "觸及停利整筆出場"
-    }｜2R 保本｜新 swing 移停｜反向 CHoCH 出場（監控自動提醒）`,
-    // The swing variant rides along as levels, never as a second monitored
-    // trade — one position at a time is the monitor's rule, so the message
-    // says which plan the tracking follows.
-    ...(plan.swing
-      ? [
-          "",
-          `波段（同方向，較大時間框架）：進場 ${fmt(plan.swing.entry)}`,
-          `停損 ${fmt(plan.swing.stop_loss)}　停利 ${fmt(plan.swing.take_profit)}　風報比 1:${plan.swing.risk_reward}` +
-            (plan.swing.hit_rate !== null
-              ? `（回測勝率 ${Math.round(plan.swing.hit_rate * 100)}%）`
-              : ""),
-          `監控與復盤只追蹤當沖主計畫`,
-        ]
-      : []),
+  // 乾淨、簡單、該有的一眼看到 — the card is read on a lock screen. Order:
+  // what and which way, the three prices with what each costs or pays,
+  // the two rules the reader must know before touching the order (one
+  // minute, validity), then one line each of why / evidence / management.
+  // Everything else lives on the site.
+  const e = plan.entry;
+  const sl = plan.stop_loss;
+  const tp = plan.take_profit;
+  const pct = (px: number | null) =>
+    e !== null && px !== null && e > 0
+      ? `${((signal.direction === "long" ? px - e : e - px) / e * 100) >= 0 ? "+" : ""}${(((signal.direction === "long" ? px - e : e - px) / e) * 100).toFixed(2)}%`
+      : "";
+  const risk = e !== null && sl !== null ? Math.abs(e - sl) : null;
+  const rr =
+    plan.risk_reward !== null
+      ? plan.risk_reward
+      : risk !== null && risk > 0 && tp !== null
+        ? Math.round((Math.abs(tp - e!) / risk) * 100) / 100
+        : null;
+  const validUntil = (() => {
+    const t = Date.parse(signal.generated_at);
+    return Number.isFinite(t)
+      ? new Date(t + PENDING_ENTRY_MAX_HOURS * 3_600_000).toISOString().slice(5, 16).replace("T", " ") + " UTC"
+      : null;
+  })();
+  const scaleOut = risk !== null && risk > 0 && tp !== null && Math.abs(tp - e!) / risk >= SCALE_OUT_MIN_R;
+  const bt = signal.plan_backtest;
+  const evidence =
+    bt && bt.resolved > 0
+      ? `📊 實測：${bt.expectancyR !== null ? `期望值 ${bt.expectancyR > 0 ? "+" : ""}${bt.expectancyR}R・` : ""}${
+          bt.hitRate !== null ? `勝率 ${Math.round(bt.hitRate * 100)}%・` : ""
+        }${bt.resolved} 筆（含交易管理與成本）`
+      : null;
+  const strongPoint = (signal.news_digest?.key_points ?? []).find((k) => k.impact === signal.direction);
+  const flags = [
+    signal.interventions.length > 0 ? `已套用 ${signal.interventions.length} 項干涉` : null,
+    signal.data_gaps.length > 0 ? `資料缺口 ${signal.data_gaps.length} 項` : null,
+  ].filter((f): f is string => f !== null);
+
+  const lines: Array<string | null> = [
+    `${signal.direction === "long" ? "🟢" : "🔴"} <b>${signal.symbol} ${dir}　${signal.grade}</b>`,
     "",
-    plan.summary,
+    `進場${plan.swing ? "（當沖）" : ""}　<b>${fmt(e)}</b>　${plan.entry_style === "confirm" ? "回踩後收回確認再進（觸及時另行通知）" : "回踩掛單"}`,
+    `停損　${fmt(sl)}　${pct(sl)}`,
+    `停利　${fmt(tp)}　${pct(tp)}${rr !== null ? `　風報比 1:${rr}` : ""}`,
+    risk !== null ? `停損距離 ${fmt(risk)}　→ 部位 = 可承受虧損 ÷ ${fmt(risk)}` : null,
+    "",
+    `⏱ 建議發出後 <b>${Math.round(ENTRY_ARM_MS / 1000)} 秒內不進場</b>；觸及進場價會另行通知`,
+    validUntil ? `📅 掛單有效至 ${validUntil}（未回踩自動撤單）` : null,
+    "",
+    `📌 ${plan.summary}`,
+    strongPoint ? `📰 ${strongPoint.point}` : null,
+    evidence,
+    signal.context_record && signal.context_record.lines.length > 0
+      ? `📈 情境實績：${signal.context_record.lines.slice(0, 2).join("｜")}`
+      : null,
+    `🛠 進場後：${scaleOut ? "觸及停利先平一半保本追蹤" : "觸及停利整筆出場"}｜2R 保本｜新 swing 移停｜反向 CHoCH 出場（監控自動提醒）`,
+    plan.add_ons.length > 0 ? `➕ 加倉點 ${plan.add_ons.map((a) => fmt(a.price)).join(" / ")}（到達時提醒）` : null,
+    plan.swing
+      ? `🌊 波段：進場 ${fmt(plan.swing.entry)}｜停損 ${fmt(plan.swing.stop_loss)}｜停利 ${fmt(plan.swing.take_profit)}（1:${plan.swing.risk_reward}）｜監控與復盤只追蹤當沖主計畫`
+      : null,
+    flags.length > 0 ? `<i>${flags.join("｜")}</i>` : null,
+    "",
+    `<i>觸發：${reason}</i>`,
   ];
-
-  const strongPoints = (signal.news_digest?.key_points ?? []).filter(
-    (k) => k.impact === signal.direction,
-  );
-  if (strongPoints.length > 0) {
-    lines.push("", `新聞：${strongPoints[0].point}`);
-  }
-
-  if (signal.interventions.length > 0) {
-    lines.push(`已套用 ${signal.interventions.length} 項干涉（見網站）`);
-  }
-  if (signal.data_gaps.length > 0) {
-    lines.push(`資料缺口 ${signal.data_gaps.length} 項`);
-  }
-
-  lines.push("", `<i>觸發：${reason}</i>`);
   if (appUrl) lines.push(appUrl);
 
   return lines.filter((l) => l !== null).join("\n");

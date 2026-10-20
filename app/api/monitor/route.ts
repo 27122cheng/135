@@ -5,7 +5,7 @@ import { readLatest } from "@/lib/latest-signals";
 import { fetchLatestPrice } from "@/lib/data-sources/yfinance";
 import { notifyAll } from "@/lib/notify";
 import { EVENT_BLACKOUT_MS, highImpactEventsBetween, upcomingHighImpactEvent } from "@/lib/analysis/timing";
-import { formatReleaseAlert, pushWorthiness } from "@/lib/notify/alert";
+import { equivalentPlans, formatAlert, formatReleaseAlert, pushWorthiness, recommendationKey } from "@/lib/notify/alert";
 import { ingestReleases } from "@/lib/analysis/data-release";
 import { withUserKeys } from "@/lib/api-keys";
 import { storedApiKeys } from "@/lib/settings";
@@ -13,7 +13,9 @@ import { json } from "@/lib/json-response";
 import {
   advancePlan,
   formatMonitorAlert,
+  ENTRY_ARM_MS,
   INITIAL_MEMORY,
+  PENDING_ENTRY_MAX_HOURS,
   regimeBrokenFor,
   type MonitorMemory,
 } from "@/lib/monitor/plan-state";
@@ -38,12 +40,23 @@ async function structureFor(
   meta: CommodityMeta,
   direction: "long" | "short",
   gaps: string[],
-): Promise<{ trailStop: number | null; flipped: boolean; er: number | null } | null> {
+  /** The fill time, for the horizon clock; null while unknown. */
+  enteredAt: string | null = null,
+): Promise<{ trailStop: number | null; flipped: boolean; er: number | null; barsHeld: number | null } | null> {
   try {
     const d1 = await fetchOHLCV(meta, "D1", gaps);
     const candles = d1?.candles;
     if (!candles || candles.length <= WARMUP) return null;
     const i = candles.length - 1;
+    // Completed daily bars since the fill: bars whose open came after the
+    // fill, excluding the one still forming (its open is within a day).
+    const filledMs = enteredAt ? Date.parse(enteredAt) : NaN;
+    const barsHeld = Number.isFinite(filledMs)
+      ? candles.filter((c) => {
+          const t = new Date(c.time).getTime();
+          return t > filledMs && Date.now() - t >= 24 * 60 * 60 * 1000;
+        }).length
+      : null;
     const ctx = buildContext(candles, [i]);
     const a = ctx.atr[i];
     const anchor = direction === "long" ? ctx.anchorLow[i] : ctx.anchorHigh[i];
@@ -54,7 +67,7 @@ async function structureFor(
           : anchor + a * STOP_BUFFER_ATR
         : null;
     const flipped = direction === "long" ? ctx.chochDown[i] : ctx.chochUp[i];
-    return { trailStop, flipped, er: ctx.er[i] };
+    return { trailStop, flipped, er: ctx.er[i], barsHeld };
   } catch {
     // No structure read means no trailing this round — the levels and the
     // breakeven rule still run, so an outage degrades, never blinds.
@@ -86,6 +99,31 @@ async function structureFor(
  * Null when there is nothing to catch up on or no candles to do it with — the
  * caller then decides on the spot price exactly as before.
  */
+/**
+ * 最新一根完成的 H4 — for a confirm-style entry: the fill is judged on a
+ * completed close, never on the bar in progress. Served from the same
+ * cached candles the window reads.
+ */
+async function lastClosedH4(
+  meta: CommodityMeta,
+  gaps: string[],
+): Promise<{ close: number; time: string } | null> {
+  try {
+    const bars = (await fetchOHLCV(meta, "H4", gaps))?.candles;
+    if (!bars || bars.length < 2) return null;
+    const H4_MS = 4 * 60 * 60 * 1000;
+    // The newest bar whose open time is at least one full bar ago is complete.
+    for (let i = bars.length - 1; i >= 0; i--) {
+      if (Date.now() - new Date(bars[i].time).getTime() >= H4_MS) {
+        return { close: bars[i].close, time: bars[i].time };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function missedWindow(
   meta: CommodityMeta,
   since: string | null | undefined,
@@ -196,6 +234,10 @@ export async function GET(request: Request) {
   const roster = await allInstruments().catch(() => COMMODITIES);
   const targets = requested ? roster.filter((c) => c.symbol === requested) : roster;
 
+  // 數據前 — computed once for the sweep; every held position reads it (stop
+  // to entry at ≥1R, no add-ons) and the book-wide warning below reuses it.
+  const eventAhead = upcomingHighImpactEvent(new Date(), EVENT_BLACKOUT_MS);
+
   // One read for all nine, not one per symbol: this is the same query the board
   // makes, and it answers for every instrument at once.
   const current = await readLatest(store)
@@ -241,11 +283,65 @@ export async function GET(request: Request) {
         if (inFlight(openPaper)) previous = openPaper;
       }
 
+      // The row this plan will live in, read before the snapshot is built:
+      // an equivalent plan already sitting there carries whether its
+      // recommendation was sent, and that must not be re-decided.
+      const stateKeyEarly = paper ? `${meta.symbol}:ref` : meta.symbol;
+      const existingRow = previous ?? (await store.getMonitorState(stateKeyEarly).catch(() => null));
+
+      // 先建議，再進場 — the fill push names 「此單來自 09-04 的訊號」, and
+      // that signal must have reached the phone first. The refresh sweep
+      // keeps a recommendation quiet in three legitimate cases (market
+      // closed, another position open on the symbol, "unchanged" from one
+      // that was itself never sent) and the monitor then started tracking
+      // it as announced — so the first thing the reader heard about the
+      // trade was its fill. Catch up here, once, at tracking start.
+      let catchUp: string[] = [];
       const tracked: TrackedPlan | null = previous?.tracked
         ? previous.tracked
-        : (() => {
+        : await (async () => {
             const plan = paper ? shadowPlan(latest) : latest.trade_plan;
             if (!plan) return null;
+            const worthy = !paper && pushWorthiness(latest).worthy;
+            const ageMs = Date.now() - Date.parse(latest.generated_at);
+            const fresh = Number.isFinite(ageMs) && ageMs <= PENDING_ENTRY_MAX_HOURS * 3_600_000;
+            const next = { direction: latest.direction, plan };
+            const inherited =
+              existingRow?.tracked?.recommended === true && equivalentPlans(existingRow.tracked, next);
+            let recommended = inherited;
+            // When the recommendation went out — the fill is armed one
+            // minute after it. Inherited from an equivalent plan; stamped
+            // now for a catch-up; read back from the first-writer record
+            // when the refresh sent it (its first_seen_at is the push time).
+            let recommendedAt: string | null = inherited ? (existingRow?.tracked?.recommendedAt ?? null) : null;
+            if (worthy && fresh && !inherited) {
+              const receipt = await store
+                .recordRelease({
+                  seriesId: recommendationKey(meta.symbol),
+                  period: latest.generated_at,
+                  value: 0,
+                  previousValue: null,
+                  estimate: null,
+                })
+                .catch(() => ({ isNew: false }));
+              if (receipt.isNew) {
+                const results = await notifyAll(
+                  formatAlert(
+                    latest,
+                    "訊號補發：開始追蹤此單時尚未推播過（產生時休市、或當時另有持倉）",
+                    appUrl,
+                  ),
+                );
+                catchUp = results.filter((r) => r.ok).map((r) => r.channel);
+                recommendedAt = new Date().toISOString();
+              } else {
+                const sent = (await store.recentReleases(PENDING_ENTRY_MAX_HOURS + 24).catch(() => [])).find(
+                  (r) => r.seriesId === recommendationKey(meta.symbol) && r.period === latest.generated_at,
+                );
+                recommendedAt = sent?.firstSeenAt ?? new Date().toISOString();
+              }
+              recommended = true;
+            }
             return {
               direction: latest.direction,
               grade: latest.grade,
@@ -254,8 +350,13 @@ export async function GET(request: Request) {
               // Decided once, when tracking starts, and carried for the life
               // of the trade — a plan outlives the analysis that opened it,
               // and re-deciding each sweep would start or stop the messages
-              // halfway through a position.
-              announced: paper ? false : pushWorthiness(latest).worthy,
+              // halfway through a position. A plan too old to be worth a
+              // recommendation is tracked silently: it expires on the next
+              // line anyway, and 掛單逾時 about an order nobody was told to
+              // place is noise.
+              announced: worthy && fresh,
+              recommended,
+              recommendedAt,
               // The regime the playbook needs, so the monitor can tell when
               // it ends. Only the two regimes with a playbook that can end.
               regime:
@@ -307,7 +408,7 @@ export async function GET(request: Request) {
       // the backtest measured this plan under.
       const read =
         memory.state === "entered" || memory.state === "added" || memory.state === "scaled"
-          ? await structureFor(meta, tracked.direction, gaps)
+          ? await structureFor(meta, tracked.direction, gaps, tracked.enteredAt ?? null)
           : null;
       // 論點失效 — the thesis's own regime invalidation, checked against
       // today's ER(20). Written on the card as 「什麼會證明我看錯」 and
@@ -319,9 +420,23 @@ export async function GET(request: Request) {
       // Everything the market did while nobody was looking. Only for a plan
       // already being watched: a first sighting has no gap to cover, and
       // treating one as if it did would fill plans on history.
+      // 建議發出後一分鐘 — the fill may only be judged on price seen after
+      // the recommendation had a minute to be acted on; the catch-up window
+      // is bounded the same way so a dip before the push never fills.
+      const recommendedMs = tracked.recommendedAt ? Date.parse(tracked.recommendedAt) : NaN;
+      const armedFromMs = Number.isFinite(recommendedMs) ? recommendedMs + ENTRY_ARM_MS : NaN;
+      const entryArmed = !Number.isFinite(armedFromMs) || Date.now() >= armedFromMs;
+      const windowFrom = Number.isFinite(armedFromMs)
+        ? new Date(Math.max(Date.parse(tracked.generatedAt), armedFromMs)).toISOString()
+        : tracked.generatedAt;
       const window = samePlan
-        ? await missedWindow(meta, previous?.updatedAt, tracked.generatedAt, gaps)
+        ? await missedWindow(meta, previous?.updatedAt, windowFrom, gaps)
         : null;
+
+      // 掛單已掛多久 — from the snapshot's own birth, which is the only stable
+      // identity a plan has here.
+      const generatedMs = Date.parse(tracked.generatedAt);
+      const planAgeHours = Number.isFinite(generatedMs) ? (Date.now() - generatedMs) / 3_600_000 : null;
 
       const { memory: next, events } = advancePlan({
         direction: tracked.direction,
@@ -331,7 +446,26 @@ export async function GET(request: Request) {
         memory,
         structure,
         window,
+        planAgeHours,
+        entryArmed,
+        barsHeld: read?.barsHeld ?? null,
+        lastClosedBar:
+          plan.entry_style === "confirm" && (memory.state === "waiting" || memory.state === "touched")
+            ? await lastClosedH4(meta, gaps)
+            : null,
+        eventAhead: eventAhead ? { label: eventAhead.label, minutesAway: eventAhead.minutesAway } : null,
       });
+
+      // 成交時間 — stamped once, on the sweep that saw the fill; the horizon
+      // clock counts from here. Rows from before this existed stay null and
+      // never time out (unknown is not a reason to close a trade).
+      if (
+        (next.state === "entered" || next.state === "added" || next.state === "scaled") &&
+        !tracked.enteredAt &&
+        events.some((e) => e.kind === "entered")
+      ) {
+        tracked.enteredAt = new Date().toISOString();
+      }
 
       // No memory, no mouth. If this state cannot be persisted, the next
       // sweep will believe nothing happened and fire the identical events
@@ -398,7 +532,8 @@ export async function GET(request: Request) {
           e.kind === "stop_hit" ||
           e.kind === "target_hit" ||
           e.kind === "structure_exit" ||
-          e.kind === "thesis_exit",
+          e.kind === "thesis_exit" ||
+          e.kind === "horizon_exit",
       );
       if (resolved && plan.entry !== null && plan.stop_loss !== null && plan.take_profit !== null) {
         const logged = await recordResolvedPlan({
@@ -432,7 +567,9 @@ export async function GET(request: Request) {
                 ? "structure_exit"
                 : resolved.kind === "thesis_exit"
                   ? "thesis_exit"
-                  : "stop_hit",
+                  : resolved.kind === "horizon_exit"
+                    ? "horizon_exit"
+                    : "stop_hit",
           // The banked half's price, when this trade scaled out before its
           // final exit — either earlier (state remembered as scaled) or in
           // this very sweep (scale_out event ahead of the resolving one).
@@ -487,6 +624,17 @@ export async function GET(request: Request) {
         notified = results.filter((r) => r.ok).map((r) => r.channel);
       }
 
+      // Where the trade stands, for the pre-event warning: R against the
+      // original risk, and whether the stop already protects the entry.
+      const risk0 = plan.entry !== null && plan.stop_loss !== null ? Math.abs(plan.entry - plan.stop_loss) : 0;
+      const openR =
+        plan.entry !== null && risk0 > 0
+          ? Math.round(((tracked.direction === "long" ? quote.price - plan.entry : plan.entry - quote.price) / risk0) * 100) / 100
+          : null;
+      const protectedAtEntry =
+        plan.entry !== null && next.activeStop !== null &&
+        (tracked.direction === "long" ? next.activeStop >= plan.entry : next.activeStop <= plan.entry);
+
       return {
         symbol: meta.symbol,
         paper,
@@ -494,7 +642,9 @@ export async function GET(request: Request) {
         priceAgeMinutes: Math.round(quote.ageMinutes),
         state: next.state,
         events: events.map((e) => e.kind),
-        notified,
+        notified: [...catchUp.map((c) => `${c}:建議補發`), ...notified],
+        openR,
+        protectedAtEntry,
         // Why the phone stayed quiet about a real event, in the sweep log —
         // otherwise a silent-but-tracked trade looks identical to a bug.
         muted: !paper && !announced ? pushWorthiness(latest).reason : undefined,
@@ -524,9 +674,9 @@ export async function GET(request: Request) {
   // naming all held symbols beats nine phones buzzing separately.
   let eventWarning: string | null = null;
   try {
-    const event = upcomingHighImpactEvent(new Date(), EVENT_BLACKOUT_MS);
+    const event = eventAhead;
     const held = results.filter(
-      (r): r is typeof r & { symbol: string; state: string; paper: boolean } =>
+      (r): r is typeof r & { symbol: string; state: string; paper: boolean; openR?: number | null; protectedAtEntry?: boolean } =>
         "state" in r &&
         (r.state === "entered" || r.state === "added" || r.state === "scaled") &&
         "paper" in r &&
@@ -543,11 +693,21 @@ export async function GET(request: Request) {
       if (receipt.isNew) {
         const hours = Math.floor(event.minutesAway / 60);
         const minutes = event.minutesAway % 60;
+        // Per position, the concrete instruction — not a generic "consider".
+        // ≥1R has already had its stop moved to entry by the monitor (see
+        // PRE_EVENT_PROTECT_R); what is left is the positions that have not
+        // paid yet, and for those the only sound mechanical answer is size.
+        const lines = held.map((h) => {
+          const r = h.openR != null ? `${h.openR > 0 ? "+" : ""}${h.openR}R` : "R 未知";
+          const advice = h.protectedAtEntry
+            ? "停損已在進場價，最差打平，可持有"
+            : "尚未保本 —— 建議減半，或以現價出場後等公布再看";
+          return `・${h.symbol} ${r}：${advice}`;
+        });
         eventWarning =
-          `⚠️ ${hours > 0 ? `${hours} 小時 ` : ""}${minutes} 分鐘後公布${event.label}。` +
-          `目前持倉中：${held.map((h) => h.symbol).join("、")}。` +
-          `數據前後的行情不是技術面能預測的 —— 考慮減半部位或把停損收緊到保本，` +
-          `不要在公布前加倉。`;
+          `⚠️ ${hours > 0 ? `${hours} 小時 ` : ""}${minutes} 分鐘後公布${event.label}。\n` +
+          `目前持倉：\n${lines.join("\n")}\n` +
+          `數據前後的行情不是技術面能預測的。公布前系統不會回報任何加倉點。`;
         await notifyAll(eventWarning);
       }
     }
