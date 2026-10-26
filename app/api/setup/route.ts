@@ -2,6 +2,7 @@ import { neon } from "@neondatabase/serverless";
 import { directNeonUrl } from "@/lib/db";
 import { REQUIRED_TABLES, schemaStatements } from "@/lib/db/schema";
 import { json } from "@/lib/json-response";
+import { classifyConnectionFailure } from "@/lib/db/setup-diagnosis";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -95,6 +96,20 @@ export async function POST(request: Request) {
   // no-op; the worst the lock did was make migrations unreachable.
 
   const sql = neon(url, NO_CACHE);
+
+  // 先確認連得上. When the connection itself is wrong, every one of the 43
+  // statements fails with the same message, and the page used to show only
+  // the count. One probe, one sentence that says what to fix.
+  try {
+    await sql.query("select 1");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return json(
+      { error: classifyConnectionFailure(process.env.DATABASE_URL?.trim() ?? null, message), ran: 0, failed: 0, errors: [] },
+      { status: 502 },
+    );
+  }
+
   const statements = schemaStatements();
   const results: Array<{ statement: string; ok: boolean; error?: string }> = [];
 
@@ -122,6 +137,13 @@ export async function POST(request: Request) {
       ready,
       ran: results.length,
       failed: failed.length,
+      // The first failure's own words, so the page never again says only
+      // "N 個語句失敗". Identical messages across every statement mean the
+      // connection; a lone one names the statement.
+      error:
+        failed.length > 0 && !ready
+          ? `${failed.length}/${results.length} 個語句失敗。第一個：「${failed[0].statement}…」→ ${failed[0].error}`
+          : undefined,
       // Only the failures are returned in full — a list of 12 successful DDL
       // statements is noise.
       errors: failed,

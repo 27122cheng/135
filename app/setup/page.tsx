@@ -152,7 +152,13 @@ export default function SetupPage() {
       if (res.ok && body.ready) setTableResult("資料表已就緒");
       else if (res.status === 409) setTableResult(body.error);
       else if (res.status === 401) setTableResult("401 —— 已設定 CRON_SECRET，請在最下方貼上");
-      else setTableResult(body.error ?? `${body.failed ?? "?"} 個語句失敗`);
+      else
+        setTableResult(
+          body.error ??
+            (Array.isArray(body.errors) && body.errors[0]?.error
+              ? `${body.failed ?? "?"} 個語句失敗：${body.errors[0].error}`
+              : `${body.failed ?? "?"} 個語句失敗`),
+        );
       await refresh();
     } catch {
       setTableResult("建立失敗");
