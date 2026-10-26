@@ -24,6 +24,13 @@ export function classifyConnectionFailure(url: string | null, message: string): 
       `用其他 Postgres 則需要換驅動。原始錯誤：${message}`
     );
   }
+  if (m.includes("exceeded the quota") || m.includes("402")) {
+    return (
+      `Neon 免費額度已用完（本月運算時數或流量），所有查詢都會被拒到月初重置。` +
+      `到 Neon 控制台的 Usage 確認是哪一項；可以等重置、升級方案，或在 Neon 開一個新專案換連線字串。` +
+      `吃額度的主因是網頁開著每分鐘輪詢讓資料庫停不下來，這版已降到五分鐘一次。原始錯誤：${message}`
+    );
+  }
   if (m.includes("password authentication failed") || m.includes("authentication")) {
     return `資料庫拒絕登入：DATABASE_URL 的帳號或密碼錯誤（Neon 重設密碼後連線字串會變）。原始錯誤：${message}`;
   }

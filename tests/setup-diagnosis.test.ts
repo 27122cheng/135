@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { check, report } from "./_harness";
 import { classifyConnectionFailure } from "@/lib/db/setup-diagnosis";
 import { schemaStatements } from "@/lib/db/schema";
+import { explain } from "@/lib/db/postgres-store";
 
 /** 建表失敗要說出是哪一種失敗，不是只報一個數字。 */
 
@@ -15,6 +16,8 @@ check("a suspended Neon endpoint is explained",
   classifyConnectionFailure(neon, "The endpoint has been disabled. Enable it using Neon API").includes("停用"));
 check("an unreachable host is explained",
   classifyConnectionFailure(neon, "getaddrinfo ENOTFOUND ep-x").includes("連不到"));
+check("a spent Neon quota is named, with what to do",
+  classifyConnectionFailure(neon, 'Server error (HTTP status 402): {"message":"Your account or project has exceeded the quota. Upgrade your plan to increase limits."}').includes("免費額度已用完"));
 check("an unparsable url is explained",
   classifyConnectionFailure("not a url", "x").includes("無法解析"));
 check("the raw message always rides along",
@@ -25,6 +28,11 @@ const s = schemaStatements();
 check("every statement starts with DDL", s.every((x) => /^(create|alter|drop)\b/i.test(x)), s.filter((x) => !/^(create|alter|drop)\b/i.test(x)).map((x) => x.slice(0, 40)));
 check("no comment text leaked into a statement", s.every((x) => !x.includes("--")));
 
+check("every store error carries the same explanation",
+  explain(new Error('Server error (HTTP status 402): {"message":"Your account or project has exceeded the quota."}')).message.includes("免費額度已用完"));
+const board = readFileSync(join(__dirname, "..", "app", "board", "page.tsx"), "utf8");
+check("the board no longer polls the database every minute", board.includes("const READ_INTERVAL_MS = 5 * 60_000;"));
+check("nor does the ranking", readFileSync(join(__dirname, "..", "app", "ranking", "page.tsx"), "utf8").includes("void load(), 5 * 60_000"));
 const route = readFileSync(join(__dirname, "..", "app", "api", "setup", "route.ts"), "utf8");
 check("the route probes the connection before running the schema", route.includes('sql.query("select 1")') && route.includes("classifyConnectionFailure("));
 check("and returns the first failure's own words", route.includes("個語句失敗。第一個："));

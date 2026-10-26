@@ -83,7 +83,15 @@ function HealthStrip({ health }: { health: BoardResponse["health"] }) {
 }
 
 /** Cheap: one query. */
-const READ_INTERVAL_MS = 60_000;
+/**
+ * Was 60 s. A tab left open all day polled the database 1,440 times and —
+ * the part that mattered — never let Neon's compute auto-suspend, so the
+ * free plan's monthly compute hours were spent by a dashboard nobody was
+ * looking at (Neon answered 402 for the rest of the month). Five minutes,
+ * and only while the tab is visible, which is also what the scheduler
+ * actually delivers.
+ */
+const READ_INTERVAL_MS = 5 * 60_000;
 /**
  * Expensive: nine pipelines, each making AI calls.
  *
