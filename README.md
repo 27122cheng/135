@@ -1842,6 +1842,21 @@ CFTC 代碼取自公開資料整理、未逐一即時驗證 —— CFTC 代碼�
 代碼填錯不會產生錯誤數字：所有 OHLCV 來源都失敗時訊號會回 `no-trade` 並在
 `data_gaps` 說明。頁面上的常用範例代碼取自公開資料整理，未逐一即時驗證。
 
+## 不想用 Neon？改用 Supabase，五分鐘
+
+資料庫一定要有一個：交易日誌、學習、監控狀態、Telegram 設定、總覽的最新訊號全存在那裡，
+沒有它網站只剩「按一次分析一個商品」。但不一定要 Neon。Supabase 免費層沒有運算時數
+額度（閒置七天會暫停，每小時的掃描工作流會讓它一直醒著），程式本來就支援：
+
+1. 到 supabase.com 開一個專案。
+2. SQL Editor 貼上整份 `supabase/schema.sql` 執行一次（之後 schema 有新增再貼一次，語句都是冪等的）。
+3. Vercel 環境變數：設 `NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_ANON_KEY`、
+   `SUPABASE_SERVICE_ROLE_KEY`（三個都在 Supabase 的 Project Settings → API），並**刪掉** `DATABASE_URL`
+   —— 它存在時永遠優先走 Neon。
+4. 重新部署。通知頁的「建立資料表」按鈕在 Supabase 模式會告訴你去 SQL Editor，這是預期的。
+
+舊的 Neon 資料不會自動搬過去；日誌從零開始累積。
+
 ## Neon 回 402「exceeded the quota」？
 
 免費方案每月有運算時數與流量上限。資料庫只要有查詢就醒著，閒置五分鐘才休眠；一個開著的
