@@ -8,6 +8,8 @@ import { SiteNav } from "@/components/site-nav";
 import { EconomicCountdown } from "@/components/economic-countdown";
 import { userKeyHeaders } from "@/lib/user-keys-client";
 import { CONFIDENT_ENTRY_MIN } from "@/lib/analysis/confidence";
+import { isNoDatabase, loadLocalSignals, saveLocalSignal } from "@/lib/local-signals";
+import type { TradeSignal } from "@/types/signal";
 
 /**
  * 交易總覽 — which instruments have a trade right now, at a glance.
@@ -32,7 +34,7 @@ interface BoardResponse {
   scannedCount?: number;
   oldestAt?: string | null;
   /** Which table answered — "signals" means latest_signal was empty. */
-  source?: "latest_signal" | "signals";
+  source?: "latest_signal" | "signals" | "browser";
   /** Set when the board is running off a fallback the owner should fix. */
   note?: string | null;
   /** Short commit sha of the deployed build, so "did it deploy" is answerable. */
@@ -356,6 +358,13 @@ export default function BoardPage() {
   const [rescanning, setRescanning] = useState<Set<string>>(new Set());
   const [autoScan, setAutoScan] = useState(true);
   /**
+   * 瀏覽器模式 — no database configured. Scan results live in this device's
+   * localStorage and the board is rebuilt from them; the server only shapes
+   * the rows. Decided by the first read (a 501 from /api/board).
+   */
+  const [browserMode, setBrowserMode] = useState(false);
+  const browserModeRef = useRef(false);
+  /**
    * Why each symbol's scan did not produce a row, keyed by symbol.
    *
    * Was a single string, set only from `body.storeError` / `body.error`. That
@@ -380,6 +389,22 @@ export default function BoardPage() {
       // force-dynamic on the server; that says nothing about the client cache.
       const res = await fetch("/api/board", { cache: "no-store" });
       const body: BoardResponse = await res.json();
+      if (res.status === 501) {
+        // 跟其他分析網頁一樣：沒有資料庫，記錄在瀏覽器裡。
+        browserModeRef.current = true;
+        setBrowserMode(true);
+        const local = loadLocalSignals();
+        const shaped = await fetch("/api/board", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ signals: local }),
+          cache: "no-store",
+        });
+        const rows: BoardResponse = shaped.ok ? await shaped.json() : { rows: [], source: "browser" };
+        setData(rows);
+        setError(null);
+        return rows;
+      }
       setData(body);
       setError(res.ok ? null : (body.next ?? body.error ?? "讀取失敗"));
       return body;
@@ -449,7 +474,7 @@ export default function BoardPage() {
             // throws — which the old `.catch(() => null)` turned into "no
             // error", i.e. a silent failure indistinguishable from success.
             const raw = await res.text();
-            let body: { error?: string; storeError?: string; stored?: boolean } | null = null;
+            let body: { error?: string; storeError?: string; stored?: boolean; signal?: TradeSignal } | null = null;
             try {
               body = JSON.parse(raw);
             } catch {
@@ -466,6 +491,11 @@ export default function BoardPage() {
               );
             } else if (body === null) {
               fail(row.symbol, "伺服器回傳的不是 JSON（多半是逾時或崩潰頁）");
+            } else if (body.storeError && browserModeRef.current && isNoDatabase(body.storeError) && body.signal) {
+              // 瀏覽器模式: "no database" is not a failure — the browser is
+              // the store. Keep the result here; the re-read below rebuilds
+              // the row from it.
+              if (!saveLocalSignal(body.signal)) fail(row.symbol, "瀏覽器儲存空間不可用（隱私模式或已滿），這次結果留不住");
             } else if (body.storeError) {
               // The scan ran but the result could not be stored — the board
               // would stay at 無紀錄 forever with the analysis silently thrown
@@ -668,6 +698,12 @@ export default function BoardPage() {
 
       <EconomicCountdown />
 
+      {browserMode && (
+        <div className="mb-3 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 text-xs leading-relaxed text-sky-300">
+          瀏覽器模式：沒有設定資料庫，掃描結果只存在這台裝置的瀏覽器裡，跟你其他分析網頁一樣 —— 打開才算、關掉就停。
+          按「重整全部商品」重算；Telegram 通知、自動監控持倉、停損學習與實驗室採用在這個模式不可用。
+        </div>
+      )}
       {error && (
         <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-400">
           {error}

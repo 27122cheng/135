@@ -3,6 +3,7 @@ import { readLatest } from "@/lib/latest-signals";
 import { allInstruments } from "@/lib/server-symbols";
 import { toBoardRow } from "@/lib/board-row";
 import { json } from "@/lib/json-response";
+import { COMMODITIES, type SignalRow } from "@/types/signal";
 
 export type { BoardAddOn, BoardReference, BoardRow } from "@/lib/board-row";
 
@@ -22,6 +23,52 @@ export const dynamic = "force-dynamic";
  * that shows a list would make the "instant" board slower than the thing it
  * replaced.
  */
+
+/**
+ * 瀏覽器模式 — rows from signals the browser holds, when there is no database.
+ *
+ * The row shape and the regime summary are the server's (lib/board-row.ts),
+ * so a board built from localStorage reads exactly like one built from the
+ * store. Symbols the roster does not know (a browser-only custom symbol)
+ * get a row named after themselves.
+ */
+export async function POST(request: Request) {
+  let body: { signals?: unknown };
+  try {
+    body = (await request.json()) as { signals?: unknown };
+  } catch {
+    return json({ error: "請求格式錯誤" }, { status: 400 });
+  }
+  const signals = (Array.isArray(body.signals) ? body.signals : []).filter(
+    (s): s is SignalRow => !!s && typeof s === "object" && typeof (s as { symbol?: unknown }).symbol === "string",
+  );
+  const bySymbol = new Map(
+    signals.map((s) => [
+      s.symbol.toUpperCase(),
+      { ...s, id: s.id ?? s.symbol, created_at: s.created_at ?? s.generated_at } as SignalRow,
+    ]),
+  );
+  const roster = await allInstruments().catch(() => [...COMMODITIES]);
+  const known = new Set(roster.map((m) => m.symbol));
+  const extras = [...bySymbol.keys()]
+    .filter((sym) => !known.has(sym))
+    .map((sym) => ({ symbol: sym, label: sym, category: "forex" as const }) as (typeof COMMODITIES)[number]);
+  const rows = [...roster, ...extras].map((meta) => toBoardRow(meta, bySymbol.get(meta.symbol)));
+  return json({
+    source: "browser",
+    note: null,
+    build: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
+    db: null,
+    health: null,
+    tradeCount: rows.filter((r) => r.stance === "enter").length,
+    scannedCount: rows.filter((r) => r.generatedAt !== null).length,
+    oldestAt: rows.reduce<string | null>(
+      (oldest, r) => (r.generatedAt && (!oldest || r.generatedAt < oldest) ? r.generatedAt : oldest),
+      null,
+    ),
+    rows,
+  });
+}
 
 export async function GET(request: Request) {
   const wanted = new URL(request.url).searchParams.get("symbol")?.toUpperCase();
