@@ -8,6 +8,8 @@ import { SiteNav } from "@/components/site-nav";
 import { EconomicCountdown } from "@/components/economic-countdown";
 import { userKeyHeaders } from "@/lib/user-keys-client";
 import { CONFIDENT_ENTRY_MIN } from "@/lib/analysis/confidence";
+import { isNoDatabase, loadLocalSignals, saveLocalSignal } from "@/lib/local-signals";
+import type { TradeSignal } from "@/types/signal";
 
 /**
  * 交易總覽 — which instruments have a trade right now, at a glance.
@@ -32,19 +34,66 @@ interface BoardResponse {
   scannedCount?: number;
   oldestAt?: string | null;
   /** Which table answered — "signals" means latest_signal was empty. */
-  source?: "latest_signal" | "signals";
+  source?: "latest_signal" | "signals" | "browser";
   /** Set when the board is running off a fallback the owner should fix. */
   note?: string | null;
   /** Short commit sha of the deployed build, so "did it deploy" is answerable. */
   build?: string | null;
   /** Which database host answered — the fact that catches a per-deploy branch. */
   db?: { kind: string; host: string; database: string | null } | null;
+  /** When the scan and the monitor last ran, for the health strip. */
+  health?: { lastScanAt: string | null; lastMonitorAt: string | null } | null;
   error?: string;
   next?: string;
 }
 
+/**
+ * 系統健康 — the two schedulers, and whether either has gone quiet.
+ *
+ * The refresh is hourly and the monitor nominally every five minutes
+ * (really ~3.5 h median on GitHub's schedule). Past these bounds the
+ * board is showing a market that has moved on, and nothing else on the
+ * page says so.
+ */
+function HealthStrip({ health }: { health: BoardResponse["health"] }) {
+  if (!health) return null;
+  const age = (iso: string | null) => (iso ? (Date.now() - Date.parse(iso)) / 60_000 : null);
+  const fmtAge = (m: number | null) =>
+    m === null ? "從未" : m < 60 ? `${Math.round(m)} 分鐘前` : `${Math.round((m / 60) * 10) / 10} 小時前`;
+  const scan = age(health.lastScanAt);
+  const mon = age(health.lastMonitorAt);
+  const scanBad = scan === null || scan > 5 * 60;
+  const monBad = mon === null || mon > 4 * 60;
+  const tone = (bad: boolean) => (bad ? "text-red-400" : "text-emerald-400");
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-1.5 text-[11px] text-neutral-500">
+      <span>系統健康</span>
+      <span>
+        掃描 <span className={tone(scanBad)}>{fmtAge(scan)}</span>
+      </span>
+      <span>·</span>
+      <span>
+        監控 <span className={tone(monBad)}>{fmtAge(mon)}</span>
+      </span>
+      {(scanBad || monBad) && (
+        <span className="text-red-400/80">
+          — 排程可能停擺：檢查 GitHub Actions 的 refresh／monitor 工作流，或改用外部 pinger 打 /api/monitor
+        </span>
+      )}
+    </div>
+  );
+}
+
 /** Cheap: one query. */
-const READ_INTERVAL_MS = 60_000;
+/**
+ * Was 60 s. A tab left open all day polled the database 1,440 times and —
+ * the part that mattered — never let Neon's compute auto-suspend, so the
+ * free plan's monthly compute hours were spent by a dashboard nobody was
+ * looking at (Neon answered 402 for the rest of the month). Five minutes,
+ * and only while the tab is visible, which is also what the scheduler
+ * actually delivers.
+ */
+const READ_INTERVAL_MS = 5 * 60_000;
 /**
  * Expensive: nine pipelines, each making AI calls.
  *
@@ -309,6 +358,13 @@ export default function BoardPage() {
   const [rescanning, setRescanning] = useState<Set<string>>(new Set());
   const [autoScan, setAutoScan] = useState(true);
   /**
+   * 瀏覽器模式 — no database configured. Scan results live in this device's
+   * localStorage and the board is rebuilt from them; the server only shapes
+   * the rows. Decided by the first read (a 501 from /api/board).
+   */
+  const [browserMode, setBrowserMode] = useState(false);
+  const browserModeRef = useRef(false);
+  /**
    * Why each symbol's scan did not produce a row, keyed by symbol.
    *
    * Was a single string, set only from `body.storeError` / `body.error`. That
@@ -333,6 +389,22 @@ export default function BoardPage() {
       // force-dynamic on the server; that says nothing about the client cache.
       const res = await fetch("/api/board", { cache: "no-store" });
       const body: BoardResponse = await res.json();
+      if (res.status === 501) {
+        // 跟其他分析網頁一樣：沒有資料庫，記錄在瀏覽器裡。
+        browserModeRef.current = true;
+        setBrowserMode(true);
+        const local = loadLocalSignals();
+        const shaped = await fetch("/api/board", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ signals: local }),
+          cache: "no-store",
+        });
+        const rows: BoardResponse = shaped.ok ? await shaped.json() : { rows: [], source: "browser" };
+        setData(rows);
+        setError(null);
+        return rows;
+      }
       setData(body);
       setError(res.ok ? null : (body.next ?? body.error ?? "讀取失敗"));
       return body;
@@ -402,7 +474,7 @@ export default function BoardPage() {
             // throws — which the old `.catch(() => null)` turned into "no
             // error", i.e. a silent failure indistinguishable from success.
             const raw = await res.text();
-            let body: { error?: string; storeError?: string; stored?: boolean } | null = null;
+            let body: { error?: string; storeError?: string; stored?: boolean; signal?: TradeSignal } | null = null;
             try {
               body = JSON.parse(raw);
             } catch {
@@ -419,6 +491,11 @@ export default function BoardPage() {
               );
             } else if (body === null) {
               fail(row.symbol, "伺服器回傳的不是 JSON（多半是逾時或崩潰頁）");
+            } else if (body.storeError && browserModeRef.current && isNoDatabase(body.storeError) && body.signal) {
+              // 瀏覽器模式: "no database" is not a failure — the browser is
+              // the store. Keep the result here; the re-read below rebuilds
+              // the row from it.
+              if (!saveLocalSignal(body.signal)) fail(row.symbol, "瀏覽器儲存空間不可用（隱私模式或已滿），這次結果留不住");
             } else if (body.storeError) {
               // The scan ran but the result could not be stored — the board
               // would stay at 無紀錄 forever with the analysis silently thrown
@@ -572,6 +649,7 @@ export default function BoardPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 py-5">
       <SiteNav title="交易總覽" />
+      <HealthStrip health={data?.health ?? null} />
 
       {/* 重整 sits with the status line it acts on, not in the nav bar: the
           nav is now identical on every page, and a control that exists on
@@ -620,6 +698,12 @@ export default function BoardPage() {
 
       <EconomicCountdown />
 
+      {browserMode && (
+        <div className="mb-3 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 text-xs leading-relaxed text-sky-300">
+          瀏覽器模式：沒有設定資料庫，掃描結果只存在這台裝置的瀏覽器裡，跟你其他分析網頁一樣 —— 打開才算、關掉就停。
+          按「重整全部商品」重算；Telegram 通知、自動監控持倉、停損學習與實驗室採用在這個模式不可用。
+        </div>
+      )}
       {error && (
         <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-400">
           {error}

@@ -6,6 +6,7 @@ import { fetchFree } from "./free-source";
 import { fetchStooqText } from "./stooq-fetch";
 import { fetchTwelveDataOHLCV } from "./twelvedata";
 import { fetchViaProxy, type Candle } from "./yfinance";
+import { backoffRemainingMs } from "./quota";
 
 /**
  * 深度歷史 — years of daily bars, for the lab alone.
@@ -43,6 +44,74 @@ import { fetchViaProxy, type Candle } from "./yfinance";
 
 /** Below this many bars the deep fetch has not earned its name. */
 const SHORT_SERIES = 600;
+
+/**
+ * 深度歷史的替代代號 — a second Yahoo ticker for the same market, tried
+ * when the symbol's own ticker comes back empty or short.
+ *
+ * Gold is the case: `XAUUSD=X` is the right basis for quotes and levels
+ * (spot, what people trade — see instrument-basis.ts), and it is also the
+ * one Yahoo ticker that goes missing for days at a time, which is why the
+ * quote side already has four fallbacks. The lab had none: its keyless legs
+ * are Yahoo and Stooq, Stooq refuses datacenter IPs, and Twelve Data needs
+ * a key — so 取不到 K 棒，無法進行實驗 was gold's default state.
+ *
+ * `GC=F` is the COMEX continuous contract: decades of daily bars, hourly
+ * back two years, and it is the *same market* one basis away (~1% carry).
+ * The lab measures geometry in ATR units and ranks conditions by
+ * expectancy, none of which moves with a level shift, so futures history
+ * is a valid sample for it — stated in the notes whenever it is used, and
+ * never used for a quote or a level.
+ */
+const DEEP_ALIASES: Partial<Record<string, Array<{ ticker: string; note: string }>>> = {
+  XAUUSD: [{ ticker: "GC=F", note: "COMEX 黃金期貨連續合約；與現貨差一個基差（約 1%），以 ATR 為單位的型態統計不受影響" }],
+};
+
+/**
+ * The Yahoo leg of a deep fetch: the symbol's own ticker first, then each
+ * alias, longest series wins. `ranges` are tried in order per ticker (the
+ * H4 path steps down from 730d when the big request is refused).
+ */
+async function fetchProxyDeep(
+  meta: CommodityMeta,
+  timeframe: "D1" | "H4",
+  ranges: string[],
+  proxyGaps: string[],
+  gaps: string[],
+): Promise<{ candles: Candle[]; stale: boolean } | null> {
+  // A refused or timed-out Yahoo call puts the shared source into a short
+  // backoff (2 s doubling to 60 s). The fallbacks below are the *point* of
+  // this function, and firing them into that backoff refused every one of
+  // them before it was tried — the 730d→365d→180d ladder never actually
+  // stepped down. Waiting out a short backoff is cheap against the route's
+  // 60 s ceiling; a long one means Yahoo really is down and we move on.
+  const MAX_WAIT_MS = 4500;
+  const waitOut = async () => {
+    const wait = backoffRemainingMs("yahoo");
+    if (wait > 0 && wait <= MAX_WAIT_MS) await new Promise((r) => setTimeout(r, wait + 50));
+  };
+  const tryTicker = async (ticker: string) => {
+    for (const range of ranges) {
+      await waitOut();
+      const r = await fetchViaProxy(ticker, timeframe, proxyGaps, range);
+      if (r?.candles?.length) return r;
+    }
+    return null;
+  };
+  const primary = await tryTicker(meta.yfinanceSymbol);
+  if (primary && primary.candles.length >= SHORT_SERIES) return primary;
+
+  let best = primary;
+  for (const alias of DEEP_ALIASES[meta.symbol] ?? []) {
+    const r = await tryTicker(alias.ticker);
+    if (r && (!best || r.candles.length > best.candles.length)) {
+      best = r;
+      gaps.push(`${meta.symbol} 深度${timeframe === "D1" ? "日線" : "H4"}歷史改用 ${alias.ticker}（${alias.note}）`);
+      if (r.candles.length >= SHORT_SERIES) break;
+    }
+  }
+  return best;
+}
 /** Daily bars change once a day; a lab run does not need a fresher copy. */
 const TTL_MS = 12 * 60 * 60 * 1000;
 
@@ -124,7 +193,7 @@ export async function fetchDeepD1(
   }
 
   const proxyGaps: string[] = [];
-  const proxied = await fetchViaProxy(meta.yfinanceSymbol, "D1", proxyGaps, "10y");
+  const proxied = await fetchProxyDeep(meta, "D1", ["10y"], proxyGaps, gaps);
   const fromProxy = proxied?.candles ?? null;
 
   // Long enough on its own: take it and skip the second request entirely.
@@ -220,11 +289,7 @@ export async function fetchDeepH4(
   // 取不到 K 棒 while a smaller request would have succeeded. 365d ≈ 1,500
   // and 180d ≈ 780 four-hour bars, both still above the sample floor.
   const proxyGaps: string[] = [];
-  let proxied: Awaited<ReturnType<typeof fetchViaProxy>> = null;
-  for (const range of ["730d", "365d", "180d"]) {
-    proxied = await fetchViaProxy(meta.yfinanceSymbol, "H4", proxyGaps, range);
-    if (proxied?.candles?.length) break;
-  }
+  const proxied = await fetchProxyDeep(meta, "H4", ["730d", "365d", "180d"], proxyGaps, gaps);
   const fromProxy = proxied?.candles ?? null;
   if (fromProxy && fromProxy.length >= SHORT_SERIES) {
     for (const g of proxyGaps) if (g.includes("stale")) gaps.push(g);

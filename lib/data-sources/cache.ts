@@ -69,6 +69,31 @@ export function getStale<T>(key: string): { value: T; ageMs: number } | undefine
   return { value: entry.value as T, ageMs: now - entry.storedAt };
 }
 
+/**
+ * 不讓記憶體快取無上限長大.
+ *
+ * Entries were only ever dropped when something read them past their stale
+ * window; a key nobody asks for again (a date-keyed calendar lookup, a
+ * one-off symbol search) stayed forever. On a serverless instance that is
+ * moot — the instance dies first. On a PC acting as the host it is a slow
+ * leak: small per day, never reclaimed, and a long-running process has
+ * nothing else to blame. Every SWEEP_EVERY writes, expired entries are
+ * swept; past MAX_ENTRIES the oldest go first.
+ */
+export const MAX_ENTRIES = 2000;
+const SWEEP_EVERY = 50;
+let writes = 0;
+
+function sweep(now: number): void {
+  for (const [key, entry] of store) {
+    if (now > entry.staleUntil) store.delete(key);
+  }
+  if (store.size > MAX_ENTRIES) {
+    const oldest = [...store.entries()].sort((a, b) => a[1].storedAt - b[1].storedAt);
+    for (const [key] of oldest.slice(0, store.size - MAX_ENTRIES)) store.delete(key);
+  }
+}
+
 export function setCached<T>(key: string, value: T, ttlMs: number, staleMs = DEFAULT_STALE_MS): void {
   const now = Date.now();
   store.set(key, {
@@ -77,6 +102,12 @@ export function setCached<T>(key: string, value: T, ttlMs: number, staleMs = DEF
     expiresAt: now + ttlMs,
     staleUntil: now + ttlMs + staleMs,
   });
+  if (++writes % SWEEP_EVERY === 0 || store.size > MAX_ENTRIES) sweep(now);
+}
+
+/** For diagnostics: how many entries the memory tier holds right now. */
+export function cacheSize(): number {
+  return store.size;
 }
 
 /** Only caches successful (non-null) results so failures are retried. */

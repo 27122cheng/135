@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { correlatedExposure, type Exposure } from "@/lib/analysis/exposure";
-import { positionSize } from "@/lib/analysis/sizing";
+import { positionSize, remainingRiskR } from "@/lib/analysis/sizing";
 import { loadSizingConfig } from "@/lib/sizing-client";
 import type { CorrelationReport } from "@/lib/analysis/correlation";
 
@@ -27,6 +27,9 @@ interface HeldPosition {
   state: string;
   paper?: boolean;
   direction?: "long" | "short" | null;
+  entry?: number | null;
+  stopLoss?: number | null;
+  activeStop?: number | null;
 }
 
 export function PositionSizing({
@@ -42,6 +45,8 @@ export function PositionSizing({
 }) {
   const [config, setConfig] = useState(() => loadSizingConfig());
   const [exposure, setExposure] = useState<Exposure>({ related: [], reasons: [], factor: 1 });
+  /** 總曝險 — what the book already risks, from the positions the monitor holds. */
+  const [book, setBook] = useState<{ openRiskR: number; openCount: number } | null>(null);
   /** 歷史最長連敗 — from the system's own settled trades, for the survival line. */
   const [lossStreak, setLossStreak] = useState<number | null>(null);
   /** 目前連敗 — drives the anti-martingale cut; a win resets it to 0. */
@@ -87,15 +92,26 @@ export function PositionSizing({
         // Direction-aware and sign-aware — see lib/analysis/exposure.ts. The
         // inline version this replaced cut the size for a hedge and let a
         // same-side dollar stack through at full size.
-        const held = (positions.open ?? [])
-          .filter(
-            (p) =>
-              !p.paper &&
-              (p.state === "entered" || p.state === "added" || p.state === "scaled") &&
-              p.symbol !== symbol &&
-              (p.direction === "long" || p.direction === "short"),
-          )
-          .map((p) => ({ symbol: p.symbol, direction: p.direction as "long" | "short" }));
+        const openReal = (positions.open ?? []).filter(
+          (p) =>
+            !p.paper &&
+            (p.state === "entered" || p.state === "added" || p.state === "scaled") &&
+            p.symbol !== symbol &&
+            (p.direction === "long" || p.direction === "short"),
+        );
+        const held = openReal.map((p) => ({ symbol: p.symbol, direction: p.direction as "long" | "short" }));
+        // The book's open risk in R: each real position's remaining risk
+        // fraction, summed. A position already at breakeven costs nothing.
+        const openRiskR = openReal.reduce((sum, p) => {
+          const r = remainingRiskR({
+            direction: p.direction ?? null,
+            entry: p.entry ?? null,
+            stopLoss: p.stopLoss ?? null,
+            activeStop: p.activeStop ?? null,
+          });
+          return sum + (r ?? 1);
+        }, 0);
+        if (!cancelled) setBook({ openRiskR, openCount: openReal.length });
         const clusters = corr.report?.clusters ?? [];
         if (!cancelled) setExposure(correlatedExposure({ symbol, direction, held, clusters }));
       } catch {
@@ -130,8 +146,24 @@ export function PositionSizing({
     correlatedHeld: exposure.related,
     correlatedReasons: exposure.reasons,
     lossStreak: currentLossStreak,
+    openRiskR: book?.openRiskR,
+    openCount: book?.openCount,
   });
   if (!sizing) return null;
+
+  // 熔斷 — the book has no room for this trade. Nothing to size; the reason
+  // is the whole card.
+  if (sizing.blocked) {
+    return (
+      <div className="rounded-xl border border-red-900/60 bg-red-950/30 p-4">
+        <div className="mb-1 text-sm font-medium text-red-300">這筆不建議開倉 —— 帳戶層級上限</div>
+        <p className="text-[11px] leading-relaxed text-red-200/80">{sizing.blocked}</p>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-500">
+          這不是訊號的問題，是部位管理：單筆再好的期望值，也抵不過同時暴露在太多停損上的回撤。
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 p-4">

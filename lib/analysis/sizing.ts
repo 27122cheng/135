@@ -53,6 +53,53 @@ export interface SizingInput {
    * cuts the risk to three-quarters, three or more to half; a win resets.
    */
   lossStreak?: number;
+  /**
+   * 總曝險 — the risk already on the book, in multiples of one full position's
+   * risk (1 = one fresh position at full risk; a position whose stop sits at
+   * or beyond its entry contributes 0). From {@link remainingRiskR} over the
+   * open real positions. Absent means unknown, and unknown never caps.
+   */
+  openRiskR?: number;
+  /** Open real positions, counted. Absent means unknown. */
+  openCount?: number;
+}
+
+/**
+ * 同時持倉上限 — real positions open at once, this one excluded.
+ *
+ * Nine instruments can all print a B on the same morning, and until now the
+ * card would size nine positions at 1% each. Four is where a one-person book
+ * stops being managed and starts being watched.
+ */
+export const MAX_OPEN_POSITIONS = 4;
+
+/**
+ * 總曝險上限 — the book's open risk, in R, including the trade being sized.
+ * At 1% a trade that is 4% of the account exposed to stops at once; the
+ * correlation and streak factors then shrink the individual pieces further.
+ * Headroom below one full R shrinks this trade to fit; none refuses it.
+ */
+export const MAX_OPEN_RISK_R = 4;
+
+/**
+ * How much of one position's original risk is still on the table.
+ *
+ * 1 while the stop is where the plan put it, 0 once the stop is at or past
+ * the entry (breakeven or better), and the fraction in between as the stop
+ * trails. Null when the plan has no usable geometry.
+ */
+export function remainingRiskR(p: {
+  direction: "long" | "short" | null;
+  entry: number | null;
+  stopLoss: number | null;
+  activeStop: number | null;
+}): number | null {
+  if (p.direction === null || p.entry === null || p.stopLoss === null) return null;
+  const original = Math.abs(p.entry - p.stopLoss);
+  if (!(original > 0)) return null;
+  const stop = p.activeStop ?? p.stopLoss;
+  const remaining = p.direction === "long" ? p.entry - stop : stop - p.entry;
+  return Math.max(0, Math.min(1, remaining / original));
 }
 
 export interface SizingResult {
@@ -70,6 +117,14 @@ export interface SizingResult {
   correlationFactor: number;
   /** 1, 0.75 or 0.5 by the current loss streak — see streakFactor. */
   streakFactor: number;
+  /** Fraction of this trade's risk the book's headroom allows (0–1). */
+  heatFactor: number;
+  /**
+   * 熔斷 — set when the book cannot take this trade at all: too many open
+   * positions, or no risk headroom left. Units and risk amount are 0 then,
+   * and the reason is the thing to show.
+   */
+  blocked: string | null;
   /** Facts the number alone would hide. */
   notes: string[];
 }
@@ -97,12 +152,41 @@ export function positionSize(input: SizingInput): SizingResult | null {
   const n = input.correlatedHeld?.length ?? 0;
   const correlationFactor = 1 / (1 + n);
   const streak = streakFactor(input.lossStreak ?? 0);
-  const riskAmount = ((accountSize * riskPct) / 100) * correlationFactor * streak;
+
+  // 帳戶層級先於單筆：the book's headroom bounds this trade before any
+  // per-trade refinement. Count cap refuses; heat cap shrinks, and refuses
+  // only when nothing is left.
+  let blocked: string | null = null;
+  let heatFactor = 1;
+  if (input.openCount != null && input.openCount >= MAX_OPEN_POSITIONS) {
+    heatFactor = 0;
+    blocked =
+      `同時持倉已達上限 ${MAX_OPEN_POSITIONS} 筆（目前 ${input.openCount} 筆真實部位），` +
+      `不建議再開新倉 —— 先等一筆結算，或平掉最弱的一筆。`;
+  } else if (input.openRiskR != null && Number.isFinite(input.openRiskR)) {
+    const headroom = MAX_OPEN_RISK_R - Math.max(0, input.openRiskR);
+    if (headroom <= 0) {
+      heatFactor = 0;
+      blocked =
+        `總曝險已達上限：目前開倉合計 ${Math.round(input.openRiskR * 100) / 100}R 風險在檯面上` +
+        `（上限 ${MAX_OPEN_RISK_R}R），不建議再開新倉 —— 等停損上移或有部位結算釋出額度。`;
+    } else if (headroom < 1) {
+      heatFactor = headroom;
+    }
+  }
+
+  const riskAmount = ((accountSize * riskPct) / 100) * correlationFactor * streak * heatFactor;
   const units = riskAmount / stopDistance;
   const notional = units * entry;
   const leverage = notional / accountSize;
 
   const notes: string[] = [];
+  if (heatFactor > 0 && heatFactor < 1) {
+    notes.push(
+      `總曝險接近上限：開倉合計已有 ${Math.round((input.openRiskR ?? 0) * 100) / 100}R 風險，` +
+        `上限 ${MAX_OPEN_RISK_R}R，本單只用剩餘額度的 ${Math.round(heatFactor * 100)}%。`,
+    );
+  }
   if (correlationFactor < 1) {
     const why = input.correlatedReasons?.length ? `（${input.correlatedReasons.join("；")}）` : "";
     notes.push(
@@ -140,6 +224,8 @@ export function positionSize(input: SizingInput): SizingResult | null {
     leverage: Math.round(leverage * 10) / 10,
     correlationFactor,
     streakFactor: streak,
+    heatFactor,
+    blocked,
     notes,
   };
 }

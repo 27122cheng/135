@@ -6,12 +6,17 @@ import { fetchLatestPrice } from "./data-sources/yfinance";
 import { atr as computeAtr } from "./analysis/indicators";
 import { analyzeTechnical } from "./analysis/technical";
 import { EVENT_BLACKOUT_MS, analyzeTiming, upcomingHighImpactEvent } from "./analysis/timing";
+import { circuitBreaker, stopCooldown } from "./journal/risk-guard";
+import { confidenceBand, contextVerdict } from "./journal/context-record";
+import { applyDimensionScales, dimensionAccuracy } from "./journal/dimension-accuracy";
+import { openRealPositionCount } from "./monitor/book";
+import { MAX_OPEN_POSITIONS } from "./analysis/sizing";
 import { buildThesis, playbookFor } from "./analysis/thesis";
 import { detectAllPatterns, patternContributions } from "./analysis/patterns";
 import { dedupeBiasItems } from "./analysis/evidence";
 import { describeProximity, isNearEntry } from "./analysis/proximity";
 import { marketStatus } from "./market-hours";
-import { applyStoredTradingCosts } from "./settings";
+import { getSetting, applyStoredTradingCosts } from "./settings";
 import { driftWarning, fetchWitness, refineClosedReason } from "./data-sources/binance-witness";
 import { basisNote } from "./data-sources/instrument-basis";
 import { analyzeFundamental } from "./analysis/fundamental";
@@ -48,7 +53,7 @@ import { buildStopLoss, buildTakeProfits } from "./entry-exit";
 import { usableJournal } from "@/lib/journal/quarantine";
 import { getSignalStore } from "./db";
 import { fetchEconomicCalendar } from "./data-sources/finnhub";
-import {
+import { isMainSession,
   applyGradePenalties,
   assertNeverLoosened,
   computeCalibration,
@@ -59,7 +64,7 @@ import {
   type Calibration,
   type InterventionEffects,
 } from "./journal/interventions";
-import type { AppliedIntervention } from "@/types/journal";
+import type { AppliedIntervention, JournalEntry } from "@/types/journal";
 
 function round(n: number): number {
   return Math.round(n * 10000) / 10000;
@@ -76,9 +81,9 @@ function round(n: number): number {
 async function loadInterventions(
   symbol: string,
   gaps: string[],
-): Promise<InterventionEffects> {
+): Promise<{ effects: InterventionEffects; history: JournalEntry[] }> {
   const store = getSignalStore();
-  if (!store) return DEFAULT_EFFECTS;
+  if (!store) return { effects: DEFAULT_EFFECTS, history: [] };
   try {
     // 汙染隔離 first: the intervention engine's whole job is to tighten the
     // floors when realized results lag what they promised, and the fabricated
@@ -88,12 +93,13 @@ async function loadInterventions(
     const effects = computeInterventions(history);
     // Fails loudly if a future edit ever makes a knob looser than baseline.
     assertNeverLoosened(effects);
-    return effects;
+    // The same rows feed the same-symbol cooldown gate, so they ride along.
+    return { effects, history };
   } catch (err) {
     gaps.push(
       `讀取交易日誌失敗，本次未套用任何干涉規則（${err instanceof Error ? err.message : String(err)}）`,
     );
-    return DEFAULT_EFFECTS;
+    return { effects: DEFAULT_EFFECTS, history: [] };
   }
 }
 
@@ -105,14 +111,18 @@ async function loadInterventions(
  * backtests' optimism is a property of the method, and ten resolved real
  * trades per symbol is months away while ten across the book is weeks.
  */
-async function loadCalibration(gaps: string[]): Promise<Calibration> {
+async function loadCalibration(
+  gaps: string[],
+): Promise<{ calibration: Calibration; book: JournalEntry[] }> {
   const store = getSignalStore();
-  if (!store) return NO_CALIBRATION;
+  if (!store) return { calibration: NO_CALIBRATION, book: [] };
   try {
-    return computeCalibration(usableJournal(await store.listJournal({ limit: 60 })));
+    const book = usableJournal(await store.listJournal({ limit: 60 }));
+    // The book-wide rows also feed the circuit breaker — one read, two gates.
+    return { calibration: computeCalibration(book), book };
   } catch (err) {
     gaps.push(`讀取交易日誌失敗，本次未套用實績校準（${err instanceof Error ? err.message : String(err)}）`);
-    return NO_CALIBRATION;
+    return { calibration: NO_CALIBRATION, book: [] };
   }
 }
 
@@ -313,7 +323,7 @@ async function buildSignalForSymbol(
     return { positioning, fundamentalItems, news, fundFlowItems };
   })();
 
-  const [[d1, h4, w1], nonTechnical, effects, calibration, adoptions, labTrades, witness] =
+  const [[d1, h4, w1], nonTechnical, journal, bookRead, adoptions, labTrades, witness] =
     await Promise.all([
     ohlcvPromise,
     nonTechnicalPromise,
@@ -327,6 +337,8 @@ async function buildSignalForSymbol(
     applyStoredTradingCosts(),
   ]);
   const { positioning, fundamentalItems, news, fundFlowItems } = nonTechnical;
+  const { effects, history: symbolJournal } = journal;
+  const { calibration, book: bookJournal } = bookRead;
   const interventions: AppliedIntervention[] = [
     ...effects.applied,
     ...(calibration.applied ? [calibration.applied] : []),
@@ -482,7 +494,7 @@ async function buildSignalForSymbol(
   const labEvidence = adoptionEvidence(adoptions, {
     D1: d1?.candles,
     H4: h4?.candles,
-  });
+  }, labTrades);
 
   const rawBiasItems: BiasItem[] = [
     ...technical.biasItems,
@@ -505,7 +517,14 @@ async function buildSignalForSymbol(
   // merged item's own factor text already says 已合併為一票 where the reader
   // looks for it.
   const deduped = dedupeBiasItems(rawBiasItems);
-  const biasItems = deduped.items;
+  // 面向學習 — a dimension with no predictive value on the book's own real
+  // trades votes at half weight. Learned from the journal, subtract-only,
+  // applied before the direction is picked so the side and the score read
+  // the same evidence. Nothing scales until twelve real rows carry the
+  // marker; until then this is the identity.
+  const dimensionScaled = applyDimensionScales(deduped.items, dimensionAccuracy(bookJournal));
+  const biasItems = dimensionScaled.items;
+  const dimensionLearning = dimensionScaled.learning.scaled.length > 0 ? dimensionScaled.learning : null;
 
   const { direction, tie } = pickDirection(biasItems);
   if (tie) {
@@ -859,6 +878,7 @@ async function buildSignalForSymbol(
           d1.candles,
           undefined,
           meta.symbol,
+          tradePlan.entry_style ?? "limit",
         )
       : null;
   if (tradePlan.stance === "enter" && !planBacktest) {
@@ -997,7 +1017,128 @@ async function buildSignalForSymbol(
     };
   }
 
-  applyLabGate(signal, adoptions, { D1: d1?.candles, H4: h4?.candles });
+  applyLabGate(signal, adoptions, { D1: d1?.candles, H4: h4?.candles }, labTrades);
+
+  // 嚴格模式 — only trade what the lab has verified. The gate above can only
+  // withdraw a trade where something is adopted; with nothing adopted the
+  // analysis trades on its own rules. Strict mode closes that door: no
+  // adopted, non-probation combination for this symbol and direction means
+  // no entry, and the card says exactly what is missing. The reference
+  // levels stay, paper-tracked, so the cost of the mode is measured.
+  if (signal.trade_plan.stance === "enter" && (await getSetting("LAB_STRICT").catch(() => null)) === "1") {
+    const gate = signal.lab_gate;
+    const usable = gate && !gate.unevaluable && !gate.health?.probation;
+    if (!usable || !gate.met) {
+      const why = !gate
+        ? `嚴格模式：${meta.symbol} ${signal.direction === "long" ? "做多" : "做空"}尚無實驗室驗證並採用的條件`
+        : gate.health?.probation
+          ? "嚴格模式：已採用條件在觀察期，暫不作為進場依據"
+          : gate.unevaluable
+            ? "嚴格模式：已採用條件無法在本根 K 棒檢查"
+            : "嚴格模式：已採用條件未成立";
+      signal.downgrades = [...(signal.downgrades ?? []), why];
+      signal.trade_plan = {
+        ...signal.trade_plan,
+        stance: "wait",
+        summary: `${why}。嚴格模式下只做實驗室樣本內、樣本外都通過驗證的條件；分析本身通過，這是你選的門檻。下方價位仍是分析算出的真實結構。`,
+        wait_for: !gate ? "等每週自動採用（週日）為此商品此方向找到通過驗證的組合，或到實驗室手動採用。" : "等已採用條件在當前 K 棒成立。",
+        entry: null,
+        stop_loss: null,
+        take_profit: null,
+        risk_reward: null,
+        add_ons: [],
+      };
+    }
+  }
+
+  // 情境實績 — what trades like this one have actually paid, on the book's
+  // own real rows, and a veto where that record is negative over a real
+  // sample. Attached whether or not it vetoes: the card and the push show
+  // the line so the reader knows in one glance. Book-wide: the situation is
+  // the unit, and twelve per symbol per bucket is a year away.
+  {
+    const record = contextVerdict(bookJournal, {
+      confidenceBand: confidenceBand(signal.confidence?.score ?? null),
+      regime: (signal.thesis?.playbook?.regime as "trending" | "ranging" | "transitional" | undefined) ?? null,
+      session: isMainSession(new Date()) ? "主時段" : "非主時段",
+      grade: signal.grade,
+    });
+    signal.context_record = record.lines.length > 0 || record.veto ? record : null;
+    signal.dimension_learning = dimensionLearning;
+    if (dimensionLearning) signal.downgrades = [...(signal.downgrades ?? []), ...dimensionLearning.notes];
+    if (signal.trade_plan.stance === "enter" && record.veto && record.reason) {
+      signal.downgrades = [...(signal.downgrades ?? []), record.reason];
+      signal.trade_plan = {
+        ...signal.trade_plan,
+        stance: "wait",
+        summary:
+          `${record.reason}。分析全部通過（這不是訊號變弱），是系統對自己實績的誠實：` +
+          `在這種情境下它過去沒有賺到錢，不該假裝這次不同。下方價位仍是分析算出的真實結構。`,
+        wait_for: `等這個情境的實績回到正值（更多同情境的真實交易結算後自動更新），或等情境改變。`,
+        entry: null,
+        stop_loss: null,
+        take_profit: null,
+        risk_reward: null,
+        add_ons: [],
+      };
+    }
+  }
+
+  // 帳戶層級的兩道閘 — before the event blackout, for the same reason it
+  // sits last: every analytical gate has passed, and what withdraws the trade
+  // here is the book, not the setup. Both only ever turn an enter into a
+  // wait; the reference levels stay so the paper bucket can measure what
+  // the gate cost. Same-symbol cooldown first (the more specific reason).
+  // 同時持倉上限 — the book's rule, at the place the recommendation is made.
+  // The sizing card already refused a fifth position; the signal still said
+  // 進場 and the phone still rang. Counted from the monitor's own rows, one
+  // read per minute for the whole sweep. Only turns an enter into a wait.
+  if (signal.trade_plan.stance === "enter") {
+    const store = getSignalStore();
+    const open = store ? await openRealPositionCount(store).catch(() => 0) : 0;
+    if (open >= MAX_OPEN_POSITIONS) {
+      const note = `同時持倉已達上限 ${MAX_OPEN_POSITIONS} 筆（目前 ${open} 筆真實部位在跑），本次不開新倉`;
+      signal.downgrades = [...(signal.downgrades ?? []), note];
+      signal.trade_plan = {
+        ...signal.trade_plan,
+        stance: "wait",
+        summary: `${note}。分析全部通過，是部位管理：同時暴露在太多停損上的回撤，單筆再好的期望值也抵不過。下方價位仍是分析算出的真實結構。`,
+        wait_for: "等一筆持倉結算釋出額度後，若結構仍成立再進場。",
+        entry: null,
+        stop_loss: null,
+        take_profit: null,
+        risk_reward: null,
+        add_ons: [],
+      };
+    }
+  }
+
+  if (signal.trade_plan.stance === "enter") {
+    const cooldown = stopCooldown(symbolJournal, { symbol: meta.symbol, direction: signal.direction });
+    const breaker = cooldown.active ? null : circuitBreaker(bookJournal);
+    const guard = cooldown.active ? cooldown.note : breaker?.tripped ? breaker.note : null;
+    if (guard) {
+      signal.downgrades = [...(signal.downgrades ?? []), guard];
+      signal.trade_plan = {
+        ...signal.trade_plan,
+        stance: "wait",
+        summary:
+          `${guard}。分析全部通過（這不是訊號變弱），是帳戶層級的風險規則：` +
+          (cooldown.active
+            ? "同一個想法剛被市場否決過，一根日線之內再進同方向是報復性交易，不是新證據。"
+            : "系統與行情不同步時，先停下來比再驗證一次便宜。") +
+          `下方價位仍是分析算出的真實結構。`,
+        wait_for: cooldown.active
+          ? `等冷卻期結束（${cooldown.until?.slice(5, 16).replace("T", " ")} UTC），若結構仍成立再進場。`
+          : `等熔斷解除（${breaker?.until?.slice(5, 16).replace("T", " ")} UTC）後的下一輪分析。`,
+        entry: null,
+        stop_loss: null,
+        take_profit: null,
+        risk_reward: null,
+        add_ons: [],
+      };
+    }
+  }
 
   // 數據前禁入 — a hard blackout inside two hours of a clock-derivable
   // high-impact release (NFP / FOMC decision).
@@ -1089,6 +1230,7 @@ function applyLabGate(
   signal: TradeSignal,
   adoptions: LabAdoption[],
   candles: { D1: Candle[] | undefined; H4: Candle[] | undefined },
+  labTrades: LabTradeRow[] = [],
 ): void {
   // An adoption is scoped to a direction: a long combination says nothing about
   // whether a short is a good idea, so it must not gate one.
@@ -1098,8 +1240,12 @@ function applyLabGate(
   // The gate checks on the bars its evidence came from: a condition verified
   // on H4 is a claim about 4-hour bars, and checking it on a daily bar would
   // be answering a different question with the same words.
-  const gate = evaluateAdoption(adoption, candles[adoption.timeframe]);
+  const gate = evaluateAdoption(adoption, candles[adoption.timeframe], labTrades);
   signal.lab_gate = gate;
+  // 觀察期：a condition whose forward record turned negative since adoption
+  // may not withdraw a trade any more — it has not earned that either way.
+  // Shown on the card; never blocks; re-verify to restore it.
+  if (gate.health?.probation) return;
   if (gate.met || signal.trade_plan.stance !== "enter") return;
 
   gate.blocked = true;

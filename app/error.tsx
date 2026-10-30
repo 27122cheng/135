@@ -24,9 +24,33 @@ export default function Error({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // 版本換了：a chunk that no longer exists on the server is not a bug in
+  // the page, it is a tab older than the deployment. Reload once instead
+  // of showing a stack the reader cannot act on; the guard in
+  // sessionStorage stops a broken build from looping.
+  const skew = /ChunkLoadError|Loading chunk|Loading CSS chunk|dynamically imported module|Importing a module script failed/i.test(
+    `${error.name} ${error.message}`,
+  );
   useEffect(() => {
     console.error(error);
-  }, [error]);
+    if (!skew) return;
+    try {
+      if (sessionStorage.getItem("error-page:reloaded") === "1") return;
+      sessionStorage.setItem("error-page:reloaded", "1");
+    } catch {
+      // Storage blocked: reload anyway.
+    }
+    window.location.reload();
+  }, [error, skew]);
+
+  if (skew) {
+    return (
+      <main className="mx-auto max-w-2xl px-4 py-10">
+        <h1 className="text-base font-bold text-neutral-100">網站已更新，重新載入中…</h1>
+        <p className="mt-2 text-sm text-neutral-400">這個分頁還是舊版，載入新版後就會恢復。</p>
+      </main>
+    );
+  }
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-10">
@@ -45,6 +69,13 @@ export default function Error({
           className="rounded-lg border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
         >
           重試
+        </button>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="rounded-lg border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
+        >
+          重新載入
         </button>
         <a
           href="/board"
