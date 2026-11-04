@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { EntryChecklistStrip } from "@/components/entry-checklist";
+import { QuantFlowCard } from "@/components/quant-flow-card";
 import { TRADE_MIN_EXPECTANCY_R } from "@/lib/analysis/floors";
 import type { BiasItem, NewsDigest, TradeSignal } from "@/types/signal";
 import type { AppliedIntervention } from "@/types/journal";
@@ -1480,6 +1481,10 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
           row which step the plan clears and which it does not, and opens
           the row for the evidence. */}
       <EntryChecklistStrip signal={signal} />
+
+      {/* 量化與訂單流 — the instrument in numbers and who was pushing on
+          the bars, beside the checklist they feed. */}
+      <QuantFlowCard signal={signal} />
 
       {/* 學習狀態 — one strip: lab, stop-loss learning, context, dimensions.
           Detail for each lives on /lab and /review; the gate's own checklist

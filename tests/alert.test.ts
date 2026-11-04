@@ -228,6 +228,24 @@ function stored(s: TradeSignal): SignalRow {
   check("no backtest means no evidence line, not zeros",
     !formatAlert(signal(), "r").includes("實測："));
 
+  // 訂單流 — one line on volume-backed instruments, nothing on a range proxy.
+  const flow = {
+    timeframe: "H4" as const, source: "volume" as const, bars: 30, lastClv: 0.6, cvdRecent: 0.3, cvdTrend: "up" as const,
+    divergence: null, absorption: { price: 2322, structure: "H4 需求區", role: "support" as const, volRatio: 1.8 },
+    climax: null, pullbackVolumeRatio: 0.7, trend: "up" as const, lines: [],
+  };
+  const flowText = formatAlert(signal({ order_flow: flow }), "r");
+  check("the flow line names the reads that fired",
+    flowText.includes("📶 訂單流：CVD 淨買｜吸收 2322.00｜回檔量縮"), flowText);
+  check("a range proxy never reaches the phone",
+    !formatAlert(signal({ order_flow: { ...flow, source: "range-proxy" } }), "r").includes("📶"));
+  const withBase = formatAlert(
+    signal({ plan_backtest: backed.plan_backtest, quant: { bars: 300, atr14: 20, atrPct: 1, volPercentile: 50, volLabel: "正常", extensionAtr: 0.2, autocorr1: 0.05, autocorrLabel: "接近隨機", momentum20Pct: 1, momentumPercentile: 50, expectedMove: { bars: 5, price: 44.7, pct: 2.2 }, plan: { targetMoves: 1.1, stopMoves: 0.4, baseRate: 0.41, samples: 290 }, lines: [] } }),
+    "r",
+  );
+  check("the evidence line carries the unconditional base rate beside the backtest",
+    withBase.includes("不挑時機基準率 41%"), withBase);
+
   // FX needs more decimals than an index does.
   const fx = signal({ symbol: "EURUSD" });
   fx.trade_plan = { ...fx.trade_plan, entry: 1.08234, stop_loss: 1.07891, take_profit: 1.09102 };

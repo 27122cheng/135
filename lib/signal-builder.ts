@@ -5,6 +5,8 @@ import { fetchOHLCV, type Candle } from "./data-sources/ohlcv";
 import { fetchLatestPrice } from "./data-sources/yfinance";
 import { atr as computeAtr } from "./analysis/indicators";
 import { analyzeTechnical } from "./analysis/technical";
+import { analyzeOrderFlow } from "./analysis/order-flow";
+import { quantItems, quantStats, withPlan } from "./analysis/quant";
 import { EVENT_BLACKOUT_MS, analyzeTiming, upcomingHighImpactEvent } from "./analysis/timing";
 import { circuitBreaker, stopCooldown } from "./journal/risk-guard";
 import { confidenceBand, contextVerdict } from "./journal/context-record";
@@ -483,6 +485,20 @@ async function buildSignalForSymbol(
   // it runs here rather than inside fundFlow — pure computation, no fetching.
   const openInterestItems = analyzeOpenInterest(meta, positioning.reports, d1?.candles ?? null, gaps);
 
+  // 訂單流 — delta / CVD / 背離 / 吸收 / 高潮 / 回檔量, from the bars we have.
+  // Volume-backed instruments vote; FX and spot gold show the shape at
+  // weight 0. Runs after the structures exist so absorption can name one.
+  const orderFlow = analyzeOrderFlow(
+    { H4: h4?.candles, D1: d1?.candles },
+    technical.entryStructures,
+    atrD1,
+    gaps,
+  );
+  // 量化統計 — vol regime, extension, autocorrelation, momentum, expected
+  // move. The one vote it makes is against an entry chasing >2 ATR past
+  // EMA20; the plan's base rate is attached once the plan exists.
+  const quantBase = quantStats(d1?.candles, currentPrice);
+
   // 時間與事件因子 — session windows, NFP day, weekend gap risk, month-end.
   // Weight-0 readings from the clock alone; they inform, never vote.
   const timing = analyzeTiming(new Date());
@@ -504,6 +520,8 @@ async function buildSignalForSymbol(
     ...news.biasItems,
     ...fundFlowItems,
     ...openInterestItems,
+    ...orderFlow.items,
+    ...quantItems(quantBase),
     ...timing.items,
     ...labEvidence,
   ];
@@ -953,6 +971,8 @@ async function buildSignalForSymbol(
         }
       : null,
     downgrades,
+    order_flow: orderFlow.summary,
+    quant: withPlan(quantBase, d1?.candles, direction, tradePlan),
     data_gaps: dedupedGaps,
   };
 

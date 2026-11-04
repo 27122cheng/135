@@ -49,6 +49,8 @@ export function signalExtras(signal: TradeSignal): Record<string, unknown> {
     interventions: signal.interventions ?? [],
     market_closed: signal.market_closed ?? false,
     market_closed_reason: signal.market_closed_reason ?? null,
+    order_flow: signal.order_flow ?? null,
+    quant: signal.quant ?? null,
   };
 }
 

@@ -445,13 +445,32 @@ export function formatAlert(
   })();
   const scaleOut = risk !== null && risk > 0 && tp !== null && Math.abs(tp - e!) / risk >= SCALE_OUT_MIN_R;
   const bt = signal.plan_backtest;
+  const baseRate = signal.quant?.plan?.baseRate ?? null;
   const evidence =
     bt && bt.resolved > 0
       ? `📊 實測：${bt.expectancyR !== null ? `期望值 ${bt.expectancyR > 0 ? "+" : ""}${bt.expectancyR}R・` : ""}${
           bt.hitRate !== null ? `勝率 ${Math.round(bt.hitRate * 100)}%・` : ""
-        }${bt.resolved} 筆（含交易管理與成本）`
+        }${bt.resolved} 筆（含交易管理與成本）${baseRate !== null ? `・不挑時機基準率 ${Math.round(baseRate * 100)}%` : ""}`
       : null;
   const strongPoint = (signal.news_digest?.key_points ?? []).find((k) => k.impact === signal.direction);
+  // 訂單流 — one line, volume-backed instruments only, and only the reads
+  // that fired. FX shows nothing here: a range proxy is not worth a phone line.
+  const of = signal.order_flow ?? null;
+  const flowParts =
+    of && of.source === "volume"
+      ? [
+          of.cvdTrend === "up" ? "CVD 淨買" : of.cvdTrend === "down" ? "CVD 淨賣" : null,
+          of.divergence === "bearish" ? "頂背離" : of.divergence === "bullish" ? "底背離" : null,
+          of.absorption ? `吸收 ${fmt(of.absorption.price)}` : null,
+          of.pullbackVolumeRatio !== null && of.pullbackVolumeRatio <= 0.8
+            ? "回檔量縮"
+            : of.pullbackVolumeRatio !== null && of.pullbackVolumeRatio >= 1.2
+              ? "回檔放量"
+              : null,
+          of.climax ? `${of.climax.kind === "buying" ? "買盤" : "賣盤"}高潮` : null,
+        ].filter((p): p is string => p !== null)
+      : [];
+
   const flags = [
     signal.interventions.length > 0 ? `已套用 ${signal.interventions.length} 項干涉` : null,
     signal.data_gaps.length > 0 ? `資料缺口 ${signal.data_gaps.length} 項` : null,
@@ -471,6 +490,7 @@ export function formatAlert(
     `📌 ${plan.summary}`,
     strongPoint ? `📰 ${strongPoint.point}` : null,
     evidence,
+    flowParts.length > 0 ? `📶 訂單流：${flowParts.join("｜")}` : null,
     signal.context_record && signal.context_record.lines.length > 0
       ? `📈 情境實績：${signal.context_record.lines.slice(0, 2).join("｜")}`
       : null,

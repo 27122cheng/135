@@ -8,6 +8,8 @@ import type { AppliedIntervention } from "./journal";
 // runtime: thesis.ts imports this file's types, this file imports only its type.
 import type { Thesis } from "@/lib/analysis/thesis";
 import type { ContextRecord } from "@/lib/journal/context-record";
+import type { OrderFlowSummary } from "@/lib/analysis/order-flow";
+import type { QuantStats } from "@/lib/analysis/quant";
 
 /**
  * H4 / D1 / W1 only. Intraday below 4h is deliberately out of scope: the free
@@ -495,6 +497,16 @@ export interface TradeSignal {
    * lib/journal/dimension-accuracy.ts. Null when nothing was scaled.
    */
   dimension_learning?: { scaled: BiasDimension[]; notes: string[] } | null;
+  /**
+   * 訂單流 — bar-approximated delta, CVD, divergence, absorption, climax,
+   * pullback volume. See lib/analysis/order-flow.ts; null without bars.
+   */
+  order_flow?: OrderFlowSummary | null;
+  /**
+   * 量化統計 — vol regime, extension, autocorrelation, momentum, expected
+   * move, and the plan's unconditional base rate. See lib/analysis/quant.ts.
+   */
+  quant?: QuantStats | null;
   data_gaps: string[];
 }
 
