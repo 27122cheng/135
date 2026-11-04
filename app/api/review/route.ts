@@ -6,6 +6,7 @@ import { exitKindAdvice, splitStreams, summariseExitKinds } from "@/lib/journal/
 import { contextBuckets } from "@/lib/journal/context-record";
 import { dimensionAccuracy } from "@/lib/journal/dimension-accuracy";
 import { computeEquityCurve, computeReviewStats, computeTrackRecord } from "@/lib/journal/stats";
+import { computePerformance } from "@/lib/journal/performance";
 import { summariseTags, triggeredTags } from "@/lib/journal/interventions";
 import { partitionJournal, quarantineNote } from "@/lib/journal/quarantine";
 import { json } from "@/lib/json-response";
@@ -115,6 +116,11 @@ export async function GET(request: Request) {
         note: e.review_note,
       })),
       trackRecord: computeTrackRecord(entries),
+      // 績效總覽 — 勝率 with its confidence interval, drawdown, and whether
+      // the book is improving over time. Real trades only (paper fills are
+      // perfect); see lib/journal/performance.ts for why each number is
+      // shaped the way it is.
+      performance: computePerformance(streams.real),
       // 權益曲線 — real trades only (auto-tracked or hand-logged), excluding
       // the paper 參考價位 stream: mixing perfect-fill paper trades into the
       // curve would flatter both the total and the drawdown.

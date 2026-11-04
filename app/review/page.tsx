@@ -19,6 +19,8 @@ import type { ExitAdvice, ExitKindStat } from "@/lib/journal/exit-kind";
 import type { ContextBucket } from "@/lib/journal/context-record";
 import type { DimensionRecord } from "@/lib/journal/dimension-accuracy";
 import { SiteNav } from "@/components/site-nav";
+import { PerformanceOverview } from "@/components/performance-overview";
+import type { PerformanceReport } from "@/lib/journal/performance";
 
 interface BlockerRow {
   id: string;
@@ -56,6 +58,7 @@ interface LearningEntry {
 
 interface ReviewResponse extends ReviewStats {
   trackRecord?: TrackRecord;
+  performance?: PerformanceReport;
   equityCurve?: EquityCurve;
   recentEntries?: LearningEntry[];
   blockers?: { census: BlockerRow[]; scanned: number; windowDays?: number };
@@ -194,6 +197,22 @@ export default function ReviewPage() {
               This page reviews the signals, not the reader's personal book —
               every 進場 recommendation is auto-settled by the 5-minute monitor
               and lands here without anyone typing anything. */}
+          {/* 績效總覽 — the verdict first. 勝率 with the interval that says
+              whether it is a streak or a system, the drawdown, and whether
+              近期 beats 前期 on the metrics the learning loop is meant to
+              move. The equity curve follows directly: 勝率 and 回撤 are one
+              question and were six sections apart. */}
+          {stats.performance && (
+            <Section title="績效總覽（正式訊號｜勝率、回撤、學習成長）">
+              <PerformanceOverview report={stats.performance} />
+            </Section>
+          )}
+          {stats.equityCurve && stats.equityCurve.points.length >= 2 && (
+            <Section title="權益曲線與最大回撤（實際交易，含自動結算與人工記錄）">
+              <EquityCurveChart curve={stats.equityCurve} />
+            </Section>
+          )}
+
           <Section title="交易建議的實際命中率（監控自動結算）">
             {stats.trackRecord ? (
               <TrackRecordTable record={stats.trackRecord} />
@@ -323,12 +342,6 @@ export default function ReviewPage() {
               a rising line with shallow dips is the actual goal that 交易量
               and 勝率 are both proxies for. Paper 參考價位 rows are excluded
               server-side. */}
-          {stats.equityCurve && stats.equityCurve.points.length >= 2 && (
-            <Section title="權益曲線與最大回撤（實際交易，含自動結算與人工記錄）">
-              <EquityCurveChart curve={stats.equityCurve} />
-            </Section>
-          )}
-
           {/* 止損止盈學習紀錄 — the reviewed entries the aggregates are made
               of. Every resolved trade lands here with its classified reason;
               the S-tags then tighten future signals via the intervention

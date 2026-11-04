@@ -5,7 +5,7 @@ import { computeSeverity } from "./severity";
 import { describeConsequence, reviewStop, type StopContext } from "./stop-review";
 import { fetchOHLCV } from "@/lib/data-sources/ohlcv";
 import { classifyR } from "@/lib/analysis/lab-manage";
-import { AUTO_MARKER, PAPER_MARKER } from "./markers";
+import { AUTO_MARKER, PAPER_MARKER, intervenedMarker } from "./markers";
 import { usableJournal } from "./quarantine";
 import { contextMarker } from "./context-record";
 import { dimensionMarker } from "./dimension-accuracy";
@@ -221,7 +221,10 @@ export async function recordResolvedPlan(input: ResolveInput): Promise<AutoLogRe
   // 面向 rides alongside: which dimensions agreed with the direction, so the
   // journal can later say which of them actually predict anything here.
   const dims = dimensionMarker(signal.direction, signal.bias_items ?? []);
-  const markers = (paper ? `${AUTO_MARKER}${PAPER_MARKER}` : AUTO_MARKER) + context + dims;
+  // 已干涉 rides last: which stop-reason tightenings this plan was taken
+  // under, so the review can compare tightened trades against the rest.
+  const tightened = intervenedMarker((signal.interventions ?? []).map((i) => i.tag));
+  const markers = (paper ? `${AUTO_MARKER}${PAPER_MARKER}` : AUTO_MARKER) + context + dims + tightened;
 
   /** The outcome every non-loss path reports — no S-tag, because S1–S8 classifies stop-outs. */
   const plainOutcome = (kind: string): ResolutionOutcome => ({

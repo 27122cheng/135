@@ -4,6 +4,7 @@ import { allInstruments } from "@/lib/server-symbols";
 import type { JournalEntry } from "@/types/journal";
 import { usableJournal } from "@/lib/journal/quarantine";
 import { computeEquityCurve, computeTrackRecord, type TrackBucket } from "@/lib/journal/stats";
+import { computePerformance, performanceLine, type PerformanceReport } from "@/lib/journal/performance";
 import { summariseTags, triggeredTags } from "@/lib/journal/interventions";
 import { TAG_GUIDANCE } from "@/lib/journal/advice";
 import { exitKindAdvice, splitStreams, summariseExitKinds } from "@/lib/journal/exit-kind";
@@ -81,6 +82,8 @@ export function buildWeeklyDigest(
   allTime: AllTimeSummary | null = null,
   /** 卡在哪一關 — the week's scans by what stopped them; see lib/analysis/blockers.ts. */
   blockers: BlockerCensus[] = [],
+  /** 學習成長 — the whole book's verdict, so the week is read against the trend. */
+  performance: PerformanceReport | null = null,
 ): string {
   const record = computeTrackRecord(entries);
   const lines: string[] = [`<b>週結摘要 ${weekLabel}</b>`];
@@ -171,6 +174,12 @@ export function buildWeeklyDigest(
     );
   }
 
+  // 學習有沒有用 — one line: the win rate with its interval, the drawdown,
+  // and whether the recent third of the book beats the first third. A weekly
+  // digest that reports a number without its trend invites tuning to noise.
+  const growth = performance ? performanceLine(performance) : null;
+  if (growth) lines.push(`學習成長：${growth}`);
+
   // 交易太少的答案 — which gate stopped the week's scans. Without this line
   // "0 筆結算" has no cause, and the thresholds worth arguing about stay
   // invisible until someone opens /review.
@@ -243,7 +252,10 @@ export async function maybeSendWeeklyDigest(
     }
   }
 
-  const text = buildWeeklyDigest(entries, week, open, allTime, blockers) + (appUrl ? `\n${appUrl}/review` : "");
+  const performance = realAllTime.length > 0 ? computePerformance(realAllTime) : null;
+  const text =
+    buildWeeklyDigest(entries, week, open, allTime, blockers, performance) +
+    (appUrl ? `\n${appUrl}/review` : "");
   await notifyAll(text);
   return { sent: true, reason: `已發送（${entries.length} 筆結算、${open.length} 筆持倉中）` };
 }

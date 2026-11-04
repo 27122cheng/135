@@ -77,6 +77,27 @@ async function main() {
     check("a history row's uuid is kept", written[0]?.signal_id === UUID, written[0]?.signal_id);
   }
 
+  // ── 已干涉 — a plan taken under tightened rules says so in its note ──
+  {
+    const { store, written } = fakeStore();
+    const tightened = {
+      ...signal("XAUUSD"),
+      interventions: [
+        { tag: "S3", effect: "停損加寬", evidence: "e", triggered_by: [] },
+        { tag: null, effect: "淨效果", evidence: "e", triggered_by: [] },
+      ],
+    } as unknown as SignalRow;
+    await recordResolvedPlan({
+      store, meta, signal: tightened, entry: 2000, stopLoss: 1980, takeProfit: 2060,
+      exitPrice: 2060, outcome: "target_hit", paper: false, eventDuringHold: false, gaps: [],
+    });
+    check("the note carries the intervened marker with its tags",
+      written[0]?.review_note?.includes("[已干涉 S3]") === true, written[0]?.review_note);
+    const { written: plain } = fakeStore();
+    check("a plan with no interventions carries none",
+      !(plain[0]?.review_note ?? "").includes("[已干涉"));
+  }
+
   {
     // Idempotency compares the normalised id: a resolution already stored with
     // signal_id null must match the symbol-id signal that produced it, or the

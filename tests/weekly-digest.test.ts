@@ -1,4 +1,5 @@
 import { check, report } from "./_harness";
+import { computePerformance } from "@/lib/journal/performance";
 import { buildWeeklyDigest, inSendWindow, isoWeek } from "@/lib/notify/weekly-digest";
 import type { JournalEntry } from "@/types/journal";
 
@@ -63,6 +64,17 @@ function entry(over: Partial<JournalEntry> = {}): JournalEntry {
   check("puts the breakeven bar beside the win rate", busy.includes("損益兩平需"), busy);
   check("names the costliest stop tag", busy.includes("最痛的停損原因：S3"), busy);
   check("teaches the reading", busy.includes("正期望"));
+  check("without a performance report there is no growth line", !busy.includes("學習成長"));
+
+  // 學習成長 — the whole book's verdict rides along, so the week's number is
+  // read against the trend rather than tuned to.
+  const book = Array.from({ length: 12 }, (_, i) =>
+    entry({ result: i % 3 === 0 ? "loss" : "win", pnl_pct: i % 3 === 0 ? -1 : 1.5, closed_at: `2026-08-${String(i + 1).padStart(2, "0")}T00:00:00Z` }),
+  );
+  const withGrowth = buildWeeklyDigest([], "2026-W33", [], null, [], computePerformance(book));
+  check("the growth line names the win rate with its interval",
+    withGrowth.includes("學習成長：勝率") && withGrowth.includes("95% 區間"), withGrowth);
+  check("and the drawdown", withGrowth.includes("最大回撤"));
 }
 
 // ── an open position is not the same claim as nothing traded ──────
