@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { EntryChecklistStrip } from "@/components/entry-checklist";
 import { TRADE_MIN_EXPECTANCY_R } from "@/lib/analysis/floors";
 import type { BiasItem, NewsDigest, TradeSignal } from "@/types/signal";
 import type { AppliedIntervention } from "@/types/journal";
@@ -1473,6 +1474,12 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
             stopLoss={signal.trade_plan.stop_loss}
           />
         )}
+
+      {/* 進場前七關 — 背景／方向／位置／觸發／失效／出場／檢討, each
+          answered from this signal's own fields. The reader sees in one
+          row which step the plan clears and which it does not, and opens
+          the row for the evidence. */}
+      <EntryChecklistStrip signal={signal} />
 
       {/* 學習狀態 — one strip: lab, stop-loss learning, context, dimensions.
           Detail for each lives on /lab and /review; the gate's own checklist
