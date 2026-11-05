@@ -21,6 +21,7 @@ import {
 } from "@/lib/monitor/plan-state";
 import { recordResolvedPlan } from "@/lib/journal/auto-log";
 import { maybeSendWeeklyDigest } from "@/lib/notify/weekly-digest";
+import { maybeSendDailyReport } from "@/lib/notify/daily-report-push";
 import { fetchOHLCV } from "@/lib/data-sources/ohlcv";
 import { WARMUP, buildContext } from "@/lib/analysis/lab";
 import { STOP_BUFFER_ATR } from "@/lib/analysis/lab-manage";
@@ -753,6 +754,12 @@ export async function GET(request: Request) {
     reason: `週結摘要失敗：${err instanceof Error ? err.message : String(err)}`,
   }));
 
+  // 日報 — the previous Taipei day's settled trades, once, after 07:00 Taipei.
+  const daily = await maybeSendDailyReport(store, appUrl).catch((err: unknown) => ({
+    sent: false,
+    reason: `日報失敗：${err instanceof Error ? err.message : String(err)}`,
+  }));
+
   return json({
     ranAt: new Date().toISOString(),
     results,
@@ -760,5 +767,6 @@ export async function GET(request: Request) {
     releaseNotes: releaseGaps,
     releaseError,
     weeklyDigest: digest.sent ? digest.reason : undefined,
+    dailyReport: daily.sent ? daily.reason : undefined,
   });
 }

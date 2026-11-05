@@ -57,6 +57,7 @@ export const PRIMARY: Destination[] = [
 
 /** Setup — visited when something needs fixing, not every day. */
 export const SECONDARY: Destination[] = [
+  { href: "/report", label: "日報", hint: "盤中策略與交易紀錄：日／週／月報，可下載圖片或複製文字" },
   { href: "/lab", label: "實驗室", hint: "前進實驗與十年回測，驗證通過後可採用為進場門檻" },
   { href: "/history", label: "歷史", hint: "過去產生過的訊號" },
   { href: "/setup", label: "通知", hint: "Telegram／Discord 與資料表" },
