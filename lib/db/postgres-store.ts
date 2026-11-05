@@ -52,6 +52,16 @@ export function explain(err: unknown): Error {
       `資料表尚未建立 —— 請先對這個資料庫執行 supabase/schema.sql（純 SQL，Neon 與 Supabase 都適用）。原始錯誤：${message}`,
     );
   }
+  // Neon answers HTTP 402 when the free plan's monthly quota (compute hours
+  // or data transfer) is spent. Every query then fails identically, and the
+  // raw JSON blob says "upgrade" without saying what spent it. Name it.
+  if (/exceeded the quota|HTTP status 402|\b402\b/i.test(message)) {
+    return new Error(
+      `Neon 免費額度已用完（本月運算時數或流量）—— 資料庫會拒絕所有查詢直到月初重置。` +
+        `到 Neon 控制台 Usage 看是哪一項；最常見的原因是網頁長時間開著每分鐘輪詢、` +
+        `讓資料庫永遠停不下來。這版已把輪詢降到五分鐘一次。原始錯誤：${message}`,
+    );
+  }
   if (/password authentication failed|no pg_hba|SASL/i.test(message)) {
     return new Error(
       `資料庫連線被拒，請確認 DATABASE_URL 正確且包含密碼。原始錯誤：${message}`,

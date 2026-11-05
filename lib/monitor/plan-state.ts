@@ -1,5 +1,5 @@
 import type { AddOnLevel, TradePlan } from "@/types/signal";
-import { PROVEN_R, SCALE_OUT_MIN_R } from "@/lib/analysis/lab-manage";
+import { MANAGE_HORIZON, PROVEN_R, SCALE_OUT_MIN_R } from "@/lib/analysis/lab-manage";
 import { ER_RANGING, ER_TRENDING } from "@/lib/analysis/thesis";
 
 /**
@@ -17,6 +17,7 @@ import { ER_RANGING, ER_TRENDING } from "@/lib/analysis/thesis";
 
 export type PlanState =
   | "waiting"      // price hasn't reached the entry
+  | "touched"      // confirm-style: price reached the entry; waiting for a close back on our side
   | "entered"      // entry touched, position assumed open
   | "added"        // at least one add-on level reached
   | "scaled"       // first target banked half; the remainder trails at ≥ breakeven
@@ -24,7 +25,58 @@ export type PlanState =
   | "target_hit"
   | "structure_exit" // closed at market on an opposite structure break
   | "thesis_exit"    // closed at market because the regime the playbook needed ended
+  | "horizon_exit"   // closed at market because the trade used up the horizon the backtest measured it on
+  | "expired"        // the pending entry was never filled inside its validity window
+  | "cancelled"      // the pending entry was pulled: the move happened without us
   | "invalidated"; // the plan is no longer the current recommendation
+
+/**
+ * 掛單有效期 — how long a pullback limit stays working before it is pulled.
+ *
+ * A waiting plan had no time bound. The hourly rescan normally replaces it,
+ * so in practice it aged an hour or four; but the moment the refresh
+ * workflow failed, the last plan stood forever, and a level computed on a
+ * market three days gone could still fill. Two days: the plans are H4/D1
+ * pullbacks, and a pullback that has not arrived in two daily bars is a
+ * different market from the one the levels were drawn on.
+ */
+export const PENDING_ENTRY_MAX_HOURS = 48;
+
+/**
+ * 建議發出後一分鐘內不成交 — the operator's rule. A recommendation and its
+ * fill arriving in the same breath reads as one event described twice, and
+ * leaves no time to actually place the order. The fill is judged only on
+ * price seen at least this long after the recommendation went out.
+ */
+export const ENTRY_ARM_MS = 60_000;
+
+/**
+ * 沒回踩就跑掉了 — how far (in R) price may run in the trade's favour past a
+ * pending entry before the order is pulled.
+ *
+ * A pullback limit is a bet that price comes back to the level. Once it has
+ * travelled a full risk distance the other way without doing so, the
+ * pullback it would now need is the whole stop distance — the geometry the
+ * plan was drawn on is gone, and a fill from here is a chase dressed as a
+ * limit order. Reaching the take-profit first is the same fact at its
+ * extreme: the trade happened, we were not in it, and the level is now
+ * where a *reversal* would start.
+ */
+export const PENDING_MAX_RUNAWAY_R = 1.0;
+
+/**
+ * 數據前保本 — the favourable excursion (in R) at which an open position gets
+ * its stop moved to the entry ahead of NFP / FOMC.
+ *
+ * The regular breakeven rule waits for PROVEN_R (2R) because 1R is daily
+ * noise and locking in at 1R washes winners. A binary event two hours out is
+ * not daily noise: the print resolves the trade by coin flip, and a trade
+ * that has already paid 1R should not be allowed to become a −1R by it.
+ * Below 1R nothing mechanical is sound — moving the stop to entry on a
+ * position in loss manufactures an exit — so that case gets the advice
+ * (reduce), not a rule.
+ */
+export const PRE_EVENT_PROTECT_R = 1.0;
 
 export interface MonitorMemory {
   state: PlanState;
@@ -91,10 +143,46 @@ export interface MonitorInput {
    * falls back to the spot price and behaves exactly as before.
    */
   window?: { high: number; low: number } | null;
+  /**
+   * 掛單已掛多久 — hours since the tracked plan was generated. Only a waiting
+   * plan reads it (see PENDING_ENTRY_MAX_HOURS); absent means "unknown", and
+   * unknown never expires anything.
+   */
+  planAgeHours?: number | null;
+  /**
+   * 掛單已就位 — false while the recommendation went out less than
+   * ENTRY_ARM_MS ago (or has not gone out yet). A waiting plan then does not
+   * fill this sweep; everything else (expiry, cancellation) still applies.
+   * Absent means armed.
+   */
+  entryArmed?: boolean;
+  /**
+   * 回踩後確認 — the newest COMPLETED bar's close and time, for a plan whose
+   * entry_style is "confirm". The touch arms the entry (state "touched");
+   * the fill is the first completed close back on the trade's side of the
+   * entry, at that close. Absent: a confirm plan can arm but cannot fill.
+   */
+  lastClosedBar?: { close: number; time: string } | null;
+  /**
+   * 已持有幾根完成的 D1 — for the horizon exit. The backtest that approved
+   * every plan closes the trade at the market after MANAGE_HORIZON daily
+   * bars; the live position never did, so the trade the monitor ran was
+   * not the trade the numbers described. Null while unknown (no fill time
+   * recorded, no candles), and unknown never exits anything.
+   */
+  barsHeld?: number | null;
+  /**
+   * 數據前 — a clock-derivable high-impact release inside the blackout
+   * window, when there is one. While set: a position ≥ PRE_EVENT_PROTECT_R
+   * in favour gets its stop moved to entry, and no add-on is reported —
+   * adding size into a print is the one thing every desk forbids.
+   */
+  eventAhead?: { label: string; minutesAway: number } | null;
 }
 
 export interface MonitorEvent {
   kind:
+    | "touched"
     | "entered"
     | "add_on"
     | "stop_moved"
@@ -102,7 +190,10 @@ export interface MonitorEvent {
     | "target_hit"
     | "scale_out"
     | "structure_exit"
-    | "thesis_exit";
+    | "thesis_exit"
+    | "horizon_exit"
+    | "expired"
+    | "cancelled";
   headline: string;
   detail: string;
   /** The stop that should now be in force, when this event changes it. */
@@ -175,7 +266,10 @@ export function advancePlan(input: MonitorInput): MonitorResult {
     memory.state === "stop_hit" ||
     memory.state === "target_hit" ||
     memory.state === "structure_exit" ||
-    memory.state === "thesis_exit"
+    memory.state === "thesis_exit" ||
+    memory.state === "horizon_exit" ||
+    memory.state === "expired" ||
+    memory.state === "cancelled"
   ) {
     return { memory, events };
   }
@@ -188,17 +282,115 @@ export function advancePlan(input: MonitorInput): MonitorResult {
   let activeStop = memory.activeStop ?? plan.stop_loss;
 
   if (state === "waiting") {
-    if (!entryFilled(direction, adverse, plan.entry)) {
+    // 逾時撤單 — checked before the fill: a level this old is a level drawn
+    // on a market that no longer exists, and a fill on it would be a trade
+    // nobody would place by hand. Unknown age never expires.
+    const age = input.planAgeHours;
+    if (age != null && Number.isFinite(age) && age > PENDING_ENTRY_MAX_HOURS) {
+      return {
+        memory: { state: "expired", addOnsFilled, activeStop },
+        events: [
+          {
+            kind: "expired",
+            headline: "掛單逾時，撤單",
+            detail: `進場 ${fmt(plan.entry)} 掛了 ${Math.round(age)} 小時未成交（上限 ${PENDING_ENTRY_MAX_HOURS} 小時），撤單，等下一輪價位。`,
+            newStop: null,
+          },
+        ],
+      };
+    }
+    // 沒進場就先到停利，或跑太遠 — pull the order. Judged on the favourable
+    // extreme of the unobserved window, and before the fill check: a window
+    // that both dipped to the entry and ran to the target cannot be ordered,
+    // and booking it as a win is how the fictional trades got in last time.
+    // Pessimistic means no trade, not an invented one.
+    const risk0 = Math.abs(plan.entry - plan.stop_loss);
+    const targetFirst =
+      plan.take_profit !== null && reached(direction, favourable, plan.take_profit);
+    const ranAway =
+      risk0 > 0 &&
+      reached(
+        direction,
+        favourable,
+        direction === "long"
+          ? plan.entry + risk0 * PENDING_MAX_RUNAWAY_R
+          : plan.entry - risk0 * PENDING_MAX_RUNAWAY_R,
+      );
+    if (targetFirst || ranAway) {
+      const moved = risk0 > 0 ? Math.abs(favourable - plan.entry) / risk0 : 0;
+      return {
+        memory: { state: "cancelled", addOnsFilled, activeStop },
+        events: [
+          {
+            kind: "cancelled",
+            headline: targetFirst ? "掛單取消：未成交就先到停利" : "掛單取消：價格沒回踩就跑掉了",
+            detail: targetFirst
+              ? `價格 ${fmt(caught ? favourable : price)} 已到停利 ${fmt(plan.take_profit ?? NaN)}${since}，但從未回到進場價 ${fmt(plan.entry)}。` +
+                `這筆行情走完了，我們不在場內 —— 現在的進場價是反轉才會回來的位置，不追。撤單，等下一輪分析。`
+              : `價格 ${fmt(caught ? favourable : price)} 已朝交易方向離進場價 ${fmt(plan.entry)} 走了 ${Math.round(moved * 100) / 100}R（上限 ${PENDING_MAX_RUNAWAY_R}R）${since}，回踩沒有來。` +
+                `從這裡要回到進場價等於整段停損距離的回撤，原本的結構已不成立 —— 撤單，不追價。`,
+            newStop: null,
+          },
+        ],
+      };
+    }
+    if (input.entryArmed === false || !entryFilled(direction, adverse, plan.entry)) {
       return { memory: { state, addOnsFilled, activeStop }, events };
     }
-    state = "entered";
-    events.push({
-      kind: "entered",
-      headline: "已觸及進場價",
-      detail:
-        `價格 ${fmt(caught ? adverse : price)} 觸及進場 ${fmt(plan.entry)}，停損 ${fmt(activeStop)}${since}`,
-      newStop: activeStop,
-    });
+    if (plan.entry_style === "confirm") {
+      // The touch only arms a confirmation entry; the fill is judged below.
+      state = "touched";
+      events.push({
+        kind: "touched",
+        headline: "已觸及進場價 —— 等收回確認",
+        detail:
+          `價格 ${fmt(caught ? adverse : price)} 觸及 ${fmt(plan.entry)}${since}。` +
+          `等一根完成的 H4 收在 ${fmt(plan.entry)} ${direction === "long" ? "之上" : "之下"}才進；收不回就不進。`,
+        newStop: activeStop,
+      });
+    } else {
+      state = "entered";
+      events.push({
+        kind: "entered",
+        headline: "已觸及進場價",
+        detail: `價格 ${fmt(caught ? adverse : price)} 觸及進場 ${fmt(plan.entry)}${since}｜停損 ${fmt(activeStop)}`,
+        newStop: activeStop,
+      });
+    }
+  }
+
+  if (state === "touched") {
+    // 收回確認. A completed bar closing back on our side takes the entry at
+    // that close; a close through the STOP means the pullback was a
+    // breakdown and the order is pulled — no position, no loss.
+    const bar = input.lastClosedBar;
+    if (bar && Number.isFinite(bar.close)) {
+      const back = direction === "long" ? bar.close > plan.entry : bar.close < plan.entry;
+      const broke = direction === "long" ? bar.close <= activeStop : bar.close >= activeStop;
+      if (back) {
+        state = "entered";
+        events.push({
+          kind: "entered",
+          headline: "收回確認，進場",
+          detail: `H4 收盤 ${fmt(bar.close)} 收回 ${fmt(plan.entry)} ${direction === "long" ? "之上" : "之下"}，以此價進場｜停損 ${fmt(activeStop)}`,
+          newStop: activeStop,
+        });
+      } else if (broke) {
+        return {
+          memory: { state: "cancelled", addOnsFilled, activeStop },
+          events: [
+            ...events,
+            {
+              kind: "cancelled",
+              headline: "掛單取消：回踩後未收回，直接跌破",
+              detail: `H4 收盤 ${fmt(bar.close)} 已越過停損 ${fmt(activeStop)}，這是跌破不是回踩。未進場，無虧損。`,
+              newStop: null,
+            },
+          ],
+        };
+      }
+    }
+    if (state === "touched") return { memory: { state, addOnsFilled, activeStop }, events };
   }
 
   // Checked first — see the note above about intrabar ordering.
@@ -212,8 +404,8 @@ export function advancePlan(input: MonitorInput): MonitorResult {
           headline: state === "scaled" ? "剩餘半倉停損觸及" : "停損觸及",
           detail:
             state === "scaled"
-              ? `價格 ${fmt(caught ? adverse : price)} 觸及停損 ${fmt(activeStop)}${since}，剩餘半倉出場（前一半已在停利 ${plan.take_profit !== null ? fmt(plan.take_profit) : "—"} 落袋）。本次交易結束，系統正在結算並分類。`
-              : `價格 ${fmt(caught ? adverse : price)} 觸及停損 ${fmt(activeStop)}${since}，本次交易結束。系統會自行判定停損原因並記入學習。`,
+              ? `價格 ${fmt(caught ? adverse : price)} 觸及停損 ${fmt(activeStop)}${since}，剩餘半倉出場（前一半已在 ${plan.take_profit !== null ? fmt(plan.take_profit) : "—"} 落袋）。系統自動結算並分類。`
+              : `價格 ${fmt(caught ? adverse : price)} 觸及停損 ${fmt(activeStop)}${since}。系統自動結算並分類。`,
           newStop: null,
         },
       ],
@@ -246,9 +438,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
           {
             kind: "target_hit",
             headline: "停利觸及，全部出場",
-            detail:
-              `價格 ${fmt(caught ? favourable : price)} 觸及停利 ${fmt(plan.take_profit)}${since}。此目標不足 ${SCALE_OUT_MIN_R}R，` +
-              `依規則整筆出場（分批只在目標 ≥${SCALE_OUT_MIN_R}R 時啟用）。本次交易結束，系統正在結算。`,
+            detail: `價格 ${fmt(caught ? favourable : price)} 觸及停利 ${fmt(plan.take_profit)}${since}。目標不足 ${SCALE_OUT_MIN_R}R，整筆出場。`,
             newStop: null,
           },
         ],
@@ -266,9 +456,8 @@ export function advancePlan(input: MonitorInput): MonitorResult {
       kind: "scale_out",
       headline: "觸及停利 —— 先平一半，剩餘保本追蹤",
       detail:
-        `價格 ${fmt(caught ? favourable : price)} 觸及停利 ${fmt(banked)}${since}：平掉一半部位落袋，` +
-        `剩餘半倉停損${movedStop ? `移至進場價 ${fmt(plan.entry)}` : `維持 ${fmt(activeStop)}（已優於進場價）`}，` +
-        `之後交由結構移停與反向 CHoCH 出場管理 —— 這半倉最差是打平，最好是跑出一段趨勢。`,
+        `價格 ${fmt(caught ? favourable : price)} 觸及停利 ${fmt(banked)}${since}：平一半落袋，` +
+        `剩餘半倉停損${movedStop ? `移至 ${fmt(plan.entry)}（進場價）` : `維持 ${fmt(activeStop)}`}，交由結構移停管理。`,
       newStop: activeStop,
     });
   }
@@ -287,10 +476,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
         {
           kind: "structure_exit",
           headline: state === "scaled" ? "結構翻轉，剩餘半倉出場" : "結構翻轉，出場",
-          detail:
-            `日線出現反向 CHoCH（結構翻轉），進場理由已不成立。` +
-            `以現價 ${fmt(price)} ${state === "scaled" ? "將剩餘半倉出場（前一半已在停利落袋）" : "出場"}，不等停損 ${fmt(activeStop)} —— ` +
-            `技術面看法改變時出場是管理規則的一部分，和回測量的是同一種交易。`,
+          detail: `日線反向 CHoCH，進場理由不成立。以現價 ${fmt(price)} ${state === "scaled" ? "將剩餘半倉出場" : "出場"}，不等停損 ${fmt(activeStop)}。`,
           newStop: null,
         },
       ],
@@ -320,10 +506,64 @@ export function advancePlan(input: MonitorInput): MonitorResult {
         {
           kind: "thesis_exit",
           headline: "論點失效，出場",
-          detail:
-            `${why.trigger}。${why.meaning} ` +
-            `以現價 ${fmt(price)} 出場，不等停損 ${fmt(activeStop)} —— ` +
-            `進場的前提沒有了就不留在場內，這是計畫卡上寫明的失效條件，不是臨時決定。`,
+          detail: `${why.trigger}。${why.meaning} 以現價 ${fmt(price)} 出場，不等停損 ${fmt(activeStop)}。`,
+          newStop: null,
+        },
+      ],
+    };
+  }
+
+  // 數據前保本 — a binary event inside the blackout window, and the trade
+  // has already paid PRE_EVENT_PROTECT_R: lock the entry in before the print.
+  // Same idempotence as the 2R rule below (fires only while the stop is on
+  // the risk side, and moves it to the entry). Never below 1R — see the
+  // constant — so a position in loss gets the warning, not a manufactured
+  // exit.
+  if (
+    (state === "entered" || state === "added") &&
+    input.eventAhead &&
+    (direction === "long" ? activeStop < plan.entry : activeStop > plan.entry)
+  ) {
+    const risk = Math.abs(plan.entry - plan.stop_loss);
+    const protectAt =
+      direction === "long"
+        ? plan.entry + risk * PRE_EVENT_PROTECT_R
+        : plan.entry - risk * PRE_EVENT_PROTECT_R;
+    if (risk > 0 && reached(direction, favourable, protectAt)) {
+      const ev = input.eventAhead;
+      activeStop = plan.entry;
+      events.push({
+        kind: "stop_moved",
+        headline: `數據前保本：${ev.minutesAway} 分鐘後公布${ev.label}，停損移至進場價`,
+        detail: `已走完 ${PRE_EVENT_PROTECT_R}R，數據前先把停損收到進場價 ${fmt(plan.entry)}，最差打平。`,
+        newStop: plan.entry,
+      });
+    }
+  }
+
+  // 到期出場 — the horizon the backtest measured this plan on.
+  //
+  // Every expectancy on the card comes from a walk that closes the trade at
+  // the market after MANAGE_HORIZON daily bars. The live position had no
+  // such clock: a trade that went nowhere sat for weeks, tying up the book
+  // and drifting toward whichever level the noise found first. Same clock
+  // here, counted in completed D1 bars since the fill, so the live trade is
+  // the measured trade. Checked after the hard levels and the structural
+  // exits: a bar that hit the stop reports the stop.
+  if (
+    (state === "entered" || state === "added" || state === "scaled") &&
+    input.barsHeld != null &&
+    Number.isFinite(input.barsHeld) &&
+    input.barsHeld >= MANAGE_HORIZON
+  ) {
+    return {
+      memory: { state: "horizon_exit", addOnsFilled, activeStop },
+      events: [
+        ...events,
+        {
+          kind: "horizon_exit",
+          headline: state === "scaled" ? "到期出場，剩餘半倉以市價結束" : "到期出場",
+          detail: `持倉已滿 ${MANAGE_HORIZON} 根日線（回測的持有上限），以現價 ${fmt(price)} 出場，不等停損 ${fmt(activeStop)}。`,
           newStop: null,
         },
       ],
@@ -364,12 +604,8 @@ export function advancePlan(input: MonitorInput): MonitorResult {
         kind: "stop_moved",
         headline: `已達 ${PROVEN_R}R，停損移至進場價（保本）`,
         detail:
-          `價格 ${fmt(caught ? favourable : price)} 已朝有利方向走完 ${PROVEN_R} 個風險距離${since}` +
-          `（1R = ${fmt(risk)}，${PROVEN_R}R = ${fmt(proven)}）。` +
-          `停損由 ${fmt(memory.activeStop ?? plan.stop_loss)} 移至進場價 ${fmt(plan.entry)} —— ` +
-          `這筆交易從此最差是打平。` +
-          `門檻是 ${PROVEN_R}R 不是 1R：1R 只是日線的日常波動，在那裡保本會把大量` +
-          `原本會走完的單洗成 ±0R，回測實測有 13% 的交易是這樣消失的。`,
+          `價格 ${fmt(caught ? favourable : price)} 已走完 ${PROVEN_R}R（${PROVEN_R}R = ${fmt(proven)}）${since}，` +
+          `停損 ${fmt(memory.activeStop ?? plan.stop_loss)} → ${fmt(plan.entry)}（進場價），最差打平。1R 只是日常波動，所以等 ${PROVEN_R}R。`,
         newStop: plan.entry,
       });
     }
@@ -389,9 +625,7 @@ export function advancePlan(input: MonitorInput): MonitorResult {
         events.push({
           kind: "stop_moved",
           headline: "結構移停",
-          detail:
-            `日線確認了新的 swing 結構，停損上移到結構外 ${fmt(trail)} —— ` +
-            `跟著結構走的移動停損，和回測用的是同一條規則。`,
+          detail: `日線新 swing 確認，停損上移到結構外 ${fmt(trail)}。`,
           newStop: trail,
         });
       }
@@ -402,8 +636,11 @@ export function advancePlan(input: MonitorInput): MonitorResult {
   // fills at prices that were never offered in sequence, so each is reported.
   // A scaled position is in harvest mode — half is already banked and the
   // remainder is being trailed out, so adding size back on is off the table.
+  // 數據前不加倉 — inside the blackout window no add-on is even reported:
+  // adding size into a print is forbidden, and a reported level "reached"
+  // reads as an instruction. The level is still there next sweep.
   const pending: AddOnLevel[] =
-    state === "scaled"
+    state === "scaled" || input.eventAhead
       ? []
       : plan.add_ons
           .filter((level) => level.sequence > addOnsFilled)
@@ -490,7 +727,7 @@ export function formatMonitorAlert(
     } | null;
   } = {},
 ): string {
-  const lines = [`<b>${symbol} ${direction === "long" ? "做多 ▲" : "做空 ▼"}</b>`];
+  const lines = [`${direction === "long" ? "🟢" : "🔴"} <b>${symbol} ${direction === "long" ? "做多 ▲" : "做空 ▼"}</b>`];
 
   // Which trade this is about. A push that names a level without naming the
   // position it belongs to reads as a recommendation out of nowhere —
@@ -518,10 +755,7 @@ export function formatMonitorAlert(
   lines.push(...events.flatMap((e) => [`<b>${e.headline}</b>`, e.detail]));
 
   if (context.analysisSupports === false && events.some((e) => e.kind === "add_on")) {
-    lines.push(
-      `⚠ 最新一輪分析已轉觀望，<b>不建議執行這次加倉</b> —— 加倉是唯一會增加風險的動作，` +
-        `只在最新分析仍支持這個方向時才值得做。停損上移照常執行，持倉本身不受影響。`,
-    );
+    lines.push(`⚠ 最新分析已轉觀望，<b>不建議執行這次加倉</b>。停損上移照常執行，持倉不受影響。`);
   }
 
   // 系統的結論，不是給你的作業。
@@ -530,29 +764,23 @@ export function formatMonitorAlert(
     const resultWord = r.result === "win" ? "獲利" : r.result === "loss" ? "虧損" : "打平";
     lines.push(
       "",
-      `<b>本次結算：${r.kind}｜${resultWord} ${r.pnlPct > 0 ? "+" : ""}${r.pnlPct}%</b>`,
+      `<b>結算：${r.kind}｜${resultWord} ${r.pnlPct > 0 ? "+" : ""}${r.pnlPct}%</b>`,
     );
     if (r.tag && r.label) {
       lines.push(
         `<b>停損原因（系統判定）：${r.tag} ${r.label}</b>` +
-          (r.decidedBy ? `　—— 由${r.decidedBy === "ai" ? " AI 複核" : "規則判定"}` : "") +
-          (r.severity !== null ? `，嚴重度 ${r.severity}` : ""),
+          (r.decidedBy ? `（${r.decidedBy === "ai" ? "AI 複核" : "規則判定"}` : "（") +
+          (r.severity !== null ? `，嚴重度 ${r.severity}）` : "）"),
       );
       if (r.why) lines.push(r.why);
-      // The part that makes it learning rather than labelling: what changes.
-      if (r.consequence) lines.push(`<i>接下來的影響：${r.consequence}</i>`);
+      if (r.consequence) lines.push(`<i>→ ${r.consequence}</i>`);
     } else {
-      lines.push(
-        `<i>S1–S8 只分類停損，這筆不是停損出場，因此不列入停損原因統計。已記入實績。</i>`,
-      );
+      lines.push(`<i>非停損出場，S1–S8 只分類停損；已記入實績。</i>`);
     }
-    lines.push(`<i>已寫入交易日誌，下一次訊號會帶著這個結論建立。</i>`);
+    lines.push(`<i>已寫入交易日誌。</i>`);
   }
 
-  lines.push(
-    "",
-    `<i>價格延遲約 ${Math.round(priceAgeMinutes)} 分鐘（免費資料源），僅適用 H4/D1 級別的部位管理</i>`,
-  );
+  lines.push("", `<i>⏱ 價格延遲約 ${Math.round(priceAgeMinutes)} 分鐘｜H4/D1 級別部位管理</i>`);
   if (appUrl) lines.push(appUrl);
   return lines.join("\n");
 }

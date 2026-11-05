@@ -112,6 +112,29 @@ export async function fetchBinanceOHLCV(
   return result?.value ?? null;
 }
 
+/** 日內 K 棒 — 15m / 1h, real-time and keyless. Short TTLs: a 15m bar is current for a minute. */
+export type IntradayInterval = "15m" | "1h";
+const INTRADAY_TTL_MS: Record<IntradayInterval, number> = { "15m": 60 * 1000, "1h": 5 * 60 * 1000 };
+
+export async function fetchBinanceIntraday(
+  pair: string,
+  interval: IntradayInterval,
+  gaps: string[],
+  limit = 400,
+): Promise<Candle[] | null> {
+  const result = await fetchFree<Candle[]>({
+    source: "binance",
+    label: `Binance 日內 K 棒 (${pair} ${interval})`,
+    key: `binance:intraday:${pair}:${interval}:${limit}`,
+    ttlMs: INTRADAY_TTL_MS[interval],
+    staleMs: 6 * 60 * 60 * 1000,
+    limit: { perMinute: 30 },
+    gaps,
+    fn: () => fetchKlines(pair, interval, limit),
+  });
+  return result?.value ?? null;
+}
+
 /** How many 1,000-bar pages the deep fetch walks back. 3,000 D1 ≈ 8 years. */
 const DEEP_PAGES = 3;
 /** Deep copies change slowly; half a day matches the other deep fetches. */

@@ -4,6 +4,8 @@ import { storeKind } from "@/lib/db";
 import { notifyStatus } from "@/lib/notify";
 import { configuredMinGrade } from "@/lib/notify/alert";
 import { json } from "@/lib/json-response";
+import { SOURCE_FAMILIES, firstThreeFree, type SourceEntry } from "@/lib/data-sources/registry";
+import { getKey } from "@/lib/api-keys";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -130,6 +132,44 @@ export async function GET() {
     ),
   ]);
 
+  // 來源登記簿 — every family's ladder, each rung probed from here when it
+  // has a keyless GET, with the quota layer's last-success stamp beside it.
+  const quota = quotaSnapshot();
+  const families = await Promise.all(
+    SOURCE_FAMILIES.map(async (family) => {
+      const rungs = await Promise.all(
+        family.ladder.map(async (entry: SourceEntry) => {
+          const hasKey = entry.keyName ? Boolean(getKey(entry.keyName)) : true;
+          const q = entry.quotaSource ? quota[entry.quotaSource] ?? null : null;
+          let probed: ProbeResult | null = null;
+          if (entry.probe && hasKey) {
+            probed = await probe(entry.label, entry.probe, entry.browserUa ? { headers: { "User-Agent": "Mozilla/5.0" } } : undefined);
+          }
+          const status: "ok" | "fail" | "no-key" | "unprobed" = !hasKey ? "no-key" : probed ? (probed.ok ? "ok" : "fail") : "unprobed";
+          return {
+            id: entry.id,
+            label: entry.label,
+            free: entry.free,
+            keyName: entry.keyName,
+            hasKey,
+            note: entry.note ?? null,
+            status,
+            httpStatus: probed?.httpStatus ?? null,
+            ms: probed?.ms ?? null,
+            detail: probed ? probed.detail.slice(0, 120) : null,
+            lastSuccessAt: q?.lastSuccessAt ?? null,
+            lastFailureAt: q?.lastFailureAt ?? null,
+            failures: q?.failures ?? 0,
+            blockedForMs: q?.blockedForMs ?? 0,
+          };
+        }),
+      );
+      const freeIds = firstThreeFree(family).map((e) => e.id);
+      const serving = rungs.find((r) => r.status === "ok") ?? rungs.find((r) => r.status === "unprobed" && r.hasKey) ?? null;
+      return { id: family.id, label: family.label, answers: family.answers, freeFirst: freeIds, serving: serving?.id ?? null, rungs };
+    }),
+  );
+
   // Never echo a key back — strip it from any URL shown in the response.
   const sanitized = probes.map((p) => ({
     ...p,
@@ -155,6 +195,7 @@ export async function GET() {
     // Live counters per source, so "why did it stop calling X" has an answer.
     quota: quotaSnapshot(),
     probes: sanitized,
+    families,
     verdict: [
       ohlcvReachable
         ? "至少一個 OHLCV 來源可用，訊號應該可以產生。"

@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "serve": "node scripts/serve.mjs",
     "lint": "next lint",
     "test": "node tests/run.mjs"
   },

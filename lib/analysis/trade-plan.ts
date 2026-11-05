@@ -2,7 +2,7 @@ import { completeAI, jsonSchema, type AiUnavailable } from "@/lib/ai";
 import { TRADE_MIN_EXPECTANCY_R, TRADE_VETO_EXPECTANCY_R, TRADE_VETO_HIT_RATE } from "./floors";
 import type { BiasItem, Grade, SwingVariant, TradePlan, TradeSignal } from "@/types/signal";
 import { MIN_ENTRY_GRADE, gradeAllowsEntry } from "@/lib/scoring";
-import { backtestPlanGeometry } from "./backtest";
+import { backtestPlanGeometry, type EntryStyle } from "./backtest";
 import { isNearEntry } from "./proximity";
 import type { Candle } from "../data-sources/ohlcv";
 import type { PlanBacktest } from "@/types/signal";
@@ -508,6 +508,42 @@ interface Combo {
   tp: Candidate;
   rr: number;
   backtest: PlanBacktest | null;
+  /** The entry style whose managed backtest paid better on this geometry. */
+  entryStyle?: EntryStyle;
+}
+
+/**
+ * 兩種進場方式都量，留下付得更多的那個. A resting limit and a confirmation
+ * entry are two different trades on the same three prices; the journal's
+ * S1/S2 stop-outs say the limit fills on breakdowns, and the only honest
+ * way to act on that is to measure both and let expectancy choose. Ties
+ * go to the limit (it fills more often, so the sample it was measured on
+ * is the larger one).
+ */
+function bestEntryStyle(
+  direction: "long" | "short",
+  entry: number,
+  sl: number,
+  tp: number,
+  candles: Candle[],
+  horizonBars: number,
+  symbol: string,
+): { backtest: PlanBacktest | null; entryStyle: EntryStyle } {
+  const limit = backtestPlanGeometry(direction, entry, sl, tp, candles, horizonBars, symbol, "limit");
+  // A market entry has no pullback to confirm; the walk reports it as limit.
+  if (!limit || limit.entryStyle !== "limit" || limit.basis?.includes("現價進場")) {
+    return { backtest: limit, entryStyle: "limit" };
+  }
+  const confirm = backtestPlanGeometry(direction, entry, sl, tp, candles, horizonBars, symbol, "confirm");
+  if (
+    confirm &&
+    confirm.resolved >= MIN_RESOLVED_FOR_RANKING &&
+    confirm.expectancyR !== null &&
+    (limit.expectancyR === null || confirm.expectancyR > limit.expectancyR + EXPECTANCY_EPSILON)
+  ) {
+    return { backtest: confirm, entryStyle: "confirm" };
+  }
+  return { backtest: limit, entryStyle: "limit" };
 }
 
 interface ComboScreen {
@@ -636,16 +672,12 @@ function chooseGeometry(
   }
 
   for (const c of combos) {
-    c.backtest = backtestPlanGeometry(
-      input.direction,
-      c.entry.price,
-      c.sl.price,
-      c.tp.price,
-      candles,
-      // 波段 gets a longer clock than 當沖 — see HorizonProfile.horizonBars.
-      profile.horizonBars,
-      input.symbol,
+    // 波段 gets a longer clock than 當沖 — see HorizonProfile.horizonBars.
+    const best = bestEntryStyle(
+      input.direction, c.entry.price, c.sl.price, c.tp.price, candles, profile.horizonBars, input.symbol,
     );
+    c.backtest = best.backtest;
+    c.entryStyle = best.entryStyle;
   }
 
   const rankable = combos.filter(
@@ -717,9 +749,12 @@ function chooseGeometry(
     ? "評級「強」（期望值 ≥ +0.35R 且勝率 ≥55%）"
     : "評級「合格」（統計未否決；未達「強」標籤的 0.35R／55%）";
   const note =
-    chosen === byRatio
+    (chosen === byRatio
       ? ""
-      : `（賠率最高的一組是 1:${byRatio.rr}，但本地回測期望值較低，未採用）`;
+      : `（賠率最高的一組是 1:${byRatio.rr}，但本地回測期望值較低，未採用）`) +
+    (chosen.entryStyle === "confirm"
+      ? "進場方式：回踩後確認 —— 同一組價位用掛單直接接的實測較差，改為等價格觸及後收回再進。"
+      : "");
   const warn = allVetoed
     ? `⚠ 全部組合都被統計否決（${floorText(profile)}）—— 附加審查在此行使它唯一的職權：` +
       `實測明顯不利的交易不放行。`
@@ -902,6 +937,7 @@ function fallbackPlan(input: TradePlanInput, why: string | null): TradePlan {
     entry: round(entry.price),
     stop_loss: round(sl.price),
     take_profit: round(tp.price),
+    entry_style: picked.combo.entryStyle ?? "limit",
     entry_reason: entry.label,
     stop_loss_reason: sl.label,
     take_profit_reason: tp.label,
@@ -1071,13 +1107,14 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
     effectiveDayProfile(input.hitRateShortfall),
     input.regimeMaxTargetAtr,
   );
-  const aiBacktest =
+  const aiBest =
     input.candles && input.candles.length >= 60
-      ? backtestPlanGeometry(
+      ? bestEntryStyle(
           input.direction, entry.price, sl.price, tp.price, input.candles,
           aiDayProfile.horizonBars, input.symbol,
         )
       : null;
+  const aiBacktest = aiBest?.backtest ?? null;
   const aiHit = aiBacktest?.hitRate ?? null;
   if (
     aiBacktest === null ||
@@ -1109,6 +1146,7 @@ export async function buildTradePlan(input: TradePlanInput, gaps: string[]): Pro
     entry: round(entry.price),
     stop_loss: round(sl.price),
     take_profit: round(tp.price),
+    entry_style: aiBest?.entryStyle ?? "limit",
     entry_reason: parsed.entry_reason?.trim() || entry.label,
     stop_loss_reason: parsed.sl_reason?.trim() || sl.label,
     take_profit_reason: parsed.tp_reason?.trim() || tp.label,

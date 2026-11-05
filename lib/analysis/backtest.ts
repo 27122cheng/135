@@ -104,6 +104,8 @@ export interface PlanBacktest {
   hadAmbiguousBars: boolean;
   /** Whether the sample was restricted to bars trending the signal's way. */
   conditioned?: boolean;
+  /** How the pullback entry was simulated — see EntryStyle. */
+  entryStyle?: EntryStyle;
   /** How the sample was drawn, in words. Shown wherever the numbers are. */
   basis?: string;
   /**
@@ -239,6 +241,23 @@ const FILL_WINDOW_BARS = 5;
  */
 const MIN_PULLBACK_PCT = 0.0005;
 
+/**
+ * 回踩後確認 — the second way to take a pullback.
+ *
+ * A resting limit fills the moment price trades down to it, which means it
+ * fills on every pullback that *keeps going* — the S1/S2 stop-outs the
+ * journal keeps classifying are mostly this: bought the dip, the dip was a
+ * breakdown. A confirmation entry waits for the same touch and then for a
+ * completed bar to close back on the trade's side of the level; it enters
+ * at that close. Worse price, fewer fills, and the one difference that
+ * matters: the pullback has already been rejected before the trade exists.
+ * Which of the two pays better is not a matter of taste — it is measured
+ * here per geometry, and the plan carries whichever won.
+ */
+export type EntryStyle = "limit" | "confirm";
+/** Bars after the touch in which a confirming close must appear. */
+export const CONFIRM_WINDOW_BARS = 3;
+
 export function backtestPlanGeometry(
   direction: "long" | "short",
   entry: number,
@@ -253,6 +272,8 @@ export function backtestPlanGeometry(
    * system most likely to be believed and most likely to be wrong.
    */
   symbol?: string,
+  /** How the pullback is taken — see EntryStyle. Default: the resting limit. */
+  entryStyle: EntryStyle = "limit",
 ): PlanBacktest | null {
   // A user-added crypto symbol used to fall through to the index spread,
   // which is an order of magnitude off what it actually pays.
@@ -267,7 +288,7 @@ export function backtestPlanGeometry(
   const skipped: string[] = [];
   let last: PlanBacktest | null = null;
   for (const tier of tiers) {
-    const result = walk(direction, entry, stopLoss, takeProfit, candles, horizonBars, tier, costFraction);
+    const result = walk(direction, entry, stopLoss, takeProfit, candles, horizonBars, tier, costFraction, entryStyle);
     if (!result) continue;
     last = result;
     if (result.resolved >= MIN_CONDITIONED_RESOLVED) {
@@ -291,6 +312,7 @@ function walk(
   tier: Tier,
   /** Round-trip cost as a fraction of entry. Never zero — see config/trading-costs.ts. */
   costFraction: number,
+  entryStyle: EntryStyle = "limit",
 ): PlanBacktest | null {
   if (entry <= 0 || candles.length < horizonBars + 20) return null;
 
@@ -378,6 +400,26 @@ function walk(
       }
       entryBar = filled;
       e = limit;
+      if (entryStyle === "confirm") {
+        // 回踩後確認：the touch arms the entry; a completed bar closing back
+        // on the trade's side within CONFIRM_WINDOW_BARS takes it, at that
+        // close. No such close means the pullback was a breakdown — no trade.
+        let confirmed = -1;
+        const lastC = Math.min(filled + CONFIRM_WINDOW_BARS, candles.length - 1);
+        for (let k = filled; k <= lastC; k++) {
+          const back = direction === "long" ? candles[k].close > limit : candles[k].close < limit;
+          if (back) {
+            confirmed = k;
+            break;
+          }
+        }
+        if (confirmed < 0) {
+          unfilled++;
+          continue;
+        }
+        entryBar = confirmed;
+        e = candles[confirmed].close;
+      }
     }
 
     // The trailing buffer is measured in the entry bar's ATR; a bar without
@@ -457,12 +499,17 @@ function walk(
     lookbackBars: sampled,
     hadAmbiguousBars,
     conditioned: tier.conditioned,
+    entryStyle: isLimitOrder ? entryStyle : "limit",
     costPct: Math.round(costFraction * 100 * 1000) / 1000,
     basis:
       `只取「${tier.label}」的 ${sampled} 根 K 棒為訊號點，` +
       (isLimitOrder
-        ? `依本計畫的回踩掛單模擬（掛在訊號價下方 ${(pullbackPct * 100).toFixed(2)}%，` +
-          `${FILL_WINDOW_BARS} 根內未成交就視同撤單：${sampled - unfilled} 筆成交、${unfilled} 筆未成交），`
+        ? entryStyle === "confirm"
+          ? `依本計畫的回踩後確認進場模擬（價格先觸及訊號價下方 ${(pullbackPct * 100).toFixed(2)}% 的位置，` +
+            `再於 ${CONFIRM_WINDOW_BARS} 根內收回價位之上才以該收盤進場；${FILL_WINDOW_BARS} 根內未觸及或未收回即視同撤單：` +
+            `${sampled - unfilled} 筆成交、${unfilled} 筆未成交），`
+          : `依本計畫的回踩掛單模擬（掛在訊號價下方 ${(pullbackPct * 100).toFixed(2)}%，` +
+            `${FILL_WINDOW_BARS} 根內未成交就視同撤單：${sampled - unfilled} 筆成交、${unfilled} 筆未成交），`
         : `本計畫為現價進場，於訊號當根收盤成交，`) +
       `再依實際執行的管理規則模擬` +
       `（停利 ≥2R 先平一半、不足則全出、走完 2R 才保本、結構移停、反向 CHoCH 出場、逾時以市價結束），` +

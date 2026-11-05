@@ -37,11 +37,27 @@ export function downgrade(grade: Grade): Grade {
 }
 
 /** Counts and mean severity per tag over the most recent `LOOKBACK` entries. */
+/**
+ * 紙上追蹤不教方向. A paper plan is a signal the gate stood aside from; its
+ * stop-out proves the gate was right, and letting it raise the direction
+ * threshold (S1) or force no-trade on macro/COT conflict (S7, S8) punishes
+ * a signal that was already refused. Its entry-placement and stop-buffer
+ * lessons (S2, S3) and the event lesson (S4) transfer — those are about
+ * where the levels sit, which the paper plan shares with a real one.
+ */
+export const DIRECTION_TAGS: ReadonlySet<StopReasonTag> = new Set<StopReasonTag>(["S1", "S7", "S8"]);
+
+function teaches(entry: JournalEntry, tag: StopReasonTag): boolean {
+  const paper = entry.review_note?.includes("[參考價位紙上追蹤]") === true;
+  return !(paper && DIRECTION_TAGS.has(tag));
+}
+
 export function summariseTags(history: JournalEntry[]): TagStat[] {
   const window = history.slice(0, LOOKBACK);
   const byTag = new Map<StopReasonTag, JournalEntry[]>();
   for (const entry of window) {
     if (!entry.stop_reason_tag) continue;
+    if (!teaches(entry, entry.stop_reason_tag)) continue;
     const list = byTag.get(entry.stop_reason_tag) ?? [];
     list.push(entry);
     byTag.set(entry.stop_reason_tag, list);
@@ -130,7 +146,7 @@ export function computeInterventions(history: JournalEntry[]): InterventionEffec
   const window = history.slice(0, LOOKBACK);
   const triggeringDates = (tag: StopReasonTag) =>
     window
-      .filter((e) => e.stop_reason_tag === tag)
+      .filter((e) => e.stop_reason_tag === tag && teaches(e, tag))
       .map((e) => e.closed_at.slice(0, 10));
 
   for (const stat of triggered) {

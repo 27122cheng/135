@@ -1,4 +1,5 @@
 import type { AddOnLevel, PlanBacktest, TradePlan } from "@/types/signal";
+import type { LevelEvidence } from "@/lib/analysis/level-evidence";
 import { SCALE_OUT_MIN_R } from "@/lib/analysis/lab-manage";
 import { TRADE_MIN_EXPECTANCY_R } from "@/lib/analysis/floors";
 import { formatPrice } from "@/lib/format";
@@ -152,12 +153,32 @@ function Leg({
   );
 }
 
+function EvidenceColumn({ title, lines, tone }: { title: string; lines: string[]; tone: "entry" | "sl" | "tp" }) {
+  return (
+    <div className="flex-1 min-w-0">
+      <p className={cn("text-[10px]", tone === "entry" && "text-neutral-400", tone === "sl" && "text-red-400/80", tone === "tp" && "text-emerald-400/80")}>
+        {title}的證據
+      </p>
+      <ul className="mt-0.5 flex flex-col gap-0.5">
+        {lines.map((l) => (
+          <li key={l} className="text-[10px] leading-snug text-neutral-500">
+            · {l}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function TradePlanCard({
   plan,
   backtest,
+  evidence = null,
 }: {
   plan: TradePlan;
   backtest: PlanBacktest | null;
+  /** 三個價位各自的證據 — see lib/analysis/level-evidence.ts. */
+  evidence?: LevelEvidence | null;
 }) {
   if (plan.stance === "wait") {
     return (
@@ -207,10 +228,29 @@ export function TradePlanCard({
       </div>
 
       <div className="flex gap-3">
-        <Leg label="進場" price={plan.entry!} reason={plan.entry_reason} tone="entry" />
+        <Leg
+          label="進場"
+          price={plan.entry!}
+          reason={
+            plan.entry_style === "confirm"
+              ? `${plan.entry_reason}｜回踩後確認：價格觸及此價位後，等一根完成的 H4 收回${plan.take_profit !== null && plan.take_profit > plan.entry! ? "之上" : "之下"}再進，以該收盤成交；收不回就不進`
+              : plan.entry_reason
+          }
+          tone="entry"
+        />
         <Leg label="停損" price={plan.stop_loss!} reason={plan.stop_loss_reason} tone="sl" />
         <Leg label="停利" price={plan.take_profit!} reason={plan.take_profit_reason} tone="tp" />
       </div>
+
+      {/* 證據 — the stack under each price, so a real-money reader can
+          argue with one line at a time instead of trusting a sentence. */}
+      {evidence && (
+        <div className="mt-3 flex gap-3 border-t border-neutral-800 pt-3">
+          <EvidenceColumn title="進場" lines={evidence.entry} tone="entry" />
+          <EvidenceColumn title="停損" lines={evidence.stop} tone="sl" />
+          <EvidenceColumn title="停利" lines={evidence.target} tone="tp" />
+        </div>
+      )}
 
       <p className="mt-3 border-t border-neutral-800 pt-3 text-sm leading-relaxed text-neutral-300">
         {plan.summary}

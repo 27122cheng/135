@@ -144,6 +144,9 @@ import type { TradeSignal } from "@/types/signal";
     lab_gate: { ids: ["ema-stack"], labels: ["均線排列"], met: false, blocked: true, checks: [] },
     downgrades: ["逆勢：D1 趨勢與方向相反"],
     reference_plan: null,
+    thesis: { playbook: { regime: "trend", name: "順勢回調" }, invalidations: [] },
+    forward_evidence: { support: ["ema-stack"], oppose: [], asOf: "2026-09-01" },
+    direction_tie: true,
     trade_plan: { stance: "wait", wait_for: "w", summary: "s" },
     data_gaps: [],
   } as unknown as TradeSignal;
@@ -159,6 +162,14 @@ import type { TradeSignal } from "@/types/signal";
   check("downgrades survive", restored.downgrades?.[0]?.includes("逆勢") === true,
     restored.downgrades);
   check("graded_as survives", restored.graded_as === "A+", restored.graded_as);
+  // Second wave: the monitor's regime snapshot reads `thesis` off the board
+  // row, the card's recomputed confidence reads `forward_evidence`, and
+  // /history renders `direction_tie` — none of which a history row carried.
+  check("the thesis survives, so the regime exit can be armed from a history row",
+    (restored.thesis as { playbook?: { regime?: string } } | null)?.playbook?.regime === "trend", restored.thesis);
+  check("forward evidence survives, so a recomputed confidence matches the gate's",
+    (restored.forward_evidence as { support?: string[] } | null)?.support?.[0] === "ema-stack", restored.forward_evidence);
+  check("direction_tie survives, so /history can say 中性", restored.direction_tie === true, restored.direction_tie);
 
   // The point of the exercise: the census can now see these gates on a
   // history row at all. This row carries a 逆勢 downgrade, which sits

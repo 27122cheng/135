@@ -31,6 +31,9 @@ interface SourceState {
   failures: number;
   /** Epoch ms before which no call may be made. */
   blockedUntil: number;
+  /** When this source last answered, and last failed — for the sources page. */
+  lastSuccessAt: number | null;
+  lastFailureAt: number | null;
 }
 
 const states = new Map<string, SourceState>();
@@ -63,6 +66,8 @@ function stateFor(source: string): SourceState {
     dayCount: 0,
     failures: 0,
     blockedUntil: 0,
+    lastSuccessAt: null,
+    lastFailureAt: null,
   };
   states.set(source, fresh);
   return fresh;
@@ -128,11 +133,23 @@ export function tryConsume(source: string, limit: QuotaLimit): QuotaDecision {
   return { ok: true };
 }
 
+/**
+ * Milliseconds until this source may be called again; 0 when it is free.
+ * For a deliberate fallback chain (a second range, an alias ticker) that
+ * would otherwise be refused by the backoff its own first attempt caused.
+ */
+export function backoffRemainingMs(source: string): number {
+  const s = states.get(source);
+  if (!s) return 0;
+  return Math.max(0, s.blockedUntil - Date.now());
+}
+
 /** Clears the backoff — the source is healthy again. */
 export function recordSuccess(source: string): void {
   const s = stateFor(source);
   s.failures = 0;
   s.blockedUntil = 0;
+  s.lastSuccessAt = Date.now();
 }
 
 /** Doubles the wait before this source is tried again, capped at one minute. */
@@ -141,25 +158,31 @@ export function recordFailure(source: string): void {
   s.failures = Math.min(s.failures + 1, MAX_TRACKED_FAILURES);
   const delay = Math.min(BACKOFF_BASE_MS * 2 ** (s.failures - 1), BACKOFF_MAX_MS);
   s.blockedUntil = Date.now() + delay;
+  s.lastFailureAt = Date.now();
 }
 
 /** Snapshot for /api/diagnostics. Read-only — does not consume budget. */
-export function quotaSnapshot(): Record<
-  string,
-  { usedToday: number; usedLastMinute: number; failures: number; blockedForMs: number }
-> {
+export interface QuotaSnapshotEntry {
+  usedToday: number;
+  usedLastMinute: number;
+  failures: number;
+  blockedForMs: number;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+}
+
+export function quotaSnapshot(): Record<string, QuotaSnapshotEntry> {
   const now = Date.now();
   const today = utcDay();
-  const out: Record<
-    string,
-    { usedToday: number; usedLastMinute: number; failures: number; blockedForMs: number }
-  > = {};
+  const out: Record<string, QuotaSnapshotEntry> = {};
   for (const [source, s] of states) {
     out[source] = {
       usedToday: s.day === today ? s.dayCount : 0,
       usedLastMinute: s.recent.filter((t) => now - t < 60_000).length,
       failures: s.failures,
       blockedForMs: Math.max(0, s.blockedUntil - now),
+      lastSuccessAt: s.lastSuccessAt === null ? null : new Date(s.lastSuccessAt).toISOString(),
+      lastFailureAt: s.lastFailureAt === null ? null : new Date(s.lastFailureAt).toISOString(),
     };
   }
   return out;

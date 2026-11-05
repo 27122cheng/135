@@ -2,7 +2,11 @@ import { getSignalStore, type LabTradeRow } from "@/lib/db";
 import { censusOf } from "@/lib/analysis/blockers";
 import { summariseForward } from "@/lib/analysis/lab-forward";
 import { buildRiskAdvice } from "@/lib/journal/advice";
+import { exitKindAdvice, splitStreams, summariseExitKinds } from "@/lib/journal/exit-kind";
+import { contextBuckets } from "@/lib/journal/context-record";
+import { dimensionAccuracy } from "@/lib/journal/dimension-accuracy";
 import { computeEquityCurve, computeReviewStats, computeTrackRecord } from "@/lib/journal/stats";
+import { computePerformance } from "@/lib/journal/performance";
 import { summariseTags, triggeredTags } from "@/lib/journal/interventions";
 import { partitionJournal, quarantineNote } from "@/lib/journal/quarantine";
 import { json } from "@/lib/json-response";
@@ -71,6 +75,7 @@ export async function GET(request: Request) {
     // the live consequence of the history above it.
     const tagStats = summariseTags(entries);
     const active = triggeredTags(tagStats);
+    const streams = splitStreams(entries);
     return json({
       ...stats,
       // Stated on the page, not silently applied: a system that reports its
@@ -111,6 +116,11 @@ export async function GET(request: Request) {
         note: e.review_note,
       })),
       trackRecord: computeTrackRecord(entries),
+      // 績效總覽 — 勝率 with its confidence interval, drawdown, and whether
+      // the book is improving over time. Real trades only (paper fills are
+      // perfect); see lib/journal/performance.ts for why each number is
+      // shaped the way it is.
+      performance: computePerformance(streams.real),
       // 權益曲線 — real trades only (auto-tracked or hand-logged), excluding
       // the paper 參考價位 stream: mixing perfect-fill paper trades into the
       // curve would flatter both the total and the drawdown.
@@ -120,6 +130,18 @@ export async function GET(request: Request) {
       activeInterventions: active,
       recentTagStats: tagStats,
       riskAdvice: buildRiskAdvice(tagStats, active),
+      // 出場方式 — every ending side by side, early exits included, per
+      // stream. The advice reads the real stream: paper fills are perfect.
+      exitKinds: {
+        real: summariseExitKinds(streams.real),
+        paper: summariseExitKinds(streams.paper),
+      },
+      exitAdvice: exitKindAdvice(summariseExitKinds(streams.real)),
+      // 情境實績 — the buckets the context veto reads, so the reader can see
+      // which situations the system is actually good at.
+      contextBuckets: contextBuckets(entries),
+      // 面向準確率 — which dimensions actually predict anything on this book.
+      dimensionAccuracy: dimensionAccuracy(entries),
       blockers: { census, scanned: scoped.length, windowDays: censusWindowDays },
       forward: {
         conditions: labStats.slice(0, 8),

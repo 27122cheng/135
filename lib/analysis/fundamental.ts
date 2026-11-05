@@ -8,6 +8,8 @@ import { rateSpreadFor } from "@/config/rate-spreads";
 import { analyzeRateSpread } from "./rate-spread";
 import { analyzeGoldFlows } from "./gold-flows";
 import { analyzeDataReleases } from "./data-release";
+import { fetchSp500Valuation } from "../data-sources/valuation";
+import { analyzeValuation } from "./valuation";
 
 interface Trend {
   direction: "up" | "down" | "flat";
@@ -39,13 +41,15 @@ export async function analyzeFundamental(
 ): Promise<BiasItem[]> {
   const items: BiasItem[] = [];
 
-  const [dgs10, t10yie, dxy, vix, eia, earnings] = await Promise.all([
-    config.useRealRate ? fetchFredSeries("DGS10", gaps) : Promise.resolve(null),
+  const wantsValuation = config.useValuation === true;
+  const [dgs10, t10yie, dxy, vix, eia, earnings, valuation] = await Promise.all([
+    config.useRealRate || wantsValuation ? fetchFredSeries("DGS10", gaps) : Promise.resolve(null),
     config.useRealRate ? fetchFredSeries("T10YIE", gaps) : Promise.resolve(null),
     config.useDxy ? fetchFredSeries("DXY", gaps) : Promise.resolve(null),
     config.useVix ? fetchFredSeries("VIX", gaps) : Promise.resolve(null),
     config.useEiaInventory ? fetchEiaCrudeInventory(gaps) : Promise.resolve(null),
     config.useEarningsSeason ? fetchEarningsCalendar(gaps) : Promise.resolve(null),
+    wantsValuation ? fetchSp500Valuation(gaps) : Promise.resolve(null),
   ]);
 
   const termStructure = config.useTermStructure ? await fetchWtiTermStructure(gaps) : null;
@@ -167,6 +171,14 @@ export async function analyzeFundamental(
       evidence: `${earnings.length} 筆財報事件`,
       source: "Finnhub /calendar/earnings",
     });
+  }
+
+  // 估值 — ERP and the P/E percentile for index trades, plus the calendar
+  // fallback for 財報季 when no Finnhub key answers. See lib/analysis/valuation.ts.
+  if (wantsValuation) {
+    items.push(
+      ...analyzeValuation(meta, valuation, dgs10?.latest?.value ?? null, new Date(), (earnings?.length ?? 0) > 0),
+    );
   }
 
   // 央行購金與黃金實體流向 — DBnomics gives one keyless API over IMF and the

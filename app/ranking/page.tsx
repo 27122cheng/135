@@ -94,7 +94,9 @@ export default function RankingPage() {
 
   useEffect(() => {
     void load();
-    const timer = setInterval(() => void load(), 60_000);
+    // Five minutes, not one: see READ_INTERVAL_MS on the board for the
+    // Neon quota this was spending.
+    const timer = setInterval(() => void load(), 5 * 60_000);
     return () => clearInterval(timer);
   }, [load]);
 

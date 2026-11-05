@@ -298,8 +298,12 @@ export function supabaseStore(): SignalStore | null {
     },
 
     async readCache(key: string): Promise<{ payload: unknown; fetchedAt: string } | null> {
-      const client = getSupabaseServerClient() ?? getSupabaseAnonClient();
-      if (!client) throw new Error("缺少 Supabase 金鑰，無法讀取 source_cache");
+      // Service role only, like app_settings: source_cache has RLS on and no
+      // select policy, so the anon client would not error — it would answer
+      // "no rows" to every read, a permanent silent cache miss that spends
+      // every free-source quota twice. A missing key must fail out loud.
+      const client = getSupabaseServerClient();
+      if (!client) throw new Error("缺少 SUPABASE_SERVICE_ROLE_KEY，無法讀取 source_cache");
       const { data, error } = await client
         .from("source_cache")
         .select("payload, fetched_at")

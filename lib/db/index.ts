@@ -219,6 +219,25 @@ export interface TrackedPlan {
    */
   announced?: boolean;
   /**
+   * 這張單的交易建議已經推播過 — by the refresh sweep, or by the monitor as
+   * a catch-up when tracking started. The fill push says 「此單來自 09-04
+   * 的訊號」; this is what guarantees that signal was actually sent. An
+   * equivalent plan on the next rescan inherits it (lib/notify/alert.ts
+   * equivalentPlans), so the hourly rewrite never re-announces.
+   */
+  recommended?: boolean;
+  /**
+   * 建議推播的時間（ISO）— the fill is judged only on price seen at least
+   * ENTRY_ARM_MS after this (lib/monitor/plan-state.ts). Null for paper
+   * plans and for plans nobody was told about.
+   */
+  recommendedAt?: string | null;
+  /**
+   * 成交時間（ISO）— stamped on the sweep that saw the fill. The horizon
+   * exit counts completed D1 bars from here. Null while waiting.
+   */
+  enteredAt?: string | null;
+  /**
    * 這筆計畫的打法需要的行情性質 — from the thesis's playbook at tracking
    * time. The monitor checks ER(20) against it every sweep and exits an
    * unproven position when the regime ends (lib/monitor/plan-state.ts,

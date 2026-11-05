@@ -6,7 +6,7 @@ import { notifyAll } from "@/lib/notify";
 import type { IngestedRelease } from "@/lib/analysis/data-release";
 import { runScan, storeScan } from "@/lib/scan";
 import { advanceLedger } from "@/lib/lab-forward-runner";
-import { configuredMinGrade, formatAlert, shouldAlert } from "@/lib/notify/alert";
+import { configuredMinGrade, formatAlert, recommendationKey, shouldAlert } from "@/lib/notify/alert";
 import { json } from "@/lib/json-response";
 
 export const dynamic = "force-dynamic";
@@ -112,7 +112,19 @@ export async function GET(request: Request) {
         monitorState?.state === "entered" ||
         monitorState?.state === "added" ||
         monitorState?.state === "scaled";
-      const decision = shouldAlert(signal, previous ?? null, minGrade, { openTrade });
+      // The previous signal's own plan, already run to its end by the
+      // monitor: identity is the snapshot's generatedAt, the only stable id
+      // a plan has here. A terminal state on a *different* plan (an older
+      // one the monitor never replaced) says nothing about this signal.
+      const RESOLVED = new Set([
+        "stop_hit", "target_hit", "structure_exit", "thesis_exit", "horizon_exit", "expired", "cancelled",
+      ]);
+      const resolvedTrade =
+        monitorState != null &&
+        RESOLVED.has(monitorState.state) &&
+        monitorState.tracked?.generatedAt != null &&
+        monitorState.tracked.generatedAt === previous?.generated_at;
+      const decision = shouldAlert(signal, previous ?? null, minGrade, { openTrade, resolvedTrade });
       let notified: string[] = [];
       let sendIt = decision.alert;
       if (sendIt && decision.dedupeCategory === "held-weakened") {
@@ -137,6 +149,23 @@ export async function GET(request: Request) {
           })
           .catch(() => ({ isNew: true }));
         sendIt = receipt.isNew;
+      }
+      if (sendIt && signal.trade_plan.stance === "enter") {
+        // 先記再發 — the monitor can also send this plan's recommendation
+        // (when it starts tracking one the refresh had kept quiet). First
+        // writer wins; a lost race costs one duplicate at worst, never a
+        // silence. Fails open: a record that cannot be written must not
+        // silence a real recommendation.
+        const receipt = await store
+          .recordRelease({
+            seriesId: recommendationKey(meta.symbol),
+            period: signal.generated_at,
+            value: 0,
+            previousValue: null,
+            estimate: null,
+          })
+          .catch(() => ({ isNew: true }));
+        if (!receipt.isNew) sendIt = false;
       }
       if (sendIt) {
         // A failing alert must not fail the refresh that produced it — the

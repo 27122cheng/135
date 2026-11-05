@@ -7,6 +7,7 @@ import { SignalCard } from "@/components/signal-card";
 import { loadCustomSymbols, toCommodityMeta, type CustomSymbol } from "@/lib/custom-symbols";
 import { userKeyHeaders } from "@/lib/user-keys-client";
 import { SiteNav } from "@/components/site-nav";
+import { isNoDatabase, loadLocalSignal, saveLocalSignal } from "@/lib/local-signals";
 
 export default function Home() {
   const [selected, setSelected] = useState<string>("XAUUSD");
@@ -51,6 +52,8 @@ export default function Home() {
       // The board's own endpoint, filtered — same `latest_signal` row the board
       // draws, so the two literally cannot show different numbers.
       const res = await fetch(`/api/board?symbol=${selected}`, { cache: "no-store" });
+      // 瀏覽器模式: no database → the last scan this device made.
+      if (res.status === 501) return loadLocalSignal(selected);
       if (!res.ok) return null;
       const body = await res.json();
       return (body.signal as TradeSignal | undefined) ?? null;
@@ -96,7 +99,10 @@ export default function Home() {
       // 「更新過了為什麼換頁面裡面的資料又還原了」. The fresh analysis stays
       // on screen, but the failure to keep it is said out loud.
       const storeError = (data as { storeError?: string | null }).storeError;
-      if (storeError) {
+      if (storeError && isNoDatabase(storeError)) {
+        // 瀏覽器模式: the browser is the store.
+        saveLocalSignal(signalData);
+      } else if (storeError) {
         setError(`分析完成，但寫入資料庫失敗 —— 換頁後會變回舊資料：${storeError}`);
       }
     } catch (err) {

@@ -196,6 +196,90 @@ function Table({
   );
 }
 
+/**
+ * 自動採用與嚴格模式 — the two switches that bind trading to the lab.
+ *
+ * Auto-adoption runs weekly (GitHub workflow lab.yml) and adopts the best
+ * verified combination per symbol/direction where nothing is adopted or
+ * what is adopted has decayed. Strict mode makes an adopted, holding
+ * combination a requirement for every entry. The floor is the hit rate
+ * both halves must clear: 0.55 is the lab's default, 0.8 is the
+ * operator's ask — and at 0.8 the number of symbols with anything to
+ * trade is the honest price of it, shown here.
+ */
+function AutoAdoptionPanel({ onChanged }: { onChanged: () => void }) {
+  const [state, setState] = useState<{
+    strict?: boolean;
+    floor?: number;
+    adoptions?: number;
+    auto?: number;
+    probation?: number;
+    lastRun?: string | null;
+    error?: string;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/lab/auto", { cache: "no-store" });
+      setState(await res.json());
+    } catch (err) {
+      setState({ error: err instanceof Error ? err.message : String(err) });
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const save = async (patch: { strict?: boolean; floor?: number }) => {
+    setBusy(true);
+    try {
+      await fetch("/api/lab/auto", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) });
+      await load();
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const floor = state?.floor ?? 0.55;
+  return (
+    <section className="mb-4 rounded-xl border border-neutral-800 bg-neutral-900/40 p-3">
+      <h2 className="mb-1.5 text-xs font-medium text-neutral-200">自動採用與嚴格模式</h2>
+      {state?.error && <p className="text-[11px] text-amber-400">{state.error}</p>}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] text-neutral-400">
+        <label className="flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={state?.strict === true}
+            disabled={busy || !state}
+            onChange={(e) => void save({ strict: e.target.checked })}
+          />
+          嚴格模式：只做實驗室驗證並採用的條件
+        </label>
+        <label className="flex items-center gap-1.5">
+          驗證門檻（兩半勝率皆須 ≥）
+          <select
+            value={String(floor)}
+            disabled={busy || !state}
+            onChange={(e) => void save({ floor: Number(e.target.value) })}
+            className="rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-neutral-200"
+          >
+            {["0.55", "0.6", "0.65", "0.7", "0.75", "0.8"].map((v) => (
+              <option key={v} value={v}>{Math.round(Number(v) * 100)}%</option>
+            ))}
+          </select>
+        </label>
+        <span>
+          已採用 {state?.adoptions ?? "—"} 組（自動 {state?.auto ?? "—"}，觀察期 {state?.probation ?? "—"}）
+          {state?.lastRun ? `｜上次自動採用 ${state.lastRun.slice(5, 16).replace("T", " ")} UTC` : "｜尚未自動採用過"}
+        </span>
+      </div>
+      <p className="mt-1.5 text-[11px] leading-relaxed text-neutral-600">
+        每週日由工作流對每個商品、每個方向重跑實驗，沒有採用、或已採用的進入觀察期時，自動採用驗證最佳的組合；
+        人工採用的只標示不替換。門檻拉到 80% 會讓多數商品沒有可採用的組合 —— 嚴格模式下那就是沒有交易，參考價位照常紙上追蹤，代價看得到。
+      </p>
+    </section>
+  );
+}
+
 export default function LabPage() {
   const [symbol, setSymbol] = useState("XAUUSD");
   const [direction, setDirection] = useState<"long" | "short">("long");
@@ -410,6 +494,8 @@ export default function LabPage() {
           {notice}
         </div>
       )}
+
+      <AutoAdoptionPanel onChanged={() => void loadAdoptions()} />
 
       {/* 已採用 — first, because this is the part that touches real trades.
           Everything below it is research; this is what the scanner obeys. */}

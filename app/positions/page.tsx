@@ -45,9 +45,14 @@ const STATE_LABEL: Record<string, string> = {
   added: "已加倉",
   scaled: "已分批止盈（剩半倉）",
   waiting: "等待進場",
+  touched: "已觸及，等收回確認",
   stop_hit: "已停損",
   target_hit: "已停利",
   structure_exit: "結構翻轉出場",
+  thesis_exit: "論點失效出場",
+  horizon_exit: "到期出場",
+  expired: "掛單逾時撤單",
+  cancelled: "掛單取消（未成交）",
   invalidated: "已失效",
 };
 
@@ -123,6 +128,14 @@ function PositionCard({ row }: { row: PositionRow }) {
           <dd className="font-mono text-xs text-emerald-400">{fmt(row.takeProfit)}</dd>
         </div>
       </dl>
+
+      {row.state === "waiting" && (
+        <p className="mt-2 text-[11px] text-neutral-500">
+          等待回踩到進場價。
+          {row.recommendedAt ? `建議已於 ${row.recommendedAt.slice(5, 16).replace("T", " ")} UTC 推播，一分鐘後開始判定成交。` : "建議尚未推播。"}
+          {row.validUntil ? `掛單有效至 ${row.validUntil.slice(5, 16).replace("T", " ")} UTC，未回踩自動撤單。` : ""}
+        </p>
+      )}
 
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-neutral-500">
         {row.addOnsFilled > 0 && <span>已加倉 {row.addOnsFilled} 段</span>}
