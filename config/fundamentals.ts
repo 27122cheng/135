@@ -15,6 +15,11 @@ export interface FundamentalsConfig {
   vixRiskOffDirection: "long" | "short";
   /** 財報季訊號（Finnhub /calendar/earnings）— 美股指數專用。 */
   useEarningsSeason: boolean;
+  /**
+   * 估值因子（S&P 500 本益比：股權風險溢酬與十年位階）— 指數專用。
+   * 三個免金鑰來源依序：multpl.com → Nasdaq Data Link → Finviz。見 lib/analysis/valuation.ts。
+   */
+  useValuation?: boolean;
   /** EIA 原油庫存週變化 — WTI 專用。不在 Stage 1 核准清單內，Stage 2 新增（見 README）。 */
   useEiaInventory: boolean;
   /**
@@ -69,6 +74,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     useVix: true,
     vixRiskOffDirection: "short",
     useEarningsSeason: true,
+    useValuation: true,
     useEiaInventory: false,
     useTermStructure: false,
     // 20974P (consolidated) returned 查無資料 on every run; 209742 is the
@@ -88,6 +94,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     useVix: true,
     vixRiskOffDirection: "short",
     useEarningsSeason: false,
+    useValuation: true,
     useEiaInventory: false,
     useTermStructure: false,
     cotContractCode: null, // DAX 於 Eurex（德國）交易，非美國受監管交易所，CFTC 無資料
@@ -104,6 +111,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     useVix: true,
     vixRiskOffDirection: "short",
     useEarningsSeason: true,
+    useValuation: true,
     useEiaInventory: false,
     useTermStructure: false,
     cotContractCode: "124603", // DJIA ($5) - CBOT，信心度中等
@@ -120,6 +128,7 @@ export const FUNDAMENTALS_CONFIG: Record<SupportedSymbol, FundamentalsConfig> = 
     useVix: true,
     vixRiskOffDirection: "short",
     useEarningsSeason: true,
+    useValuation: true,
     useEiaInventory: false,
     useTermStructure: false,
     cotContractCode: "13874A", // E-MINI S&P 500 - CME，信心度中等

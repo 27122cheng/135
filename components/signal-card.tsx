@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { EntryChecklistStrip } from "@/components/entry-checklist";
 import { QuantFlowCard } from "@/components/quant-flow-card";
+import { OrderTicket } from "@/components/order-ticket";
+import { levelEvidence } from "@/lib/analysis/level-evidence";
 import { TRADE_MIN_EXPECTANCY_R } from "@/lib/analysis/floors";
 import type { BiasItem, NewsDigest, TradeSignal } from "@/types/signal";
 import type { AppliedIntervention } from "@/types/journal";
@@ -1461,7 +1463,11 @@ export function SignalCard({ signal }: { signal: TradeSignal }) {
       <ForcedDowngrade signal={signal} />
 
       {/* The answer: one entry, one stop, one target. */}
-      <TradePlanCard plan={signal.trade_plan} backtest={signal.plan_backtest} />
+      <TradePlanCard plan={signal.trade_plan} backtest={signal.plan_backtest} evidence={levelEvidence(signal)} />
+
+      {/* 執行單 — the plan as the orders a broker ticket takes, with the
+          steps that follow. Only under a plan that enters. */}
+      <OrderTicket signal={signal} />
 
       {/* 這筆該下多少 — only under a plan that actually enters. Sizing a
           non-recommendation would invite trading it. */}

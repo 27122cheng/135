@@ -60,6 +60,7 @@ export const SECONDARY: Destination[] = [
   { href: "/lab", label: "實驗室", hint: "前進實驗與十年回測，驗證通過後可採用為進場門檻" },
   { href: "/history", label: "歷史", hint: "過去產生過的訊號" },
   { href: "/setup", label: "通知", hint: "Telegram／Discord 與資料表" },
+  { href: "/sources", label: "來源", hint: "每個資料來源是否正常、誰在供應、免費首選" },
   { href: "/settings", label: "金鑰", hint: "AI 與資料源金鑰" },
   { href: "/symbols", label: "標的", hint: "自訂追蹤的商品" },
 ];
