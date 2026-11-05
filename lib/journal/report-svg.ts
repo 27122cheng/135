@@ -13,7 +13,7 @@ export function reportSvg(report: DailyReport): string {
   const rowH = 26;
   const real = report.rows.filter((r) => !r.paper);
   const tableTop = 330 + Math.ceil(report.bySymbol.length / 3) * 26;
-  const H = tableTop + 40 + Math.max(1, real.length) * rowH + 90;
+  const H = tableTop + 72 + Math.max(1, real.length) * rowH + 70;
   const s = report.summary;
   const period = report.range === "day" ? report.from : `${report.from} ～ ${report.to}`;
   const gold = "#d4a84b";
@@ -33,10 +33,10 @@ export function reportSvg(report: DailyReport): string {
   const header = ["商品", "方向", "進場", "出場", "點數", "％", "出場方式"];
   const colX = [40, 230, 300, 420, 540, 640, 740];
   const rows = real.length === 0
-    ? `<text x="40" y="${tableTop + 60}" font-size="13" fill="#9b9891">本期沒有結算的正式訊號。</text>`
+    ? `<text x="40" y="${tableTop + 72}" font-size="13" fill="#9b9891">本期沒有結算的正式訊號。</text>`
     : real
         .map((r, i) => {
-          const y = tableTop + 60 + i * rowH;
+          const y = tableTop + 72 + i * rowH;
           const win = r.points > 0;
           return `<rect x="30" y="${y - 17}" width="${W - 60}" height="${rowH}" fill="${i % 2 ? "#0d1420" : "#0a0f18"}"/>` +
             `<text x="${colX[0]}" y="${y}" font-size="13" fill="#e7e5e0">${esc(r.label)}</text>` +
