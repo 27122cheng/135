@@ -22,6 +22,7 @@ import {
 import { recordResolvedPlan } from "@/lib/journal/auto-log";
 import { maybeSendWeeklyDigest } from "@/lib/notify/weekly-digest";
 import { maybeSendDailyReport } from "@/lib/notify/daily-report-push";
+import { runIntradaySweep } from "@/lib/intraday/sweep";
 import { fetchOHLCV } from "@/lib/data-sources/ohlcv";
 import { WARMUP, buildContext } from "@/lib/analysis/lab";
 import { STOP_BUFFER_ATR } from "@/lib/analysis/lab-manage";
@@ -760,6 +761,12 @@ export async function GET(request: Request) {
     reason: `日報失敗：${err instanceof Error ? err.message : String(err)}`,
   }));
 
+  // 日內紙上帳本 — the crypto M15 engine opens and resolves its paper trades
+  // on the same five-minute clock. Best effort; it never fails the sweep.
+  const intraday = await runIntradaySweep(store)
+    .then((r) => ({ opened: r.opened, resolved: r.resolved, note: r.stats?.note ?? null }))
+    .catch((err: unknown) => ({ opened: 0, resolved: 0, note: `日內掃描失敗：${err instanceof Error ? err.message : String(err)}` }));
+
   return json({
     ranAt: new Date().toISOString(),
     results,
@@ -768,5 +775,6 @@ export async function GET(request: Request) {
     releaseError,
     weeklyDigest: digest.sent ? digest.reason : undefined,
     dailyReport: daily.sent ? daily.reason : undefined,
+    intraday,
   });
 }
